@@ -1,3 +1,6 @@
 # .NET
 backend/**/bin/
 backend/**/obj/
+
+# local deployment secrets
+deploy/local/.env

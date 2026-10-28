@@ -9,7 +9,7 @@ using var host = builder.Build();
 if (args.Length > 0 && args[0] == "migrate")
 {
     var applied = await host.Services.GetRequiredService<MigrationRunner>()
-        .RunAsync(Array.Empty<(string, string)>());
+        .RunAsync();
     Console.WriteLine($"Applied {applied} migration(s).");
     return;
 }

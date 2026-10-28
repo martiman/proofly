@@ -1,0 +1,52 @@
+name: proofly-local
+x-conn: &conn
+  ConnectionStrings__Proofly: "Host=postgres;Port=5432;Username=proofly;Password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env};Database=proofly"
+  Evidence__Directory: /var/proofly/evidence
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: proofly
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: proofly
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U proofly -d proofly"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    build: { context: ../../backend, dockerfile: Dockerfile, target: worker }
+    command: ["Proofly.Worker.dll", "migrate"]
+    environment: *conn
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  api:
+    build: { context: ../../backend, dockerfile: Dockerfile, target: api }
+    environment: *conn
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"
+    volumes:
+      - evidence:/var/proofly/evidence
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  worker:
+    build: { context: ../../backend, dockerfile: Dockerfile, target: worker }
+    environment: *conn
+    volumes:
+      - evidence:/var/proofly/evidence
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  evidence:
