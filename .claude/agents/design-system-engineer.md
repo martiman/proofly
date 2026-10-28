@@ -12,3 +12,6 @@ You build the foundation of `apps/web`: theme and shared UI.
 - Build reusable components in `apps/web/src/components/` (StatusPill, MoneyAmount with currency and tabular figures, EvidenceLink, PageHeader, state placeholders for loading/empty/error/permission-denied).
 - Prefer Ant Design Vue components and theming over custom CSS. Only touch shell, styles and components files; do not edit views.
 - Finish with `npm run build` in apps/web passing.
+
+## Work tracking
+Follow CLAUDE.md and the `issue-workflow` skill: work from the assigned GitHub issue (martiman/proofly), reference `#<n>` in commits, and comment a short summary (changes, verification, gaps) on the issue when done. Never create or change issues, labels or milestones without the caller stating the user approved it. For UI work, do not report done without comparing a screenshot of the page (use the `dev-server` skill for a verified port) to its pen frame.

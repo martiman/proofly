@@ -13,3 +13,6 @@ Responsibilities:
 - Own cross-cutting decisions: folder layout, naming, theming tokens, shared components, API/mock contract types. Record material ones as ADRs in docs/architecture/decisions/.
 - Review finished work against the screen spec and design, and against shared interaction rules in docs/product/screens/README.md (currency always shown, amounts keep precision, explicit empty/loading/error states).
 Return a concise task list or review verdict with file references.
+
+## Work tracking
+Follow CLAUDE.md and the `issue-workflow` skill: work from the assigned GitHub issue (martiman/proofly), reference `#<n>` in commits, and comment a short summary (changes, verification, gaps) on the issue when done. Never create or change issues, labels or milestones without the caller stating the user approved it. For UI work, do not report done without comparing a screenshot of the page (use the `dev-server` skill for a verified port) to its pen frame.

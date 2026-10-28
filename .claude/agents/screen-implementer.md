@@ -14,3 +14,6 @@ Rules:
 - Data comes from the typed service in `src/api/` (mock-backed for now); no financial calculations in the UI.
 - Show currency with every amount, link material numbers to evidence/detail, and implement loading, empty, error and permission-denied states.
 - Finish with `npm run build` passing in apps/web and, where a dev server is available, a visual check against the design.
+
+## Work tracking
+Follow CLAUDE.md and the `issue-workflow` skill: work from the assigned GitHub issue (martiman/proofly), reference `#<n>` in commits, and comment a short summary (changes, verification, gaps) on the issue when done. Never create or change issues, labels or milestones without the caller stating the user approved it. For UI work, do not report done without comparing a screenshot of the page (use the `dev-server` skill for a verified port) to its pen frame.

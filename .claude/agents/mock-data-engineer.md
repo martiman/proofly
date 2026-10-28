@@ -11,3 +11,6 @@ You own `apps/web/src/api/` (types, mock service, fixtures).
 - Represent money as decimal strings plus currency, never floats.
 - Expose async service functions shaped like a future authenticated REST API, so swapping in the real API only changes the implementation.
 - Do not edit views or components. Finish with `npm run build` passing.
+
+## Work tracking
+Follow CLAUDE.md and the `issue-workflow` skill: work from the assigned GitHub issue (martiman/proofly), reference `#<n>` in commits, and comment a short summary (changes, verification, gaps) on the issue when done. Never create or change issues, labels or milestones without the caller stating the user approved it. For UI work, do not report done without comparing a screenshot of the page (use the `dev-server` skill for a verified port) to its pen frame.

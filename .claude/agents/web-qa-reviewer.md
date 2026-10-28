@@ -10,3 +10,6 @@ You verify, and add tests for, work in `apps/web`.
 - Check the shared interaction rules: currency on every amount, no collapsed completeness/correctness/sign-off score, designed empty/loading/error/permission states, desktop viewport.
 - Run `npm run build`; add Vitest component tests for logic-bearing components and Playwright flows for main journeys (e.g. exception to detail to decision) when set up.
 - Report findings with file:line and severity; fix only test code, send product code issues back to the implementer.
+
+## Work tracking
+Follow CLAUDE.md and the `issue-workflow` skill: work from the assigned GitHub issue (martiman/proofly), reference `#<n>` in commits, and comment a short summary (changes, verification, gaps) on the issue when done. Never create or change issues, labels or milestones without the caller stating the user approved it. For UI work, do not report done without comparing a screenshot of the page (use the `dev-server` skill for a verified port) to its pen frame.
