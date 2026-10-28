@@ -250,7 +250,7 @@ public sealed class ConfigChangeRepository(NpgsqlDataSource ds, IAuditWriter aud
         if (change.ProposerId == cmd.ActorId) { Fail(GovernanceFailure.SeparationOfDuties, "The proposer cannot decide their own change."); }
         if (change.Status != ConfigChangeStatuses.Pending) { Fail(GovernanceFailure.InvalidState, $"The change is {change.Status}; only a PENDING_APPROVAL change can be decided."); }
         if (cmd.ProposalVersion is { } pv && change.Approval is { } ap0 && pv != ap0.ProposalVersion)
-        { Fail(GovernanceFailure.InvalidState, "The proposal changed since it was reviewed (stale proposalVersion)."); }
+        { Fail(GovernanceFailure.StaleProposal, "The proposal changed since it was reviewed (stale proposalVersion)."); }
 
         var now = time.GetUtcNow();
         var today = DateOnly.FromDateTime(now.UtcDateTime);

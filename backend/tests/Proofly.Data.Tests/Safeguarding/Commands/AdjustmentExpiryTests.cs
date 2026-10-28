@@ -20,6 +20,8 @@ public sealed class ExpiryFixture : IAsyncLifetime
             INSERT INTO runs (id,legal_entity_id,business_date,run_version,ruleset_version,state,sign_off_state) VALUES
              ('R-1','LE-1','2026-10-27',1,'rs-1','REVIEW_REQUIRED','PREPARATION_INCOMPLETE'),
              ('R-SIGNED','LE-1','2026-10-20',1,'rs-1','SIGNED_OFF','SIGNED_OFF');
+            INSERT INTO safeguarding_positions (run_id,legal_entity_id,currency,obligation_amount,eligible_amount,difference_amount,state)
+              VALUES ('R-1','LE-1','GBP',100,0,NULL,'QUALIFIED'), ('R-SIGNED','LE-1','GBP',100,100,0,'COVERED');
             INSERT INTO safeguarding_adjustments (id,run_id,currency,amount,reason,status,proposed_by_user_id,evidence_refs,expires_on) VALUES
              ('A-DUE','R-1','GBP',10,'due','APPROVED','u-ann','["e"]','2026-10-27'),
              ('A-TODAY','R-1','GBP',10,'last day','APPROVED','u-ann','["e"]','2026-10-28'),
@@ -41,13 +43,18 @@ public sealed class AdjustmentExpiryTests(ExpiryFixture f) : IClassFixture<Expir
         var handler = new ExpireAdjustmentsHandler(commands);
         var ctx = new JobContext(1, 1, 5, null, null);
 
+        Assert.False(await f.Scalar<bool>("SELECT stale FROM safeguarding_positions WHERE run_id='R-1'"));
         await handler.HandleAsync(new ExpireAdjustmentsPayload("2026-10-28"), ctx, default);
+        // The stored position no longer includes the expired adjustment: flagged stale; a QUALIFIED currency keeps a null difference.
+        Assert.True(await f.Scalar<bool>("SELECT stale FROM safeguarding_positions WHERE run_id='R-1'"));
+        Assert.False(await f.Scalar<bool>("SELECT stale FROM safeguarding_positions WHERE run_id='R-SIGNED'"));
+        Assert.Null(await f.Scalar<decimal?>("SELECT difference_amount FROM safeguarding_positions WHERE run_id='R-1'"));
         Assert.Equal("EXPIRED", await f.Scalar<string>("SELECT status FROM safeguarding_adjustments WHERE id='A-DUE'"));
         Assert.Equal("APPROVED", await f.Scalar<string>("SELECT status FROM safeguarding_adjustments WHERE id='A-TODAY'")); // expires_on == today still counts
         Assert.Equal("APPROVED", await f.Scalar<string>("SELECT status FROM safeguarding_adjustments WHERE id='A-OPEN'"));
         Assert.Equal("PROPOSED", await f.Scalar<string>("SELECT status FROM safeguarding_adjustments WHERE id='A-PROP'"));
         Assert.Equal("APPROVED", await f.Scalar<string>("SELECT status FROM safeguarding_adjustments WHERE id='A-SIGNED'")); // signed runs are never mutated
-        Assert.Equal(1L, await f.Scalar<long>("SELECT count(*) FROM audit_events WHERE subject_id='A-DUE' AND actor_type='SYSTEM' AND event_type='ADJUSTMENT_DECIDED' AND chain_id='LE-1'"));
+        Assert.Equal(1L, await f.Scalar<long>("SELECT count(*) FROM audit_events WHERE subject_id='A-DUE' AND actor_type='SYSTEM' AND event_type='ADJUSTMENT_EXPIRED' AND chain_id='LE-1'"));
 
         await handler.HandleAsync(new ExpireAdjustmentsPayload("2026-10-28"), ctx, default);
         Assert.Equal(1L, await f.Scalar<long>("SELECT count(*) FROM audit_events WHERE subject_id='A-DUE'"));

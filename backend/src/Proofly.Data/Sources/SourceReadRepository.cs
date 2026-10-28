@@ -75,7 +75,7 @@ public sealed class SourceReadRepository(NpgsqlDataSource db) : ISourceReadRepos
         var d = await LoadDeliveryAsync(conn, deliveryId, scope, ct);
         if (d is null) { return null; }
         var failures = new List<DeliveryFailureRow>();
-        await using var f = new NpgsqlCommand("SELECT reason_code, reason FROM delivery_rejections WHERE delivery_id = @d AND row_number IS NULL ORDER BY id", conn);
+        await using var f = new NpgsqlCommand("SELECT reason_code, reason FROM delivery_rejections WHERE delivery_id = @d AND row_number IS NULL AND NOT superseded_by_retry ORDER BY id", conn);
         f.Parameters.AddWithValue("d", deliveryId);
         await using (var rd = await f.ExecuteReaderAsync(ct))
         {
@@ -126,10 +126,10 @@ public sealed class SourceReadRepository(NpgsqlDataSource db) : ISourceReadRepos
 
         var quals = new Dictionary<string, List<string>>();
         await using (var q = new NpgsqlCommand("""
-            SELECT delivery_id, reason_code || ': ' || reason AS q FROM delivery_rejections WHERE delivery_id = ANY(@ids) AND row_number IS NULL
+            SELECT delivery_id, reason_code || ': ' || reason AS q FROM delivery_rejections WHERE delivery_id = ANY(@ids) AND row_number IS NULL AND NOT superseded_by_retry
             UNION ALL
             SELECT delivery_id, reason_code || ': ' || count(*) || ' row(s)' FROM delivery_rejections
-            WHERE delivery_id = ANY(@ids) AND row_number IS NOT NULL GROUP BY delivery_id, reason_code
+            WHERE delivery_id = ANY(@ids) AND row_number IS NOT NULL AND NOT superseded_by_retry GROUP BY delivery_id, reason_code
             ORDER BY 1, 2
             """, conn))
         {
@@ -161,11 +161,11 @@ public sealed class SourceReadRepository(NpgsqlDataSource db) : ISourceReadRepos
                  jsonb_strip_nulls(jsonb_build_object('raw_row', r.raw_excerpt, 'field', r.field))::text,
                  ARRAY[r.reason_code || ': ' || r.reason],
                  CASE WHEN r.raw_excerpt IS NULL THEN NULL ELSE encode(sha256(convert_to(r.raw_excerpt, 'UTF8')), 'hex') END
-          FROM delivery_rejections r WHERE r.delivery_id = @d AND r.row_number IS NOT NULL
+          FROM delivery_rejections r WHERE r.delivery_id = @d AND r.row_number IS NOT NULL AND NOT r.superseded_by_retry
         ) x
         """;
 
-    private const string NoTable = "(SELECT NULL::bigint AS id, NULL::text AS delivery_id WHERE false)";
+    private const string NoTable = "(SELECT NULL::bigint AS id, NULL::text AS delivery_id, NULL::integer AS row_number WHERE false)";
 
     private static string EscapeLike(string s) => s.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
 
@@ -185,7 +185,9 @@ public sealed class SourceReadRepository(NpgsqlDataSource db) : ISourceReadRepos
         await using var conn = await db.OpenConnectionAsync(ct);
         var d = await LoadDeliveryAsync(conn, deliveryId, scope, ct);
         if (d is null) { return null; }
-        var (table, rowId) = Tables.TryGetValue(d.SourceName, out var m) ? m : (NoTable, "''");
+        // A delivery whose source is not a manifest source has no record table: its records are not addressable (404, never a 500).
+        if (!Tables.TryGetValue(d.SourceName, out var m)) { return null; }
+        var (table, rowId) = m;
         var sql = RecordsSql(table, rowId);
 
         await using var c = new NpgsqlCommand($"{sql} WHERE {FilterSql} AND (@g::int IS NULL OR (x.grp, x.ord) > (@g::int, @o::bigint)) ORDER BY x.grp, x.ord LIMIT @n", conn);

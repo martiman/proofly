@@ -133,7 +133,8 @@ public sealed class JobRecoveryTests : IAsyncLifetime
         Assert.NotNull(hash);
         if (hashBefore is not null) Assert.Equal(hashBefore, hash);
         Assert.Equal(1, await _db.Count("SELECT count(*) FROM audit_events WHERE event_type='RUN_STARTED'"));
-        Assert.Equal(6, await _db.Count("SELECT count(*) FROM audit_events WHERE event_type='CONTROL_EXECUTED'")); // 5 controls + the run summary
+        Assert.Equal(5, await _db.Count("SELECT count(*) FROM audit_events WHERE event_type='CONTROL_EXECUTED'")); // 5 controls
+        Assert.Equal(1, await _db.Count("SELECT count(*) FROM audit_events WHERE event_type='RUN_PROCESSED'")); // the run summary
         Assert.Equal(5, await _db.Count("SELECT count(*) FROM run_control_results"));
         Assert.Equal(await _db.Count("SELECT count(*) FROM exceptions"), await _db.Count("SELECT count(*) FROM audit_events WHERE event_type='EXCEPTION_CREATED'"));
         Assert.Equal(3, await _db.Count("SELECT count(*) FROM safeguarding_positions"));
@@ -222,7 +223,7 @@ public sealed class JobRecoveryTests : IAsyncLifetime
         await RecoverOnAnotherWorker(id);
 
         Assert.Equal(2, await _db.Count("SELECT count(*) FROM safeguarding_adjustments WHERE status='EXPIRED'"));
-        Assert.Equal(2, await _db.Count("SELECT count(*) FROM audit_events WHERE event_type='ADJUSTMENT_DECIDED' AND actor_type='SYSTEM'"));
+        Assert.Equal(2, await _db.Count("SELECT count(*) FROM audit_events WHERE event_type='ADJUSTMENT_EXPIRED' AND actor_type='SYSTEM'"));
     }
 
     [Fact]
@@ -234,7 +235,7 @@ public sealed class JobRecoveryTests : IAsyncLifetime
             await Assert.ThrowsAsync<InvalidOperationException>(() => dying.Get<IAdjustmentCommands>().ExpireAsync(new DateOnly(2026, 10, 29), default));
         Assert.Equal(1, await _db.Count("SELECT count(*) FROM safeguarding_adjustments WHERE status='EXPIRED'"));
         Assert.Equal(1, await _db.Count("SELECT count(*) FROM safeguarding_adjustments WHERE status='APPROVED'"));
-        Assert.Equal(1, await _db.Count("SELECT count(*) FROM audit_events WHERE event_type='ADJUSTMENT_DECIDED' AND actor_type='SYSTEM'"));
+        Assert.Equal(1, await _db.Count("SELECT count(*) FROM audit_events WHERE event_type='ADJUSTMENT_EXPIRED' AND actor_type='SYSTEM'"));
 
         await _db.Restart();
         using var restarted = new Rig(_db, _dir);
@@ -242,7 +243,7 @@ public sealed class JobRecoveryTests : IAsyncLifetime
         Assert.Equal(0, (await restarted.Get<IAdjustmentCommands>().ExpireAsync(new DateOnly(2026, 10, 29), default)).Expired);
 
         Assert.Equal(2, await _db.Count("SELECT count(*) FROM safeguarding_adjustments WHERE status='EXPIRED'"));
-        Assert.Equal(2, await _db.Count("SELECT count(*) FROM audit_events WHERE event_type='ADJUSTMENT_DECIDED' AND actor_type='SYSTEM'"));
+        Assert.Equal(2, await _db.Count("SELECT count(*) FROM audit_events WHERE event_type='ADJUSTMENT_EXPIRED' AND actor_type='SYSTEM'"));
     }
 
     [Fact]

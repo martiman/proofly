@@ -47,6 +47,25 @@ public sealed class SourceReadRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_delivery_of_a_source_without_a_record_table_has_no_addressable_records_instead_of_failing()
+    {
+        await _f.Exec("UPDATE source_deliveries SET source_name = 'legacy_feed' WHERE id = 'D3'");
+        Assert.Null(await _repo.ListRecordsAsync("D3", new RecordQuery(null, null, 10, null, null, false), All)); // 404 in the API, never a 500
+        Assert.NotNull(await _repo.GetDeliveryAsync("D3", All));
+    }
+
+    [Fact]
+    public async Task Rejections_of_an_earlier_attempt_are_hidden_once_superseded_by_a_retry()
+    {
+        var before = (await _repo.ListRecordsAsync("D1", new RecordQuery(false, null, 50, null, null, false), All))!.Items.Count;
+        Assert.True(before > 0);
+        await _f.Exec("UPDATE delivery_rejections SET superseded_by_retry = true WHERE delivery_id = 'D1'");
+        Assert.Empty((await _repo.ListRecordsAsync("D1", new RecordQuery(false, null, 50, null, null, false), All))!.Items);
+        Assert.DoesNotContain((await _repo.ListRunDeliveriesAsync("RUN-A", All))!.Single(i => i.Id == "D1").Qualifications, q => q.Contains("row(s)"));
+        Assert.Empty((await _repo.GetDeliveryAsync("D1", All))!.Failures);
+    }
+
+    [Fact]
     public async Task Out_of_scope_or_unknown_is_null_everywhere()
     {
         var a = EntityScope.Only("LE-A");

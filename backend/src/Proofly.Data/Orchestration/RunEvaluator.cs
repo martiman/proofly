@@ -138,12 +138,20 @@ public static class RunEvaluator
 
         // Match groups with candidates and the exceptions raised for them.
         var pairs = matchInput.Pairs.ToDictionary(p => p.Name, Ord);
+        // Per pair, built once: a rebuild per group would scan the whole pair for every one of (up to) 100,000 groups.
+        var pairIndex = new Dictionary<string, (Dictionary<string, MatchItem> Items, HashSet<string> LeftKeys)>(Ord);
         var groups = new List<MatchGroupDraft>();
         foreach (var g in matching.Groups)
         {
             var pair = pairs[g.Pair];
-            var items = pair.Left.Concat(pair.Right).GroupBy(i => i.Key, Ord).ToDictionary(x => x.Key, x => x.First(), Ord);
-            var leftKeys = pair.Left.Select(i => i.Key).ToHashSet(Ord);
+            if (!pairIndex.TryGetValue(g.Pair, out var idx))
+            {
+                var all0 = new Dictionary<string, MatchItem>(Ord);
+                foreach (var i in pair.Left.Concat(pair.Right)) all0.TryAdd(i.Key, i); // first occurrence wins, as GroupBy(...).First() did
+                pairIndex[g.Pair] = idx = (all0, pair.Left.Select(i => i.Key).ToHashSet(Ord));
+            }
+            var items = idx.Items;
+            var leftKeys = idx.LeftKeys;
             var cands = new List<MatchCandidateDraft>();
             var added = new HashSet<string>(Ord);
             void Add(RecordRef r, string side, bool selected)

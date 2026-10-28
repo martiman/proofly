@@ -61,7 +61,7 @@ public sealed class SafeguardingReadRepository(NpgsqlDataSource db) : ISafeguard
         var liveApproved = await ApprovedByCurrencyAsync(run, ct);
 
         await using (var c = db.CreateCommand(
-            "SELECT currency, obligation_amount, eligible_amount, difference_amount, state, detail::text FROM safeguarding_positions WHERE run_id=@r AND legal_entity_id=@le ORDER BY currency"))
+            "SELECT currency, obligation_amount, eligible_amount, difference_amount, state, detail::text, stale FROM safeguarding_positions WHERE run_id=@r AND legal_entity_id=@le ORDER BY currency"))
         {
             c.Parameters.AddWithValue("r", run.RunId);
             c.Parameters.AddWithValue("le", run.LegalEntityId);
@@ -72,8 +72,8 @@ public sealed class SafeguardingReadRepository(NpgsqlDataSource db) : ISafeguard
                 using var doc = JsonDocument.Parse(rd.GetString(5));
                 var d = doc.RootElement;
                 var approved = TryDecimal(d, "approvedAdjustments") ?? liveApproved.GetValueOrDefault(ccy);
-                positions.Add(new PositionRow(ccy, rd.GetDecimal(1), rd.GetDecimal(2), approved, rd.GetDecimal(3), rd.GetString(4),
-                    Strings(d, "qualifications"), exceptions.GetValueOrDefault(ccy) ?? []));
+                positions.Add(new PositionRow(ccy, rd.GetDecimal(1), rd.GetDecimal(2), approved, rd.IsDBNull(3) ? null : rd.GetDecimal(3), rd.GetString(4),
+                    Strings(d, "qualifications"), exceptions.GetValueOrDefault(ccy) ?? [], rd.GetBoolean(6)));
                 if (d.TryGetProperty("obligationLines", out var ol) && ol.ValueKind == JsonValueKind.Array)
                 {
                     foreach (var l in ol.EnumerateArray())
@@ -132,7 +132,7 @@ public sealed class SafeguardingReadRepository(NpgsqlDataSource db) : ISafeguard
             {
                 using var doc = JsonDocument.Parse(rd.GetString(4));
                 previous.Add(new PreviousPosition(rd.GetString(0).Trim(), rd.GetDecimal(1), rd.GetDecimal(2),
-                    TryDecimal(doc.RootElement, "approvedAdjustments") ?? 0m, rd.GetDecimal(3)));
+                    TryDecimal(doc.RootElement, "approvedAdjustments") ?? 0m, rd.IsDBNull(3) ? null : rd.GetDecimal(3)));
             }
         }
 

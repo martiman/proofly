@@ -53,7 +53,7 @@ public sealed class SourceCommandsApiTests(AuthFixture f) : IClassFixture<AuthFi
                 + Delivery("Q5", "LE-A", "transfer_instructions", "QUALIFIED", true, "2026-03-06")
                 + Delivery("Q5C", "LE-A", "transfer_instructions", "RECEIVED", true, "2026-03-06")
                 + """
-                INSERT INTO delivery_rejections (delivery_id, reason_code, reason) VALUES ('R2','DUPLICATE_DELIVERY','Same content already delivered as Q1.');
+                INSERT INTO delivery_rejections (delivery_id, reason_code, reason) VALUES ('R2','DUPLICATE_DELIVERY','Same content already delivered as Q1.'), ('R1','SCHEMA_MISMATCH','first attempt');
                 """;
             await using var c = f.Db.CreateCommand(sql);
             await c.ExecuteNonQueryAsync();
@@ -104,6 +104,9 @@ public sealed class SourceCommandsApiTests(AuthFixture f) : IClassFixture<AuthFi
         Assert.NotEqual(etag, res.Headers.ETag!.ToString());
         Assert.Equal(1, await Audits("R1", "DELIVERY_INGESTION_RETRIED"));
         Assert.Equal(1, await Jobs("R1"));
+        // The rejection rows of the earlier attempt are kept as history but no longer count for the delivery's checks.
+        Assert.Equal(1, await Count("SELECT count(*) FROM delivery_rejections WHERE delivery_id='R1' AND superseded_by_retry"));
+        Assert.Equal(0, await Count("SELECT count(*) FROM delivery_rejections WHERE delivery_id='R1' AND NOT superseded_by_retry"));
         await using var c = f.Db.CreateCommand("SELECT reason, actor_id, after->>'state' FROM audit_events WHERE subject_id='R1' AND event_type='DELIVERY_INGESTION_RETRIED'");
         await using var r = await c.ExecuteReaderAsync();
         Assert.True(await r.ReadAsync());

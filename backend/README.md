@@ -14,6 +14,7 @@ Contract: `docs/integrations/api/openapi.yaml`. Stack: ADR 0004. Build/test: `cd
 | `src/Proofly.Api` | ASP.NET Core host, `/healthz` | Contracts, Domain, Data, Controls |
 | `src/Proofly.Worker` | Worker host; `Proofly.Worker migrate` verb runs migrations (no separate CLI project) | Data, Controls, Connectors |
 | `tests/Proofly.<X>.Tests` | xUnit, one per project | the project under test |
+| `tools/Proofly.Benchmarks` | Performance spike harness (issue #48): deterministic generator, ingest/run/reprocess/API timings against `proofly_bench`. A console tool, not run by `dotnet test`. Results: `docs/testing/performance-spike.md` | Api, Data, Connectors, Controls, Domain |
 
 ## Module convention (avoids merge conflicts)
 
@@ -50,10 +51,19 @@ Decision: small in-house outbox on PostgreSQL (`jobs` table, migration `0017_job
 ## Exception resolutions and the sign-off gate (issue #41)
 - `proposeResolution` / `decideResolution` / `reopenException` live in `Proofly.Data/Exceptions/Commands/ResolutionCommandRepository.cs` (one transaction each, audit event inside it).
 - A proposal creates `resolution_proposals` (previous working status kept in `previous_status`, migration `0041`) and an `approvals` row (`EXCEPTION_RESOLUTION`, required role `APPROVER`, `proposal_version` = n-th proposal of the exception). The exception becomes `PENDING_APPROVAL`. Proposing again while pending invalidates the earlier proposal and approval.
-- The approver must differ from the proposer for every exception, blocking or not (ADR 0005): `403 separation-of-duties`, plus the DB CHECK `approver <> proposer`. A stale `proposalVersion` or a proposal that is no longer PENDING is `409 invalid-state`.
+- The approver must differ from the proposer for every exception, blocking or not (ADR 0005): `403 separation-of-duties`, plus the DB CHECK `approver <> proposer`. A stale `proposalVersion` is `409 stale-proposal` (same for adjustments, manual matches and config changes); a proposal that is no longer PENDING is `409 invalid-state`.
 - Approve sets the exception to the proposed kind; reject restores the previous working status. Reopen (terminal -> `OPEN`, non-superseded run only) clears the current resolution fields; proposals, approvals and audit history remain. The finding itself (control, reason code, severity, value, blocking, rule trace) is never changed.
-- Sign-off rule: `IResolutionCommandRepository.HasUnresolvedBlockingExceptionsAsync(runId)` is true when any `blocking` exception of the run is not `RESOLVED`, `ACCEPTED_DIFFERENCE` or `FALSE_POSITIVE` (open, in investigation, waiting for data and pending approval all count as unresolved). Non-blocking exceptions never block.
+- Sign-off rule (one shared query, `Proofly.Data.Exceptions.UnresolvedBlockingExceptions`, used by run processing, `IResolutionCommandRepository.HasUnresolvedBlockingExceptionsAsync(runId)` and the sign-off gate): true when any `blocking` exception of the run is not `RESOLVED`, `ACCEPTED_DIFFERENCE` or `FALSE_POSITIVE` (open, in investigation, waiting for data and pending approval all count as unresolved). Non-blocking exceptions never block.
 
 ## Security acceptance (issue #52)
 
 `tests/Proofly.Security.Tests` holds the security acceptance tests (secrets, evidence audit, sessions, dev/prod isolation, authorization matrix, legal-entity isolation, injection, CORS, headers). Matrices are generated from the OpenAPI contract and the role bundles; results, defects and residual risks are in `docs/security/security-acceptance.md`, licences in `deploy/customer/THIRD-PARTY.md`. The project runs its classes sequentially (shared PostgreSQL connection limit).
+
+## Second contract pass (hardening)
+
+- Contract: see the "Changelog (second contract pass)" in `docs/integrations/api/README.md` (H1-H10). New audit types `ADJUSTMENT_EXPIRED`, `RUN_PROCESSED`, `SIGN_OFF_INVALIDATED`, `EVIDENCE_ACCESS_DENIED` (also in `AuditVocabulary`).
+- Per-kind permission: `x-required-permission-any` (platform lets any listed permission through, the handler enforces the kind: `settings.approve` for CONFIG, `access.manage` for ACCESS changes; proposer != approver always).
+- Migration `0047`: `safeguarding_positions.difference_amount` nullable (QUALIFIED currencies), `safeguarding_positions.stale` (set when an adjustment is approved or expires after processing; cleared by reprocessing, which writes a new run), `delivery_rejections.superseded_by_retry`.
+- A first-attempt `run.process` failure leaves a FAILED run marker (`RunProcessor.MarkFailedAsync`, own transaction).
+- Binary responses (evidence-pack zip) bypass response buffering in `ResponseValidationMiddleware` and stream from the evidence store.
+- `GET /lineage/{subjectKind}/{subjectId}` (`Proofly.Data/Transactions/LineageRepository`): TRANSACTION (`TRF-4`), RECORD (`transfer_instructions:4`), EXCEPTION and CONTROL_RESULT (exception id or `EXC-<id>`); `runId` optional narrows the subject; entity scope and `evidence.view` of the subject's legal entity.

@@ -9,6 +9,8 @@ internal sealed record Op(
     string OperationId, string Method, string Template, string Path, string? Permission, string? AuditEvent,
     IReadOnlyList<string> RequiredHeaders, string? SuccessSchemaRef, OperationSpec Spec)
 {
+    /// <summary>Permissions that let a caller past the platform check: the primary one plus x-required-permission-any.</summary>
+    public IReadOnlyList<string> AcceptedPermissions => Permission is null ? Spec.RequiredPermissionAny : [Permission, .. Spec.RequiredPermissionAny];
     public bool IsMutation => Method != "GET";
     public override string ToString() => OperationId;
 

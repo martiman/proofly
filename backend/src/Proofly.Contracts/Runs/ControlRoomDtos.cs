@@ -23,8 +23,8 @@ public sealed record ControlRoomExceptionDto(
     DateOnly BusinessDate, UserRefDto? Owner, DateTimeOffset CreatedAt, int AgeDays, DateTimeOffset DueAt, bool Blocking, string? SourceFile, string? SourceRowId, string Etag);
 
 public sealed record SafeguardingCurrencyPositionDto(
-    string Currency, MoneyDto Obligation, MoneyDto EligibleBalance, MoneyDto ApprovedAdjustments, MoneyDto Result, string State,
-    IReadOnlyList<string> Qualifications, MoneyDto? PreviousResult, IReadOnlyList<string> ExceptionIds);
+    string Currency, MoneyDto Obligation, MoneyDto EligibleBalance, MoneyDto ApprovedAdjustments, MoneyDto? Result, string State,
+    IReadOnlyList<string> Qualifications, MoneyDto? PreviousResult, IReadOnlyList<string> ExceptionIds, bool Stale);
 
 public sealed record ControlRoomDto(
     RunDto Run, IReadOnlyList<DailySummaryItemDto> Summary, IReadOnlyList<ControlRoomDeliveryDto> EvidenceReadiness,

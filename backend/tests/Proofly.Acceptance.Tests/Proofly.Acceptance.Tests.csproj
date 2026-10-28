@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Proofly.Api/Proofly.Api.csproj" />
+    <ProjectReference Include="../../src/Proofly.Data/Proofly.Data.csproj" />
+    <ProjectReference Include="../../src/Proofly.Domain/Proofly.Domain.csproj" />
+    <ProjectReference Include="../../src/Proofly.Connectors/Proofly.Connectors.csproj" />
+    <!-- Both hosts declare a top-level Program: the worker is aliased so WebApplicationFactory<Program> stays unambiguous. -->
+    <ProjectReference Include="../../src/Proofly.Worker/Proofly.Worker.csproj" Aliases="worker" />
+  </ItemGroup>
+</Project>

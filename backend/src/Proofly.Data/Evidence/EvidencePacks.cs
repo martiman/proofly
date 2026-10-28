@@ -44,6 +44,9 @@ public interface IEvidencePackCommands
 
     /// <summary>Writes EVIDENCE_PACK_DOWNLOADED (every attempt, delivered or refused) in its own transaction.</summary>
     Task RecordDownloadAsync(DownloadablePack pack, string actorUserId, string? requestId, string outcome, CancellationToken ct = default);
+
+    /// <summary>Writes EVIDENCE_ACCESS_DENIED (one event per denied request) in its own transaction. <paramref name="operation"/> is the contract operation id.</summary>
+    Task RecordAccessDeniedAsync(string runId, string actorUserId, string operation, string? requestId, CancellationToken ct = default);
 }
 
 public sealed class EvidencePackCommands(NpgsqlDataSource ds, IJobQueue jobs, IAuditWriter audit) : IEvidencePackCommands
@@ -121,6 +124,17 @@ public sealed class EvidencePackCommands(NpgsqlDataSource ds, IJobQueue jobs, IA
             outcome == "DELIVERED" ? "Evidence pack downloaded" : "Evidence pack download refused: integrity check failed",
             Reason: "Evidence pack export", RunId: pack.RunId, RequestId: requestId,
             AfterJson: JsonSerializer.Serialize(new { outcome, sha256 = pack.Sha256, sizeBytes = pack.SizeBytes })), ct);
+        await tx.CommitAsync(ct);
+    }
+
+    public async Task RecordAccessDeniedAsync(string runId, string actorUserId, string operation, string? requestId, CancellationToken ct = default)
+    {
+        await using var conn = await ds.OpenConnectionAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+        await audit.AppendAsync(tx, new AuditEventInput("EVIDENCE_ACCESS_DENIED", await ActorAsync(conn, tx, actorUserId, ct), "EVIDENCE_PACK", "run:" + runId,
+            "Evidence pack access denied: the caller lacks permission or scope",
+            Reason: "Evidence pack access denied", RunId: runId, RequestId: requestId,
+            AfterJson: JsonSerializer.Serialize(new { operation, outcome = "DENIED" })), ct);
         await tx.CommitAsync(ct);
     }
 }

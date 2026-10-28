@@ -321,6 +321,7 @@ paths:
               properties:
                 ownerId: {type: string}
                 note: {type: string, maxLength: 2000}
+                reason: {type: string, minLength: 3, maxLength: 4000, description: "Optional. Audit reason of every assignment; when absent the note (if any) is used."}
                 items:
                   type: array
                   minItems: 1
@@ -360,6 +361,7 @@ paths:
       responses:
         '201': {description: "Created", content: {application/json: {schema: {$ref: '#/components/schemas/SavedView'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '409': {description: "A view with this name already exists for the caller, or the per-user view limit is reached (type: duplicate | invalid-state)", content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
         '422': {$ref: '#/components/responses/Unprocessable'}
   /exception-views/{viewId}:
     parameters: [{name: viewId, in: path, required: true, schema: {type: string}}]
@@ -375,6 +377,7 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '412': {$ref: '#/components/responses/PreconditionFailed'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
   /exceptions/{exceptionId}:
     parameters: [{$ref: '#/components/parameters/ExceptionId'}]
     get:
@@ -406,6 +409,7 @@ paths:
               properties:
                 ownerId: {type: [string, 'null'], description: "Null unassigns"}
                 note: {type: string, maxLength: 2000}
+                reason: {type: string, minLength: 3, maxLength: 4000, description: "Optional. Audit reason of the assignment; when absent the note (if any) is used."}
       responses: &exceptionCommandResponses
         '200': {description: "OK; returns updated exception", headers: {ETag: {$ref: '#/components/headers/ETag'}}, content: {application/json: {schema: {$ref: '#/components/schemas/ExceptionDetail'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
@@ -472,7 +476,7 @@ paths:
       tags: [Exceptions]
       operationId: decideResolution
       summary: Approve or reject a resolution proposal
-      description: Separation of duties — the proposer cannot decide (403 `separation-of-duties`). `If-Match` must be the ETag of the exception and a stale proposal version returns 409.
+      description: Separation of duties — the proposer cannot decide (403 `separation-of-duties`). `If-Match` must be the ETag of the exception and a stale proposal version returns 409 `stale-proposal`.
       x-required-permission: exception.approve
       x-audit-event: RESOLUTION_DECIDED
       parameters: [{$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
@@ -610,7 +614,7 @@ paths:
         Separation of duties: the proposer cannot decide (403 `separation-of-duties`). `If-Match` is the ETag of the match group
         (`MatchGroup.etag`). Approve turns the group into a MATCHED group with rule `manual`, removes the matched records from the groups they came from and
         clears the linked matching exceptions; reject discards the proposal and leaves the records in their previous groups. Returns the approval.
-        A stale `proposalVersion` returns 409.
+        A stale `proposalVersion` returns 409 `stale-proposal`.
       x-required-permission: exception.approve
       x-audit-event: MANUAL_MATCH_DECIDED
       parameters: [{$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
@@ -714,6 +718,7 @@ paths:
       tags: [Safeguarding]
       operationId: decideAdjustment
       summary: Approve or reject an adjustment (not your own proposal)
+      description: A stale `proposalVersion` returns 409 `stale-proposal`.
       x-required-permission: safeguarding.adjustment.approve
       x-audit-event: ADJUSTMENT_DECIDED
       parameters: [{$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
@@ -940,8 +945,13 @@ paths:
       tags: [Settings]
       operationId: decideConfigChange
       summary: Approve (activates at effectiveFrom) or reject a configuration change
-      description: The proposer cannot approve their own material change (403 `separation-of-duties`).
+      description: |
+        The proposer cannot approve their own material change (403 `separation-of-duties`). A configuration change (`CONFIG`) needs
+        `settings.approve` (CONFIG_ADMIN), an access change (`ACCESS`, target kind `USER_ACCESS`) needs `access.manage` (SECURITY_ADMIN):
+        the platform lets a caller through when it holds any permission in `x-required-permission-any`, the handler then enforces the
+        permission of the change's kind (403 `forbidden`). A stale `proposalVersion` returns 409 `stale-proposal`.
       x-required-permission: settings.approve
+      x-required-permission-any: [settings.approve, access.manage]
       x-audit-event: CONFIG_CHANGE_DECIDED
       parameters: [{$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody:
@@ -1005,7 +1015,7 @@ components:
     Unauthorized: {description: "Missing or invalid credentials (type: unauthenticated)", headers: {WWW-Authenticate: {schema: {type: string}}}, content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
     Forbidden: {description: 'Permission, legal-entity scope or separation-of-duties violation (type: forbidden | out-of-scope | separation-of-duties)', content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
     NotFound: {description: "Not found (or outside caller's scope) (type: not-found)", content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
-    Conflict: {description: 'State conflict (type: invalid-state | run-superseded | stale-signoff | idempotency-in-progress | duplicate)', content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+    Conflict: {description: 'State conflict (type: invalid-state | run-superseded | stale-signoff | stale-proposal | idempotency-in-progress | duplicate)', content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
     PreconditionFailed: {description: "If-Match does not match current ETag; re-read and retry (type: precondition-failed)", content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
     PreconditionRequired: {description: "If-Match header missing (type: precondition-required)", content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
     Unprocessable: {description: "Validation failed (reason missing, bad filter, bad body) (type: validation)", content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
@@ -1092,6 +1102,10 @@ components:
         - CONFIG_CHANGE_PROPOSED
         - CONFIG_CHANGE_DECIDED
         - ACCESS_CHANGED
+        - ADJUSTMENT_EXPIRED
+        - RUN_PROCESSED
+        - SIGN_OFF_INVALIDATED
+        - EVIDENCE_ACCESS_DENIED
     Role: {type: string, enum: [ANALYST, APPROVER, CONFIG_ADMIN, SECURITY_ADMIN, VIEWER]}
     Permission:
       type: string
@@ -1233,6 +1247,7 @@ components:
               recordCountDelta: {type: integer}
         newExceptionIds: {type: array, items: {type: string}}
         resolvedExceptionIds: {type: array, items: {type: string}}
+        changedExceptionIds: {type: array, items: {type: string}, description: "Exceptions present in both runs (same finding) whose severity, blocking flag, reason code or value differ"}
         safeguardingDelta: {type: array, items: {$ref: '#/components/schemas/ChangeDriver'}}
         changedDeliveries: {type: array, items: {type: string}}
     SourceDelivery:
@@ -1406,6 +1421,7 @@ components:
             id: {type: string}
             owner: {$ref: '#/components/schemas/UserRef'}
             createdAt: {type: string, format: date-time}
+            etag: {type: string, description: "Value to send as If-Match when deleting the view"}
     EvidenceNode:
       type: object
       required: [id, kind, label, source, sourceRowId, amount]
@@ -1519,7 +1535,7 @@ components:
       properties:
         kind: {$ref: '#/components/schemas/ResolutionKind'}
         reason: {$ref: '#/components/schemas/Reason'}
-        evidenceRefs: {type: array, items: {type: string}}
+        evidenceRefs: {type: array, minItems: 1, items: {type: string}}
     DecisionInput:
       type: object
       required: [decision, reason]
@@ -1705,8 +1721,9 @@ components:
         obligation: {$ref: '#/components/schemas/Money'}
         eligibleBalance: {$ref: '#/components/schemas/Money'}
         approvedAdjustments: {$ref: '#/components/schemas/Money'}
-        result: {$ref: '#/components/schemas/Money'}
+        result: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}], description: "Null for a QUALIFIED currency: the difference is not computed"}
         state: {$ref: '#/components/schemas/SafeguardingState'}
+        stale: {type: boolean, description: "True when an adjustment was approved or expired after the run was processed; the stored result does not include it. Reprocess the run."}
         qualifications: {type: array, items: {type: string}}
         previousResult: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
         exceptionIds: {type: array, items: {type: string}}
@@ -1782,6 +1799,7 @@ components:
         eligibleBalances: {type: array, items: {$ref: '#/components/schemas/EligibleBalanceLine'}}
         adjustments: {type: array, items: {$ref: '#/components/schemas/SafeguardingAdjustment'}}
         changeAnalysis: {type: array, items: {$ref: '#/components/schemas/ChangeDriver'}}
+        stale: {type: boolean, description: "True when any currency position is stale"}
     ChecklistItem:
       type: object
       required: [id, control, label, state, mandatory, note, exceptionIds]
@@ -1923,6 +1941,7 @@ components:
         approval: {oneOf: [{$ref: '#/components/schemas/Approval'}, {type: 'null'}]}
         effectiveFrom: {$ref: '#/components/schemas/IsoDate'}
         reason: {type: string}
+        rulesetVersion: {type: [string, 'null'], description: "Ruleset version created when the change was approved (for example v7); null while not approved"}
     ConfigChangePage:
       type: object
       required: [items, page]

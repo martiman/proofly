@@ -95,7 +95,9 @@ internal sealed class AdjustmentCommandEndpoints(IAdjustmentCommands commands, I
             case CommandOutcome.NotFound: throw new ProblemException(ProblemTypes.NotFound);
             case CommandOutcome.PreconditionFailed: throw new ProblemException(ProblemTypes.PreconditionFailed, "The adjustment changed since it was read; re-read it and retry.");
             case CommandOutcome.SeparationOfDuties: throw new ProblemException(ProblemTypes.SeparationOfDuties, r.Detail);
+            case CommandOutcome.StaleProposal: throw new ProblemException(ProblemTypes.StaleProposal, r.Detail);
             case CommandOutcome.RunLocked: throw new ProblemException(ProblemTypes.InvalidState, r.Detail);
+            case CommandOutcome.RunSuperseded: throw new ProblemException(ProblemTypes.RunSuperseded, r.Detail);
             case CommandOutcome.Validation: throw ProblemException.Validation(r.Pointer ?? "", r.Detail ?? "Invalid input.");
             default: throw new ProblemException(ProblemTypes.InvalidState, r.Detail);
         }

@@ -35,6 +35,7 @@ internal sealed class ResolutionCommandEndpoints : IEndpointModule
         CommandStatus.NotFound => new ProblemException(ProblemTypes.NotFound),
         CommandStatus.Stale => new ProblemException(ProblemTypes.PreconditionFailed, o.Detail),
         CommandStatus.InvalidState => new ProblemException(ProblemTypes.InvalidState, o.Detail),
+        CommandStatus.StaleProposal => new ProblemException(ProblemTypes.StaleProposal, o.Detail),
         CommandStatus.RunSuperseded => new ProblemException(ProblemTypes.RunSuperseded, o.Detail),
         CommandStatus.Forbidden when o.Pointer == "separation-of-duties" => new ProblemException(ProblemTypes.SeparationOfDuties, o.Detail),
         CommandStatus.Forbidden => new ProblemException(ProblemTypes.Forbidden, o.Detail),

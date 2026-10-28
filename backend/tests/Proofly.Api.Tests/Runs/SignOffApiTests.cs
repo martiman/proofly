@@ -224,7 +224,8 @@ public sealed class SignOffApiTests(AuthFixture f) : IClassFixture<AuthFixture>,
         Assert.EndsWith("stale-signoff", (await Json(res)).GetProperty("type").GetString());
         Assert.Equal("PREPARATION_INCOMPLETE", await Scalar<string>($"SELECT sign_off_state FROM runs WHERE id='{run}'"));
         Assert.Equal("INVALIDATED", await Scalar<string>($"SELECT a.status FROM approvals a JOIN run_signoffs s ON s.approval_id=a.id WHERE s.run_id='{run}'"));
-        Assert.Equal(1, await Audits("SIGN_OFF_RETURNED", run));
+        Assert.Equal(0, await Audits("SIGN_OFF_RETURNED", run));
+        Assert.Equal(1, await Audits("SIGN_OFF_INVALIDATED", run));
         Assert.Equal(0, await Audits("RUN_SIGNED_OFF", run));
 
         // resubmitting works once nothing blocks, and a changed result hash is stale as well

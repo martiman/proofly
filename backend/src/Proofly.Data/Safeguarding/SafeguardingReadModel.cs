@@ -14,8 +14,8 @@ public sealed record SafeguardingRun(string RunId, string LegalEntityId, DateOnl
 /// ApprovedAdjustments, Result (Position = eligible + approved adjustments - obligation), State. Never netted across currencies.
 /// </summary>
 public sealed record PositionRow(
-    string Currency, decimal Obligation, decimal Eligible, decimal ApprovedAdjustments, decimal Result, string State,
-    IReadOnlyList<string> Qualifications, IReadOnlyList<string> ExceptionIds);
+    string Currency, decimal Obligation, decimal Eligible, decimal ApprovedAdjustments, decimal? Result, string State,
+    IReadOnlyList<string> Qualifications, IReadOnlyList<string> ExceptionIds, bool Stale = false);
 
 public sealed record ObligationLineRow(string AccountId, string Currency, decimal Amount, string? MovementType);
 
@@ -23,7 +23,7 @@ public sealed record BalanceLineRow(
     string SourceRowId, string? RecordId, string ExternalAccountId, DateTimeOffset BalanceTimestamp, decimal Balance, string Currency,
     string? EvidenceReference, bool Included, string Reason, IReadOnlyList<string> FindingIds);
 
-public sealed record PreviousPosition(string Currency, decimal Obligation, decimal Eligible, decimal ApprovedAdjustments, decimal Result);
+public sealed record PreviousPosition(string Currency, decimal Obligation, decimal Eligible, decimal ApprovedAdjustments, decimal? Result);
 
 public sealed record UserRefRow(string Id, string Name);
 

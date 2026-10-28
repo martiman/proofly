@@ -58,15 +58,5 @@ internal static class CarryOver
             : new Decision("OPEN", null, null, $"Continues {p.Id} (run version {p.RunVersion}); status {p.Status} is not carried, propose again if still needed.");
     }
 
-    public static async Task CopyHistoryAsync(NpgsqlTransaction tx, Predecessor p, string newId, Decision d, CancellationToken ct)
-    {
-        await Sql.Exec(tx, "INSERT INTO exception_notes (exception_id, author_user_id, body, created_at) SELECT @n, author_user_id, body, created_at FROM exception_notes WHERE exception_id=@o ORDER BY id", ct,
-            Sql.P("n", newId), Sql.P("o", p.Id));
-        await Sql.Exec(tx, "INSERT INTO exception_evidence_refs (exception_id, kind, ref, created_at) SELECT @n, kind, ref, created_at FROM exception_evidence_refs WHERE exception_id=@o ORDER BY id", ct,
-            Sql.P("n", newId), Sql.P("o", p.Id));
-        await Sql.Exec(tx, "INSERT INTO exception_timeline (exception_id, kind, actor_type, actor_id, summary, occurred_at) SELECT @n, kind, actor_type, actor_id, summary, occurred_at FROM exception_timeline WHERE exception_id=@o ORDER BY id", ct,
-            Sql.P("n", newId), Sql.P("o", p.Id));
-        await Sql.Exec(tx, "INSERT INTO exception_timeline (exception_id, kind, actor_type, actor_id, summary) VALUES (@n, 'SYSTEM', 'SYSTEM', NULL, @s)", ct,
-            Sql.P("n", newId), Sql.P("s", d.Note));
-    }
+    // The history copy (notes, evidence references, timeline, the "continues" note) is done set-based in RunBulkPersistence.
 }

@@ -55,6 +55,7 @@ public sealed class ResolutionCommandRepository(NpgsqlDataSource db, IAuditWrite
         if (e is null) { return new CommandOutcome(CommandStatus.NotFound); }
         if (e.Version != expectedVersion) { return new CommandOutcome(CommandStatus.Stale, "The exception changed since it was read; re-read it and retry."); }
         if (e.RunState == "SUPERSEDED") { return new CommandOutcome(CommandStatus.RunSuperseded, "The run is superseded; its exceptions are read-only."); }
+        if (e.RunState == "SIGNED_OFF") { return new CommandOutcome(CommandStatus.InvalidState, "The run is signed off and immutable; reprocess the run to change its exceptions."); }
         return null;
     }
 
@@ -177,7 +178,7 @@ public sealed class ResolutionCommandRepository(NpgsqlDataSource db, IAuditWrite
         if (pStatus != "PENDING") { return new CommandOutcome(CommandStatus.InvalidState, $"The proposal is {pStatus}; it was replaced or already decided."); }
         if (proposalVersion is { } pv && pv != version)
         {
-            return new CommandOutcome(CommandStatus.InvalidState, $"The proposal changed (reviewed version {pv}, current {version}); re-read it and decide again.");
+            return new CommandOutcome(CommandStatus.StaleProposal, $"The proposal changed (reviewed version {pv}, current {version}); re-read it and decide again.");
         }
         if (proposer == ctx.ActorUserId)
         {
@@ -222,11 +223,7 @@ public sealed class ResolutionCommandRepository(NpgsqlDataSource db, IAuditWrite
 
     public async Task<bool> HasUnresolvedBlockingExceptionsAsync(string runId, CancellationToken ct = default)
     {
-        await using var cmd = db.CreateCommand("""
-            SELECT EXISTS (SELECT 1 FROM exceptions WHERE run_id = @r AND blocking
-                           AND status NOT IN ('RESOLVED','ACCEPTED_DIFFERENCE','FALSE_POSITIVE'))
-            """);
-        cmd.Parameters.AddWithValue("r", runId);
-        return (bool)(await cmd.ExecuteScalarAsync(ct))!;
+        await using var conn = await db.OpenConnectionAsync(ct);
+        return await UnresolvedBlockingExceptions.HasAsync(conn, null, runId, ct);
     }
 }

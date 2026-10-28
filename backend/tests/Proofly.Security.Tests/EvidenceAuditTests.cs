@@ -125,6 +125,30 @@ public sealed class EvidenceAuditTests : IClassFixture<SeededDb>, IAsyncLifetime
     }
 
     [Fact]
+    public async Task Denied_403_attempts_are_audited_once_per_request_with_actor_and_request_id_and_404_401_are_not()
+    {
+        var denied = await Count("event_type='EVIDENCE_ACCESS_DENIED'");
+        var ids = new List<string>();
+        foreach (var client in new[] { _f.As(Role.Analyst), _f.As(Role.ConfigAdmin), _f.As(Role.SecurityAdmin) })
+        {
+            foreach (var make in new Func<string, HttpRequestMessage>[] { id => Download("RUN-SECA", id), id => Post("RUN-SECA", id) })
+            {
+                var id = Guid.NewGuid().ToString();
+                ids.Add(id);
+                Assert.Equal(HttpStatusCode.Forbidden, (await client.SendAsync(make(id))).StatusCode);
+            }
+        }
+        Assert.Equal(denied + ids.Count, await Count("event_type='EVIDENCE_ACCESS_DENIED'"));
+        foreach (var id in ids) { Assert.Equal(1, await Count($"event_type='EVIDENCE_ACCESS_DENIED' AND request_id='{id}' AND run_id='RUN-SECA' AND actor_type='USER'")); }
+
+        // 401 and 404 (out of scope: existence hidden) are not audited, nor is any other operation.
+        Assert.Equal(HttpStatusCode.Unauthorized, (await _f.As((string?)null).SendAsync(Download("RUN-SECA", Guid.NewGuid().ToString()))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await _f.As(_scopedToA).SendAsync(Download("RUN-SECB", Guid.NewGuid().ToString()))).StatusCode);
+        Assert.Equal(denied + ids.Count, await Count("event_type='EVIDENCE_ACCESS_DENIED'"));
+        Assert.Contains("EVIDENCE_ACCESS_DENIED", await _f.As(Role.Approver).GetStringAsync("/api/v1/audit-events?limit=200&type=EVIDENCE_ACCESS_DENIED"));
+    }
+
+    [Fact]
     public async Task Download_audit_events_are_visible_through_the_audit_api_with_actor_and_request_id()
     {
         await GenerateAs(Role.Approver, "RUN-SECA", Guid.NewGuid().ToString());

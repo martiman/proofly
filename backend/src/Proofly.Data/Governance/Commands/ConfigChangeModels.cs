@@ -2,7 +2,7 @@ using System.Text.Json.Nodes;
 
 namespace Proofly.Data.Governance.Commands;
 
-public enum GovernanceFailure { NotFound, InvalidState, Duplicate, SeparationOfDuties, Forbidden, Validation }
+public enum GovernanceFailure { NotFound, InvalidState, Duplicate, SeparationOfDuties, Forbidden, Validation, StaleProposal }
 
 /// <summary>A rejected governance command. The API maps it to the contract problem type.</summary>
 public sealed class GovernanceCommandException(GovernanceFailure failure, string detail, string? pointer = null) : Exception(detail)

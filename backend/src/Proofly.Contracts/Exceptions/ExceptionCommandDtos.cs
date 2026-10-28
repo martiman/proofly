@@ -4,12 +4,12 @@ using Proofly.Contracts.Common;
 
 namespace Proofly.Contracts.Exceptions;
 
-public sealed record AssignExceptionRequest(string? OwnerId, string? Note);
+public sealed record AssignExceptionRequest(string? OwnerId, string? Note, string? Reason = null);
 public sealed record ExceptionNoteRequest(string Text);
 public sealed record RequestEvidenceRequest(string Text, string? RequestedFrom);
 
 public sealed record BulkAssignItemDto(string ExceptionId, string Etag);
-public sealed record BulkAssignRequest(string OwnerId, string? Note, IReadOnlyList<BulkAssignItemDto> Items);
+public sealed record BulkAssignRequest(string OwnerId, string? Note, IReadOnlyList<BulkAssignItemDto> Items, string? Reason = null);
 
 /// <summary>Per-item result of bulkAssignExceptions (contract schema BulkResult item). etag only on success, problem only on failure.</summary>
 public sealed record BulkItemResultDto(
@@ -27,6 +27,6 @@ public sealed record SavedViewInputDto(string Name, bool? Shared, JsonElement Fi
 public sealed record SavedViewDto(
     string Id, string Name, bool Shared, JsonElement Filters,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Sort,
-    UserRefDto Owner, DateTimeOffset CreatedAt);
+    UserRefDto Owner, DateTimeOffset CreatedAt, string Etag);
 
 public sealed record SavedViewListDto(IReadOnlyList<SavedViewDto> Items);

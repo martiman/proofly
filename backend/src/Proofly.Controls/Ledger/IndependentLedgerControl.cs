@@ -32,6 +32,9 @@ public static class IndependentLedgerControl
         var contribs = scope.ToDictionary(k => k, _ => new List<Contribution>());
         var exclusions = scope.ToDictionary(k => k, _ => new List<Exclusion>());
         var refsByRef = new HashSet<string>(ord);
+        // Per-account lookups built once (a scan of every entry per account would be quadratic).
+        var entriesByAccount = input.Entries.ToLookup(e => (e.AccountId, e.Amount.Currency));
+        var scopeAccounts = scope.Select(k => k.AccountId).ToHashSet(ord);
         static RecordRef Ref(LedgerEntry e) => new(SourceNames.InternalLedgerEntries, e.LedgerEntryId);
 
         // Bank transactions are supporting evidence, linked through the bank reference.
@@ -67,7 +70,7 @@ public static class IndependentLedgerControl
 
             if (!scope.Contains(key))
             {
-                var otherCcy = scope.Any(k => k.AccountId == e.AccountId);
+                var otherCcy = scopeAccounts.Contains(e.AccountId);
                 findings.Add(otherCcy
                     ? F($"{rf.SourceName}:{e.LedgerEntryId}", LedgerCodes.CalculationScopeMismatch, Severity.High,
                         $"Ledger entry {e.LedgerEntryId} is in {e.Amount.Currency} but account {e.AccountId} is calculated only in other currencies; it was not included and never converted.", [rf], e.Amount)
@@ -159,7 +162,7 @@ public static class IndependentLedgerControl
             var cs = contribs[key].OrderBy(c => c.Record.SourceName, ord).ThenBy(c => c.Record.SourceRowId, ord).ThenBy(c => c.Kind).ToList();
             var applied = cs.Where(c => c.IndependentEffect.Amount != 0m).ToList();
             Money Sum(Func<Contribution, bool> p) => applied.Where(p).Aggregate(zero, (a, c) => a + c.Amount);
-            var entryTypes = input.Entries.Where(e => e.AccountId == key.AccountId && e.Amount.Currency == ccy)
+            var entryTypes = entriesByAccount[(key.AccountId, ccy)]
                 .GroupBy(e => e.LedgerEntryId, ord).ToDictionary(g => g.Key, g => g.First().EntryType, ord);
             bool IsAdj(Contribution c) => c.Record.SourceName == SourceNames.InternalLedgerEntries
                 && entryTypes.TryGetValue(c.Record.SourceRowId, out var ty) && ty == LedgerEntryType.Adjustment;

@@ -48,8 +48,9 @@ internal sealed class ExceptionCommandEndpoints : IEndpointModule
         CommandStatus.InvalidState => new ProblemException(ProblemTypes.InvalidState, o.Detail),
         CommandStatus.RunSuperseded => new ProblemException(ProblemTypes.RunSuperseded, o.Detail),
         CommandStatus.Forbidden => new ProblemException(ProblemTypes.Forbidden, o.Detail),
-        CommandStatus.Duplicate => ProblemException.Validation(o.Pointer ?? "", o.Detail ?? "Duplicate.", "duplicate"),
-        _ => ProblemException.Validation(o.Pointer ?? "", o.Detail ?? "Invalid.", o.Status == CommandStatus.LimitReached ? "limit-reached" : null),
+        CommandStatus.Duplicate => new ProblemException(ProblemTypes.Duplicate, o.Detail),
+        CommandStatus.LimitReached => new ProblemException(ProblemTypes.InvalidState, o.Detail),
+        _ => ProblemException.Validation(o.Pointer ?? "", o.Detail ?? "Invalid."),
     };
 
     private static string RequireText(string? value, string pointer)
@@ -63,6 +64,13 @@ internal sealed class ExceptionCommandEndpoints : IEndpointModule
         if (note is null) { return null; }
         if (note.Trim().Length < 3) { throw ProblemException.Validation("/note", "A note must be at least 3 characters when given."); }
         return note;
+    }
+
+    private static string? CheckReason(string? reason)
+    {
+        if (reason is null) { return null; }
+        if (reason.Trim().Length < 3) { throw ProblemException.Validation("/reason", "A reason must be at least 3 characters when given."); }
+        return reason.Trim();
     }
 
     /// <summary>404 (missing or out of scope) -> 403 (no permission here) -> 428/412 (If-Match), in that order.</summary>
@@ -91,8 +99,9 @@ internal sealed class ExceptionCommandEndpoints : IEndpointModule
     {
         var r = await AuthoriseAsync(exceptionId, ctx, cmds, Permission.ExceptionAssign);
         var note = CheckNote(body.Note);
+        var reason = CheckReason(body.Reason);
         if (body.OwnerId is not null) { RequireText(body.OwnerId, "/ownerId"); }
-        var outcome = await cmds.AssignAsync(exceptionId, r.Version, body.OwnerId, note, Cx(ctx), ctx.RequestAborted);
+        var outcome = await cmds.AssignAsync(exceptionId, r.Version, body.OwnerId, note, Cx(ctx), ctx.RequestAborted, reason);
         if (outcome.Status != CommandStatus.Ok) { throw ToProblem(outcome); }
         return await DetailAsync(exceptionId, ctx, read, clock);
     }
@@ -126,6 +135,7 @@ internal sealed class ExceptionCommandEndpoints : IEndpointModule
         if (body.Items is not { Count: > 0 and <= 200 }) { throw ProblemException.Validation("/items", "Between 1 and 200 items are required."); }
         RequireText(body.OwnerId, "/ownerId");
         var note = CheckNote(body.Note);
+        var reason = CheckReason(body.Reason);
         var dup = body.Items.GroupBy(i => i.ExceptionId).FirstOrDefault(x => x.Count() > 1);
         if (dup is not null) { throw ProblemException.Validation("/items", $"Exception {dup.Key} appears more than once."); }
 
@@ -141,7 +151,7 @@ internal sealed class ExceptionCommandEndpoints : IEndpointModule
                 caller.Require(Permission.ExceptionAssign, r.LegalEntityId);
                 var current = ETags.ForVersion(r.Version);
                 if (!ETags.StrongMatch(item.Etag, current)) { throw new ProblemException(ProblemTypes.PreconditionFailed, "The exception changed since it was read; re-read it and retry."); }
-                var outcome = await cmds.AssignAsync(item.ExceptionId, r.Version, body.OwnerId, note, Cx(ctx), ctx.RequestAborted);
+                var outcome = await cmds.AssignAsync(item.ExceptionId, r.Version, body.OwnerId, note, Cx(ctx), ctx.RequestAborted, reason);
                 if (outcome.Status != CommandStatus.Ok) { throw ToProblem(outcome); }
                 etag = ETags.ForVersion((await cmds.FindAsync(item.ExceptionId, ctx.RequestAborted))!.Version);
             }
@@ -159,7 +169,7 @@ internal sealed class ExceptionCommandEndpoints : IEndpointModule
     // ---- saved views ----
 
     private static SavedViewDto ToDto(SavedViewRow v) => new(v.Id, v.Name, v.Shared, JsonDocument.Parse(v.FiltersJson).RootElement.Clone(), v.Sort,
-        new UserRefDto(v.OwnerId, v.OwnerName), v.CreatedAt);
+        new UserRefDto(v.OwnerId, v.OwnerName), v.CreatedAt, ETags.ForVersion(v.Version));
 
     private static async Task<IResult> ListViewsAsync(HttpContext ctx, IExceptionCommandRepository cmds)
     {

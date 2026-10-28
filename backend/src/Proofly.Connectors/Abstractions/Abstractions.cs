@@ -4,8 +4,8 @@ using Proofly.Domain.Records;
 
 namespace Proofly.Connectors.Abstractions;
 
-/// <summary>Physical formats an adapter can read.</summary>
-public enum SourceFormat { Csv, Xlsx, Xml }
+/// <summary>Physical formats an adapter can read. Xlsx = Office Open XML workbook (.xlsx), Xls = legacy BIFF8 workbook (.xls).</summary>
+public enum SourceFormat { Csv, Xlsx, Xml, Xls }
 
 /// <summary>Stable reason codes (docs/controls/data-completeness.md) used by adapters and the ingestion framework.</summary>
 public static class ReasonCodes

@@ -54,13 +54,13 @@ public sealed class RunComparisonRepository(NpgsqlDataSource dataSource)
             ORDER BY e.id
             """, runId, againstId, ct);
 
-        var positions = new Dictionary<string, (decimal Obligation, decimal Eligible, decimal Result)>[2] { [], [] };
+        var positions = new Dictionary<string, (decimal Obligation, decimal Eligible, decimal? Result)>[2] { [], [] };
         for (var i = 0; i < 2; i++)
         {
             await using var c = dataSource.CreateCommand("SELECT currency::text, obligation_amount, eligible_amount, difference_amount FROM safeguarding_positions WHERE run_id=@r");
             c.Parameters.AddWithValue("r", i == 0 ? runId : againstId);
             await using var r = await c.ExecuteReaderAsync(ct);
-            while (await r.ReadAsync(ct)) positions[i][r.GetString(0)] = (r.GetDecimal(1), r.GetDecimal(2), r.GetDecimal(3));
+            while (await r.ReadAsync(ct)) positions[i][r.GetString(0)] = (r.GetDecimal(1), r.GetDecimal(2), r.IsDBNull(3) ? null : r.GetDecimal(3));
         }
         var drivers = new List<ComparisonDriverRow>();
         foreach (var ccy in positions[0].Keys.Union(positions[1].Keys).OrderBy(c => c, StringComparer.Ordinal))
@@ -70,7 +70,7 @@ public sealed class RunComparisonRepository(NpgsqlDataSource dataSource)
             void Add(string label, decimal delta) { if (delta != 0m) drivers.Add(new ComparisonDriverRow(label, new MoneyRow(delta, ccy))); }
             Add("Client obligation", a.Obligation - b.Obligation);
             Add("Eligible balances", a.Eligible - b.Eligible);
-            Add("Safeguarding position", a.Result - b.Result);
+            if (a.Result is { } ar && b.Result is { } br) { Add("Safeguarding position", ar - br); }
         }
 
         var manifests = new List<Dictionary<string, string>>();

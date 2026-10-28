@@ -22,6 +22,15 @@ namespace Proofly.Data.Audit;
 public interface IAuditWriter
 {
     Task<AuditEventRecord> AppendAsync(NpgsqlTransaction tx, AuditEventInput input, CancellationToken ct = default);
+
+    /// <summary>
+    /// Appends many events, in order, in the caller's transaction. Same chain, hashing and validation as <see cref="AppendAsync"/>;
+    /// the default implementation appends one by one, <see cref="AuditWriter"/> does it in a few round trips per chain.
+    /// </summary>
+    async Task AppendManyAsync(NpgsqlTransaction tx, IReadOnlyList<AuditEventInput> inputs, CancellationToken ct = default)
+    {
+        foreach (var i in inputs) await AppendAsync(tx, i, ct);
+    }
 }
 
 /// <summary>
@@ -112,6 +121,99 @@ public sealed class AuditWriter : IAuditWriter
             input.RequestId, before, after, input.ChainId, seq, lastHash, hash);
     }
 
+    private const int BulkChunk = 1000;
+
+    /// <summary>
+    /// Bulk append: the chain head of each chain is locked and read once, the hash chain is computed in memory in input order, rows
+    /// are inserted with one statement per chunk and the head is updated once per chain. Timestamps are the database clock at the
+    /// lock plus the elapsed monotonic time, so they are non-decreasing in chain order.
+    /// </summary>
+    public async Task AppendManyAsync(NpgsqlTransaction tx, IReadOnlyList<AuditEventInput> inputs, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(tx);
+        ArgumentNullException.ThrowIfNull(inputs);
+        if (inputs.Count == 0) return;
+        if (tx.Connection is null) throw new InvalidOperationException("Transaction is already completed.");
+        foreach (var i in inputs) Validate(i);
+        var conn = tx.Connection;
+
+        var heads = new Dictionary<string, (long Seq, string? Hash, DateTimeOffset Base, System.Diagnostics.Stopwatch Clock)>(StringComparer.Ordinal);
+        foreach (var chain in inputs.Select(i => i.ChainId).Distinct(StringComparer.Ordinal))
+        {
+            await using (var ensure = new NpgsqlCommand(
+                "INSERT INTO audit_chain_head (chain_id, last_seq, last_hash) VALUES (@c, 0, NULL) ON CONFLICT DO NOTHING", conn, tx))
+            {
+                ensure.Parameters.AddWithValue("c", chain);
+                await ensure.ExecuteNonQueryAsync(ct);
+            }
+            await using var lck = new NpgsqlCommand(
+                "SELECT last_seq, last_hash, clock_timestamp() FROM audit_chain_head WHERE chain_id = @c FOR UPDATE", conn, tx);
+            lck.Parameters.AddWithValue("c", chain);
+            await using var r = await lck.ExecuteReaderAsync(ct);
+            await r.ReadAsync(ct);
+            heads[chain] = (r.GetInt64(0), r.IsDBNull(1) ? null : r.GetString(1), AuditCanonical.TruncateToMicros(r.GetFieldValue<DateTimeOffset>(2)),
+                System.Diagnostics.Stopwatch.StartNew());
+        }
+
+        var rows = new List<(AuditEventInput In, string ActorType, DateTimeOffset At, string? Before, string? After, long Seq, string? Prev, string Hash)>(inputs.Count);
+        foreach (var input in inputs)
+        {
+            var h = heads[input.ChainId];
+            var actorType = WireNames.ToUpperSnake(input.Actor.Type);
+            var at = AuditCanonical.TruncateToMicros(h.Base + h.Clock.Elapsed);
+            var seq = h.Seq + 1;
+            var before = input.BeforeJson is null ? null : AuditCanonical.CanonicalJson(input.BeforeJson);
+            var after = input.AfterJson is null ? null : AuditCanonical.CanonicalJson(input.AfterJson);
+            var hash = AuditCanonical.Sha256Hex(AuditCanonical.Canonicalize(
+                input.ChainId, seq, at, input.Type, actorType, input.Actor.Id, input.Actor.Name, input.SubjectKind,
+                input.SubjectId, input.RunId, input.RuleVersion, input.Reason, input.Summary, input.RequestId, before, after, h.Hash));
+            rows.Add((input, actorType, at, before, after, seq, h.Hash, hash));
+            heads[input.ChainId] = (seq, hash, h.Base, h.Clock);
+        }
+
+        foreach (var chunk in rows.Chunk(BulkChunk))
+        {
+            await using var ins = new NpgsqlCommand("""
+                INSERT INTO audit_events (occurred_at, event_type, actor_type, actor_id, actor_name, subject_kind, subject_id,
+                  run_id, rule_version, reason, summary, request_id, before, after, chain_id, chain_seq, previous_hash, hash)
+                SELECT t.at, t.type, t.atype, t.aid, t.aname, t.sk, t.sid, t.run, t.rv, t.reason, t.sum, t.req, t.before::jsonb, t.after::jsonb,
+                       t.c, t.seq, t.prev, t.hash
+                FROM unnest(@at, @type, @atype, @aid, @aname, @sk, @sid, @run, @rv, @reason, @sum, @req, @before, @after, @c, @seq, @prev, @hash)
+                     WITH ORDINALITY AS t(at, type, atype, aid, aname, sk, sid, run, rv, reason, sum, req, before, after, c, seq, prev, hash, ord)
+                ORDER BY t.ord
+                """, conn, tx);
+            void A(string n, NpgsqlDbType t, Array v) => ins.Parameters.Add(new NpgsqlParameter(n, NpgsqlDbType.Array | t) { Value = v });
+            A("at", NpgsqlDbType.TimestampTz, chunk.Select(r => r.At).ToArray());
+            A("type", NpgsqlDbType.Text, chunk.Select(r => r.In.Type).ToArray());
+            A("atype", NpgsqlDbType.Text, chunk.Select(r => r.ActorType).ToArray());
+            A("aid", NpgsqlDbType.Text, chunk.Select(r => r.In.Actor.Id).ToArray());
+            A("aname", NpgsqlDbType.Text, chunk.Select(r => r.In.Actor.Name).ToArray());
+            A("sk", NpgsqlDbType.Text, chunk.Select(r => r.In.SubjectKind).ToArray());
+            A("sid", NpgsqlDbType.Text, chunk.Select(r => r.In.SubjectId).ToArray());
+            A("run", NpgsqlDbType.Text, chunk.Select(r => r.In.RunId).ToArray());
+            A("rv", NpgsqlDbType.Text, chunk.Select(r => r.In.RuleVersion).ToArray());
+            A("reason", NpgsqlDbType.Text, chunk.Select(r => r.In.Reason).ToArray());
+            A("sum", NpgsqlDbType.Text, chunk.Select(r => r.In.Summary).ToArray());
+            A("req", NpgsqlDbType.Text, chunk.Select(r => r.In.RequestId).ToArray());
+            A("before", NpgsqlDbType.Text, chunk.Select(r => r.Before).ToArray());
+            A("after", NpgsqlDbType.Text, chunk.Select(r => r.After).ToArray());
+            A("c", NpgsqlDbType.Text, chunk.Select(r => r.In.ChainId).ToArray());
+            A("seq", NpgsqlDbType.Bigint, chunk.Select(r => r.Seq).ToArray());
+            A("prev", NpgsqlDbType.Text, chunk.Select(r => r.Prev).ToArray());
+            A("hash", NpgsqlDbType.Text, chunk.Select(r => r.Hash).ToArray());
+            await ins.ExecuteNonQueryAsync(ct);
+        }
+
+        foreach (var (chain, h) in heads)
+        {
+            await using var upd = new NpgsqlCommand("UPDATE audit_chain_head SET last_seq = @s, last_hash = @h WHERE chain_id = @c", conn, tx);
+            upd.Parameters.AddWithValue("s", h.Seq);
+            upd.Parameters.AddWithValue("h", h.Hash!);
+            upd.Parameters.AddWithValue("c", chain);
+            await upd.ExecuteNonQueryAsync(ct);
+        }
+    }
+
     private static void Validate(AuditEventInput i)
     {
         if (!AuditVocabulary.EventTypes.Contains(i.Type)) throw new ArgumentException($"Unknown audit event type '{i.Type}'.");
@@ -136,6 +238,7 @@ public static class AuditVocabulary
         "MANUAL_MATCH_PROPOSED", "MANUAL_MATCH_DECIDED", "ADJUSTMENT_PROPOSED", "ADJUSTMENT_DECIDED", "SIGN_OFF_SUBMITTED",
         "SIGN_OFF_RETURNED", "RUN_SIGNED_OFF", "EVIDENCE_PACK_GENERATED", "EVIDENCE_PACK_DOWNLOADED",
         "CONFIG_CHANGE_PROPOSED", "CONFIG_CHANGE_DECIDED", "ACCESS_CHANGED",
+        "ADJUSTMENT_EXPIRED", "RUN_PROCESSED", "SIGN_OFF_INVALIDATED", "EVIDENCE_ACCESS_DENIED",
     };
 
     public static readonly IReadOnlySet<string> SubjectKinds = new HashSet<string>(StringComparer.Ordinal)

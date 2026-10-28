@@ -96,7 +96,7 @@ public class ContractDriftTests(ContractApiFixture f)
         if (op.Permission == WireNames.ToPermission(Permission.AuthSelf)) { return; } // every authenticated caller
 
         // Every permission except the required one: never 200, and specifically 403 (or 404 where existence must not leak).
-        var others = ContractApiFixture.AllPermissions.Where(p => p != op.Permission);
+        var others = ContractApiFixture.AllPermissions.Where(p => !op.AcceptedPermissions.Contains(p));
         var res = await f.Client("lacking", others).SendAsync(Requests.Build(op, query: Requests.RequiredQuery(op)));
         Assert.True(res.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.NotFound,
             $"{op.OperationId} ({op.Permission}) answered {(int)res.StatusCode} to a caller without the permission.");

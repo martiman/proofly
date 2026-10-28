@@ -3,8 +3,8 @@ using Proofly.Contracts.Common;
 namespace Proofly.Contracts.Safeguarding;
 
 public sealed record SafeguardingCurrencyPositionDto(
-    string Currency, MoneyDto Obligation, MoneyDto EligibleBalance, MoneyDto ApprovedAdjustments, MoneyDto Result,
-    string State, IReadOnlyList<string> Qualifications, MoneyDto? PreviousResult, IReadOnlyList<string> ExceptionIds);
+    string Currency, MoneyDto Obligation, MoneyDto EligibleBalance, MoneyDto ApprovedAdjustments, MoneyDto? Result,
+    string State, IReadOnlyList<string> Qualifications, MoneyDto? PreviousResult, IReadOnlyList<string> ExceptionIds, bool Stale);
 
 public sealed record ObligationLineDto(string AccountId, string Currency, MoneyDto Amount,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? MovementType);
@@ -30,5 +30,5 @@ public sealed record SafeguardingPositionDto(
     string RunId, DateOnly BusinessDate, string LegalEntityId, string EvidenceReadiness, string ApprovalState,
     IReadOnlyList<SafeguardingCurrencyPositionDto> Positions, IReadOnlyList<ObligationLineDto> Obligations,
     IReadOnlyList<EligibleBalanceLineDto> EligibleBalances, IReadOnlyList<SafeguardingAdjustmentDto> Adjustments,
-    IReadOnlyList<ChangeDriverDto> ChangeAnalysis);
+    IReadOnlyList<ChangeDriverDto> ChangeAnalysis, bool Stale);
 

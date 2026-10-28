@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Performance spike harness (issue #48). A console tool, deliberately NOT a test project: dotnet test does not run it. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <ServerGarbageCollector>false</ServerGarbageCollector>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Proofly.Api/Proofly.Api.csproj" />
+    <ProjectReference Include="../../src/Proofly.Data/Proofly.Data.csproj" />
+    <ProjectReference Include="../../src/Proofly.Connectors/Proofly.Connectors.csproj" />
+    <ProjectReference Include="../../src/Proofly.Controls/Proofly.Controls.csproj" />
+    <ProjectReference Include="../../src/Proofly.Domain/Proofly.Domain.csproj" />
+  </ItemGroup>
+</Project>

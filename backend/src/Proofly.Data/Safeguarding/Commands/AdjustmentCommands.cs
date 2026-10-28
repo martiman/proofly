@@ -9,7 +9,7 @@ using Proofly.Domain.Enums;
 
 namespace Proofly.Data.Safeguarding.Commands;
 
-public enum CommandOutcome { Ok, NotFound, InvalidState, PreconditionFailed, SeparationOfDuties, Validation, RunLocked }
+public enum CommandOutcome { Ok, NotFound, InvalidState, PreconditionFailed, SeparationOfDuties, Validation, RunLocked, StaleProposal, RunSuperseded }
 
 /// <summary>Outcome of an adjustment command. <see cref="AdjustmentId"/> is set on success; Pointer/Detail describe a failure.</summary>
 public sealed record AdjustmentCommandResult(CommandOutcome Outcome, string? AdjustmentId = null, string? RunId = null, string? Pointer = null, string? Detail = null);
@@ -39,7 +39,7 @@ public interface IAdjustmentCommands
 /// <summary>
 /// One transaction per command: guarded UPDATE (version), state checks, business change, audit event, commit.
 /// Control results and signed runs are never touched: runs that are SIGNED_OFF or SUPERSEDED reject new adjustments and
-/// their adjustments are not expired. Position staleness has no schema flag; the audit event is the only record (see issue report).
+/// their adjustments are not expired. An approved or expired adjustment flags the stored position of its currency <c>stale</c> until the run is reprocessed.
 /// </summary>
 public sealed class AdjustmentCommands(NpgsqlDataSource db, IAuditWriter audit) : IAdjustmentCommands
 {
@@ -88,7 +88,8 @@ public sealed class AdjustmentCommands(NpgsqlDataSource db, IAuditWriter audit) 
             businessDate = DateOnly.FromDateTime(rd.GetDateTime(3));
             currencies = rd.GetFieldValue<string[]>(4);
         }
-        if (runState is "SIGNED_OFF" or "SUPERSEDED" || signOff == "SIGNED_OFF")
+        if (runState == "SUPERSEDED") { return new(CommandOutcome.RunSuperseded, RunId: cmd.RunId, Detail: "The run is superseded by a newer version; it cannot take new adjustments."); }
+        if (runState is "SIGNED_OFF" || signOff == "SIGNED_OFF")
         {
             return new(CommandOutcome.RunLocked, RunId: cmd.RunId, Detail: $"The run is {runState}/{signOff} and cannot take new adjustments.");
         }
@@ -142,21 +143,22 @@ public sealed class AdjustmentCommands(NpgsqlDataSource db, IAuditWriter audit) 
         await using var conn = await db.OpenConnectionAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
 
-        string runId, entity, status, proposer, runState, signOff; int version;
+        string runId, entity, status, proposer, runState, signOff, adjCurrency; int version;
         await using (var c = new NpgsqlCommand(
-            @"SELECT a.run_id, r.legal_entity_id, a.status, a.proposed_by_user_id, a.version, r.state, r.sign_off_state
+            @"SELECT a.run_id, r.legal_entity_id, a.status, a.proposed_by_user_id, a.version, r.state, r.sign_off_state, a.currency::text
               FROM safeguarding_adjustments a JOIN runs r ON r.id=a.run_id WHERE a.id=@id FOR UPDATE OF a", conn, tx))
         {
             c.Parameters.AddWithValue("id", cmd.AdjustmentId);
             await using var rd = await c.ExecuteReaderAsync(ct);
             if (!await rd.ReadAsync(ct)) { return new(CommandOutcome.NotFound); }
             runId = rd.GetString(0); entity = rd.GetString(1); status = rd.GetString(2); proposer = rd.GetString(3); version = rd.GetInt32(4);
-            runState = rd.GetString(5); signOff = rd.GetString(6);
+            runState = rd.GetString(5); signOff = rd.GetString(6); adjCurrency = rd.GetString(7);
         }
         if (version != cmd.ExpectedVersion) { return new(CommandOutcome.PreconditionFailed); }
         if (status != "PROPOSED") { return new(CommandOutcome.InvalidState, Detail: $"Only a PROPOSED adjustment can be decided; this one is {status}."); }
         if (proposer == cmd.UserId) { return new(CommandOutcome.SeparationOfDuties, Detail: "The proposer cannot decide their own adjustment."); }
-        if (runState is "SIGNED_OFF" or "SUPERSEDED" || signOff == "SIGNED_OFF") { return new(CommandOutcome.RunLocked, Detail: $"The run is {runState}/{signOff}; its adjustments are frozen."); }
+        if (runState == "SUPERSEDED") { return new(CommandOutcome.RunSuperseded, Detail: "The run is superseded by a newer version; its adjustments are frozen."); }
+        if (runState is "SIGNED_OFF" || signOff == "SIGNED_OFF") { return new(CommandOutcome.RunLocked, Detail: $"The run is {runState}/{signOff}; its adjustments are frozen."); }
 
         string approvalId; int proposalVersion; int approvalRowVersion;
         await using (var c = new NpgsqlCommand(
@@ -167,7 +169,7 @@ public sealed class AdjustmentCommands(NpgsqlDataSource db, IAuditWriter audit) 
             if (!await rd.ReadAsync(ct)) { return new(CommandOutcome.InvalidState, Detail: "The adjustment has no pending approval request."); }
             approvalId = rd.GetString(0); proposalVersion = rd.GetInt32(1); approvalRowVersion = rd.GetInt32(2);
         }
-        if (cmd.ProposalVersion is { } pv && pv != proposalVersion) { return new(CommandOutcome.InvalidState, Detail: $"The proposal changed (reviewed version {pv}, current {proposalVersion}); re-read it."); }
+        if (cmd.ProposalVersion is { } pv && pv != proposalVersion) { return new(CommandOutcome.StaleProposal, Detail: $"The proposal changed (reviewed version {pv}, current {proposalVersion}); re-read it."); }
 
         var newStatus = cmd.Approve ? "APPROVED" : "REJECTED";
         await using (var c = new NpgsqlCommand(
@@ -189,11 +191,21 @@ public sealed class AdjustmentCommands(NpgsqlDataSource db, IAuditWriter audit) 
             if (await c.ExecuteNonQueryAsync(ct) != 1) { return new(CommandOutcome.PreconditionFailed); }
         }
 
+        if (cmd.Approve) { await MarkStaleAsync(conn, tx, runId, adjCurrency, ct); }
         await audit.AppendAsync(tx, new AuditEventInput("ADJUSTMENT_DECIDED", new AuditActor(ActorType.User, cmd.UserId, cmd.UserId), "ADJUSTMENT", cmd.AdjustmentId,
             $"{(cmd.Approve ? "Approved" : "Rejected")} safeguarding adjustment; the run's safeguarding position is stale until a manual reprocess", cmd.Reason, runId, null, cmd.RequestId,
             JsonSerializer.Serialize(new { status }), JsonSerializer.Serialize(new { status = newStatus, approvalId }), entity), ct);
         await tx.CommitAsync(ct);
         return new(CommandOutcome.Ok, cmd.AdjustmentId, runId);
+    }
+
+    /// <summary>The stored position of the run no longer includes this adjustment; flag it until the run is reprocessed.</summary>
+    private static async Task MarkStaleAsync(NpgsqlConnection conn, NpgsqlTransaction tx, string runId, string currency, CancellationToken ct)
+    {
+        await using var c = new NpgsqlCommand("UPDATE safeguarding_positions SET stale = true, updated_at = now() WHERE run_id = @r AND currency = @c", conn, tx);
+        c.Parameters.AddWithValue("r", runId);
+        c.Parameters.AddWithValue("c", currency);
+        await c.ExecuteNonQueryAsync(ct);
     }
 
     public async Task<ExpireAdjustmentsResult> ExpireAsync(DateOnly asOf, CancellationToken ct)
@@ -213,23 +225,23 @@ public sealed class AdjustmentCommands(NpgsqlDataSource db, IAuditWriter audit) 
         {
             await using var conn = await db.OpenConnectionAsync(ct);
             await using var tx = await conn.BeginTransactionAsync(ct);
-            string runId, entity; DateOnly exp;
+            string runId, entity, currency; DateOnly exp;
             await using (var c = new NpgsqlCommand(
-                "SELECT a.run_id, r.legal_entity_id, a.expires_on FROM safeguarding_adjustments a JOIN runs r ON r.id=a.run_id WHERE a.id=@id AND a.status='APPROVED' AND a.expires_on < @d FOR UPDATE OF a SKIP LOCKED", conn, tx))
+                "SELECT a.run_id, r.legal_entity_id, a.expires_on, a.currency::text FROM safeguarding_adjustments a JOIN runs r ON r.id=a.run_id WHERE a.id=@id AND a.status='APPROVED' AND a.expires_on < @d FOR UPDATE OF a SKIP LOCKED", conn, tx))
             {
                 c.Parameters.AddWithValue("id", id);
                 c.Parameters.Add(new NpgsqlParameter("d", NpgsqlDbType.Date) { Value = asOf });
                 await using var rd = await c.ExecuteReaderAsync(ct);
                 if (!await rd.ReadAsync(ct)) { continue; } // already expired or being handled elsewhere
-                runId = rd.GetString(0); entity = rd.GetString(1); exp = DateOnly.FromDateTime(rd.GetDateTime(2));
+                runId = rd.GetString(0); entity = rd.GetString(1); exp = DateOnly.FromDateTime(rd.GetDateTime(2)); currency = rd.GetString(3);
             }
             await using (var c = new NpgsqlCommand("UPDATE safeguarding_adjustments SET status='EXPIRED' WHERE id=@id AND status='APPROVED'", conn, tx))
             {
                 c.Parameters.AddWithValue("id", id);
                 await c.ExecuteNonQueryAsync(ct);
             }
-            // The contract has no ADJUSTMENT_EXPIRED event type; ADJUSTMENT_DECIDED with a SYSTEM actor is the closest valid one.
-            await audit.AppendAsync(tx, new AuditEventInput("ADJUSTMENT_DECIDED", AuditActor.System("safeguarding.adjustment.expire"), "ADJUSTMENT", id,
+            await MarkStaleAsync(conn, tx, runId, currency, ct);
+            await audit.AppendAsync(tx, new AuditEventInput("ADJUSTMENT_EXPIRED", AuditActor.System("safeguarding.adjustment.expire"), "ADJUSTMENT", id,
                 "Approved adjustment expired; the run's safeguarding position is stale until a manual reprocess",
                 $"Expired: expiresOn {exp:yyyy-MM-dd} is before business date {asOf:yyyy-MM-dd}", runId, null, null,
                 JsonSerializer.Serialize(new { status = "APPROVED" }), JsonSerializer.Serialize(new { status = "EXPIRED" }), entity), ct);

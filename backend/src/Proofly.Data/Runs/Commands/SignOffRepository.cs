@@ -34,7 +34,7 @@ public static class SignOffDataModule
 public sealed class SignOffRepository(NpgsqlDataSource db, IAuditWriter audit) : ISignOffRepository
 {
     public const string PolicyVersion = "adr-0005-mvp";
-    private const string TerminalSql = "('RESOLVED','ACCEPTED_DIFFERENCE','FALSE_POSITIVE')";
+    private const string TerminalSql = UnresolvedBlockingExceptions.TerminalStatusesSql;
     private static readonly HashSet<string> Terminal = ["RESOLVED", "ACCEPTED_DIFFERENCE", "FALSE_POSITIVE"];
     private static bool IsOpen(string status) => !Terminal.Contains(status);
 
@@ -103,11 +103,7 @@ public sealed class SignOffRepository(NpgsqlDataSource db, IAuditWriter audit) :
             }
         }
 
-        await using (var cmd = Cmd(c, tx, $"SELECT id, status FROM exceptions WHERE run_id=@r AND blocking AND status NOT IN {TerminalSql} ORDER BY id COLLATE \"C\"", ("r", runId)))
-        await using (var r = await cmd.ExecuteReaderAsync(ct))
-        {
-            while (await r.ReadAsync(ct)) { blockers.Add($"Blocking exception {r.GetString(0)} is unresolved ({r.GetString(1)})."); }
-        }
+        foreach (var (id, status) in await UnresolvedBlockingExceptions.ListAsync(c, tx, runId, ct)) { blockers.Add($"Blocking exception {id} is unresolved ({status})."); }
         return blockers;
     }
 
@@ -206,7 +202,7 @@ public sealed class SignOffRepository(NpgsqlDataSource db, IAuditWriter audit) :
         await using (var cmd = Cmd(c, null, """
             SELECT a.id, a.occurred_at, a.event_type, a.actor_id, COALESCE(u.name, a.actor_id, 'system'), a.actor_type, a.reason
             FROM audit_events a LEFT JOIN users u ON u.id = a.actor_id
-            WHERE a.run_id=@r AND a.event_type IN ('SIGN_OFF_SUBMITTED','SIGN_OFF_RETURNED','RUN_SIGNED_OFF') ORDER BY a.occurred_at, a.id
+            WHERE a.run_id=@r AND a.event_type IN ('SIGN_OFF_SUBMITTED','SIGN_OFF_RETURNED','SIGN_OFF_INVALIDATED','RUN_SIGNED_OFF') ORDER BY a.occurred_at, a.id
             """, ("r", runId)))
         await using (var r = await cmd.ExecuteReaderAsync(ct))
         {
@@ -379,7 +375,7 @@ public sealed class SignOffRepository(NpgsqlDataSource db, IAuditWriter audit) :
             await using (var upd = Cmd(c, tx, "UPDATE run_signoffs SET state='PREPARATION_INCOMPLETE', returned_reason=@r WHERE id=@id AND version=@v", ("r", detail), ("id", so.Id), ("v", so.Version))) { await upd.ExecuteNonQueryAsync(ct); }
             await DecideApprovalAsync(c, tx, so.ApprovalId, "INVALIDATED", null, null, detail, ct);
             await using (var upd = Cmd(c, tx, "UPDATE runs SET state='REVIEW_REQUIRED', sign_off_state='PREPARATION_INCOMPLETE' WHERE id=@id AND version=@v", ("id", runId), ("v", run.Version))) { await upd.ExecuteNonQueryAsync(ct); }
-            await audit.AppendAsync(tx, new AuditEventInput("SIGN_OFF_RETURNED", await ActorAsync(c, tx, ctx.ActorUserId, ct), "SIGN_OFF", runId,
+            await audit.AppendAsync(tx, new AuditEventInput("SIGN_OFF_INVALIDATED", await ActorAsync(c, tx, ctx.ActorUserId, ct), "SIGN_OFF", runId,
                 $"Sign-off attempt for run {runId} refused as stale; sign-off returned to PREPARATION_INCOMPLETE", detail, runId, run.RulesetVersion, ctx.RequestId,
                 new JsonObject { ["state"] = run.State, ["signOffState"] = "APPROVAL_PENDING" }.ToJsonString(),
                 new JsonObject { ["state"] = "REVIEW_REQUIRED", ["signOffState"] = "PREPARATION_INCOMPLETE", ["stale"] = true, ["approvalId"] = so.ApprovalId }.ToJsonString(), run.LegalEntityId), ct);

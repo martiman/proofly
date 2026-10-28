@@ -22,6 +22,7 @@ public static class ProblemTypes
     public static readonly ProblemType InvalidState = new("invalid-state", 409, "Invalid state");
     public static readonly ProblemType RunSuperseded = new("run-superseded", 409, "Run is superseded");
     public static readonly ProblemType StaleSignoff = new("stale-signoff", 409, "Sign-off is stale");
+    public static readonly ProblemType StaleProposal = new("stale-proposal", 409, "The proposal changed since it was reviewed");
     public static readonly ProblemType IdempotencyInProgress = new("idempotency-in-progress", 409, "A request with this Idempotency-Key is still in progress");
     public static readonly ProblemType Duplicate = new("duplicate", 409, "Duplicate");
     public static readonly ProblemType PreconditionFailed = new("precondition-failed", 412, "If-Match does not match the current version");

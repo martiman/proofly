@@ -50,6 +50,17 @@ public static class MatchingControl
         private readonly List<MatchItem> _left = Sorted(pair.Left);
         private readonly List<MatchItem> _right = Sorted(pair.Right);
 
+        // Records are removed lazily (a set of keys) and the lists are compacted once at the start of each rule, so committing a
+        // group is O(group) instead of a scan of the whole pair. Order is preserved, so results are identical.
+        private readonly HashSet<string> _removedLeft = new(StringComparer.Ordinal);
+        private readonly HashSet<string> _removedRight = new(StringComparer.Ordinal);
+
+        private void Compact()
+        {
+            if (_removedLeft.Count > 0) { _left.RemoveAll(i => _removedLeft.Contains(i.Key)); _removedLeft.Clear(); }
+            if (_removedRight.Count > 0) { _right.RemoveAll(i => _removedRight.Contains(i.Key)); _removedRight.Clear(); }
+        }
+
         private static List<MatchItem> Sorted(IEnumerable<MatchItem> items) =>
             items.OrderBy(i => i.Source, StringComparer.Ordinal).ThenBy(i => i.Id, StringComparer.Ordinal).ToList();
 
@@ -63,31 +74,65 @@ public static class MatchingControl
 
         public void Run()
         {
-            Step(MatchingCodes.ExactIdentifierMatch, MatchGroupStatus.Matched, true, false,
+            Step(MatchingCodes.ExactIdentifierMatch, MatchGroupStatus.Matched, true, false, EdgeIndex.Reference,
                 (l, r) => RefEq(l, r) && SameCcy(l, r) && l.Amount.Amount == r.Amount.Amount && DateDiff(l, r) is null or 0);
-            Step(MatchingCodes.ExactCompositeMatch, MatchGroupStatus.Matched, true, false,
+            Step(MatchingCodes.ExactCompositeMatch, MatchGroupStatus.Matched, true, false, EdgeIndex.CurrencyAmountDate,
                 (l, r) => SameCcy(l, r) && l.Amount.Amount == r.Amount.Amount && DateDiff(l, r) == 0 && (Blank(l.Reference) || Blank(r.Reference)));
-            Step(MatchingCodes.DateToleranceMatch, MatchGroupStatus.Matched, true, false,
+            Step(MatchingCodes.DateToleranceMatch, MatchGroupStatus.Matched, true, false, EdgeIndex.Reference,
                 (l, r) => RefEq(l, r) && SameCcy(l, r) && l.Amount.Amount == r.Amount.Amount && DateOk(l, r));
-            Step(MatchingCodes.AmountToleranceMatch, MatchGroupStatus.Matched, true, true,
+            Step(MatchingCodes.AmountToleranceMatch, MatchGroupStatus.Matched, true, true, EdgeIndex.Reference,
                 (l, r) => RefEq(l, r) && SameCcy(l, r) && InTolerance(l, r) && DateOk(l, r));
             if (o.AllowGroupedMatches)
             {
                 Grouped();
             }
-            Step(FindingCodes.ValueMismatch, MatchGroupStatus.ValueMismatch, false, true,
+            Step(FindingCodes.ValueMismatch, MatchGroupStatus.ValueMismatch, false, true, EdgeIndex.Reference,
                 (l, r) => RefEq(l, r) && SameCcy(l, r) && !InTolerance(l, r) && DateOk(l, r));
-            Step(MatchingCodes.CurrencyMismatch, MatchGroupStatus.Unmatched, false, false,
+            Step(MatchingCodes.CurrencyMismatch, MatchGroupStatus.Unmatched, false, false, EdgeIndex.Reference,
                 (l, r) => RefEq(l, r) && !SameCcy(l, r));
             Leftovers();
         }
 
-        private void Step(string ruleId, MatchGroupStatus status, bool tolerant, bool amountTolerant, Func<MatchItem, MatchItem, bool> edge)
+        /// <summary>
+        /// Which right-hand records a left record can possibly form an edge with. The index only narrows the candidates: every rule's
+        /// own predicate is still applied to each candidate, and candidates are visited in right-list order, so the edges (and their
+        /// order) are exactly those of the full cross product, without visiting pairs that cannot match.
+        /// </summary>
+        private enum EdgeIndex { Reference, CurrencyAmountDate }
+
+        private static readonly IReadOnlyList<MatchItem> NoItems = [];
+
+        private void Step(string ruleId, MatchGroupStatus status, bool tolerant, bool amountTolerant, EdgeIndex index, Func<MatchItem, MatchItem, bool> edge)
         {
+            Compact();
             var edges = new List<(MatchItem L, MatchItem R)>();
+            // Reference rules require a non-blank equal reference; the composite rule requires equal currency, amount and a known equal date.
+            var byReference = new Dictionary<string, List<MatchItem>>(StringComparer.Ordinal);
+            var byComposite = new Dictionary<(string, decimal, DateOnly), List<MatchItem>>();
+            foreach (var r in _right)
+            {
+                if (index == EdgeIndex.Reference)
+                {
+                    if (!Blank(r.Reference)) { (byReference.TryGetValue(r.Reference!, out var l1) ? l1 : byReference[r.Reference!] = []).Add(r); }
+                }
+                else if (r.Date is { } d)
+                {
+                    var k = (r.Amount.Currency, r.Amount.Amount, d);
+                    (byComposite.TryGetValue(k, out var l2) ? l2 : byComposite[k] = []).Add(r);
+                }
+            }
             foreach (var l in _left)
             {
-                foreach (var r in _right)
+                IReadOnlyList<MatchItem> candidates = NoItems;
+                if (index == EdgeIndex.Reference)
+                {
+                    if (!Blank(l.Reference) && byReference.TryGetValue(l.Reference!, out var c1)) { candidates = c1; }
+                }
+                else if (l.Date is { } d && byComposite.TryGetValue((l.Amount.Currency, l.Amount.Amount, d), out var c2))
+                {
+                    candidates = c2;
+                }
+                foreach (var r in candidates)
                 {
                     if (edge(l, r))
                     {
@@ -155,12 +200,18 @@ public static class MatchingControl
 
         private void Grouped()
         {
+            Compact();
             var lefts = _left.Where(l => !Blank(l.Reference)).GroupBy(l => (l.Reference!, l.Amount.Currency));
+            var rightIndex = new Dictionary<(string, string), List<MatchItem>>();
+            foreach (var r in _right)
+            {
+                if (r.Reference is { } rr) { (rightIndex.TryGetValue((rr, r.Amount.Currency), out var l) ? l : rightIndex[(rr, r.Amount.Currency)] = []).Add(r); }
+            }
             var plan = new List<(List<MatchItem> L, List<MatchItem> R)>();
             foreach (var g in lefts.OrderBy(g => g.Key.Item1, StringComparer.Ordinal).ThenBy(g => g.Key.Item2, StringComparer.Ordinal))
             {
                 var ls = g.ToList();
-                var rs = _right.Where(r => r.Reference == g.Key.Item1 && r.Amount.Currency == g.Key.Item2).ToList();
+                var rs = rightIndex.TryGetValue(g.Key, out var found) ? found.ToList() : [];
                 if (rs.Count == 0 || (ls.Count == 1 && rs.Count == 1))
                 {
                     continue;
@@ -238,6 +289,7 @@ public static class MatchingControl
 
         private void Leftovers()
         {
+            Compact();
             foreach (var l in _left.ToList())
             {
                 Add(MatchGroupStatus.Unmatched, "1:0", MatchingCodes.NoCandidate, MatchingCodes.NoCandidate, l.Amount.Currency, null, null,
@@ -262,10 +314,8 @@ public static class MatchingControl
 
         private void Remove(IEnumerable<MatchItem> ls, IEnumerable<MatchItem> rs)
         {
-            var lk = ls.Select(i => i.Key).ToHashSet(StringComparer.Ordinal);
-            var rk = rs.Select(i => i.Key).ToHashSet(StringComparer.Ordinal);
-            _left.RemoveAll(i => lk.Contains(i.Key));
-            _right.RemoveAll(i => rk.Contains(i.Key));
+            foreach (var i in ls) { _removedLeft.Add(i.Key); }
+            foreach (var i in rs) { _removedRight.Add(i.Key); }
         }
 
         private void Add(MatchGroupStatus status, string cardinality, string ruleId, string reason, string ccy, Money? diff, int? dateDiff,

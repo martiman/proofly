@@ -99,6 +99,48 @@ public class TransactionsApiTests(AuthFixture f) : IClassFixture<AuthFixture>, I
     }
 
     [Fact]
+    public async Task Lineage_by_subject_for_transaction_record_exception_and_control_result()
+    {
+        var list = await Ok("/api/v1/runs/R1/transactions?kind=BANK_TRANSFER");
+        var tr = list.GetProperty("items").EnumerateArray().Single(i => i.GetProperty("sourceRowId").GetString() == "T-1");
+        var id = tr.GetProperty("id").GetString()!;
+        var recordId = tr.GetProperty("recordId").GetString()!;
+        var viaTransaction = await Ok($"/api/v1/runs/R1/transactions/{id}/lineage");
+
+        var byKind = await Ok($"/api/v1/lineage/TRANSACTION/{id}");
+        Assert.Equal("TRANSACTION", byKind.GetProperty("subjectKind").GetString());
+        Assert.Equal(id, byKind.GetProperty("subjectId").GetString());
+        Assert.Equal(viaTransaction.GetProperty("nodes").GetRawText(), byKind.GetProperty("nodes").GetRawText());
+        Assert.Equal(viaTransaction.GetProperty("edges").GetRawText(), byKind.GetProperty("edges").GetRawText());
+        Assert.Equal(byKind.GetRawText(), (await Ok($"/api/v1/lineage/TRANSACTION/{id}?runId=R1")).GetRawText());
+
+        var byRecord = await Ok("/api/v1/lineage/RECORD/" + Uri.EscapeDataString(recordId));
+        Assert.Equal("RECORD", byRecord.GetProperty("subjectKind").GetString());
+        Assert.Equal(viaTransaction.GetProperty("nodes").GetRawText(), byRecord.GetProperty("nodes").GetRawText());
+
+        var ex = await Ok("/api/v1/lineage/EXCEPTION/X-1");
+        Assert.Contains(ex.GetProperty("nodes").EnumerateArray(), n => n.GetProperty("id").GetString() == "EXC-X-1" && n.GetProperty("kind").GetString() == "CONTROL_RESULT");
+        Assert.Contains(ex.GetProperty("nodes").EnumerateArray(), n => n.GetProperty("kind").GetString() == "DELIVERY");
+        var cr = await Ok("/api/v1/lineage/CONTROL_RESULT/EXC-X-1");
+        Assert.Equal("CONTROL_RESULT", cr.GetProperty("subjectKind").GetString());
+        Assert.Contains(cr.GetProperty("nodes").EnumerateArray(), n => n.GetProperty("id").GetString() == "EXC-X-1");
+
+        // Unknown subjects, a subject outside the given run and a malformed id are 404; an unknown kind is rejected by the contract (422).
+        foreach (var url in new[] { "/api/v1/lineage/TRANSACTION/TRF-0", "/api/v1/lineage/EXCEPTION/X-none", $"/api/v1/lineage/TRANSACTION/{id}?runId=R2", "/api/v1/lineage/TRANSACTION/garbage", "/api/v1/lineage/RECORD/nope:1" })
+        {
+            Assert.Equal(HttpStatusCode.NotFound, (await Viewer.GetAsync(url)).StatusCode);
+        }
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await Viewer.GetAsync($"/api/v1/lineage/BOGUS/{id}")).StatusCode);
+
+        // Entity scope (404, no existence leak), permission (403 without evidence.view) and authentication (401).
+        var onlyB = F.As(F.Tokens.Issue("sub-le-b"));
+        Assert.Equal(HttpStatusCode.NotFound, (await onlyB.GetAsync($"/api/v1/lineage/TRANSACTION/{id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await onlyB.GetAsync("/api/v1/lineage/EXCEPTION/X-1")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await F.As(F.Tokens.Issue("sub-sec")).GetAsync("/api/v1/lineage/EXCEPTION/X-1")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await F.As(null).GetAsync("/api/v1/lineage/EXCEPTION/X-1")).StatusCode);
+    }
+
+    [Fact]
     public async Task Accounts_list_and_ledger_bridge()
     {
         var accounts = await Ok("/api/v1/runs/R1/accounts?limit=2");

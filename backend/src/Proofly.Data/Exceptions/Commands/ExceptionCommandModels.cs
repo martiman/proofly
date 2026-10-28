@@ -1,6 +1,6 @@
 namespace Proofly.Data.Exceptions.Commands;
 
-public enum CommandStatus { Ok, NotFound, Stale, InvalidState, RunSuperseded, Invalid, LimitReached, Duplicate, Forbidden }
+public enum CommandStatus { Ok, NotFound, Stale, InvalidState, RunSuperseded, Invalid, LimitReached, Duplicate, Forbidden, StaleProposal }
 
 /// <summary>Outcome of a command transaction. On anything but Ok the transaction was rolled back: no change and no audit event.</summary>
 public sealed record CommandOutcome(CommandStatus Status, string? Detail = null, string? Pointer = null)

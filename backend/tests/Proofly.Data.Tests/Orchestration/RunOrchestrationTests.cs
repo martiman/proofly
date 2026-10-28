@@ -135,10 +135,10 @@ public class RunOrchestrationTests : IClassFixture<SchemaFixture>, IAsyncLifetim
         // Per-control results and audit.
         Assert.Equal(5, await Q<long>($"SELECT count(*) FROM run_control_results WHERE run_id='{run}'"));
         Assert.Contains(await Q<string>($"SELECT state FROM run_control_results WHERE run_id='{run}' AND control='data_completeness'"), new[] { "PASSED", "QUALIFIED" });
-        Assert.Equal(6, await Q<long>($"SELECT count(*) FROM audit_events WHERE run_id='{run}' AND event_type='CONTROL_EXECUTED'"));
+        Assert.Equal(5, await Q<long>($"SELECT count(*) FROM audit_events WHERE run_id='{run}' AND event_type='CONTROL_EXECUTED'"));
         Assert.Equal(1, await Q<long>($"SELECT count(*) FROM audit_events WHERE run_id='{run}' AND event_type='RUN_STARTED'"));
         Assert.Equal(await Q<long>($"SELECT count(*) FROM exceptions WHERE run_id='{run}'"), await Q<long>($"SELECT count(*) FROM audit_events WHERE run_id='{run}' AND event_type='EXCEPTION_CREATED'"));
-        Assert.Equal(1, await Q<long>($"SELECT count(*) FROM audit_events WHERE run_id='{run}' AND after->>'event'='RUN_PROCESSED' AND after->>'resultHash'=(SELECT result_hash FROM runs WHERE id='{run}') AND rule_version=(SELECT ruleset_version FROM runs WHERE id='{run}')"));
+        Assert.Equal(1, await Q<long>($"SELECT count(*) FROM audit_events WHERE run_id='{run}' AND event_type='RUN_PROCESSED' AND after->>'event'='RUN_PROCESSED' AND after->>'resultHash'=(SELECT result_hash FROM runs WHERE id='{run}') AND rule_version=(SELECT ruleset_version FROM runs WHERE id='{run}')"));
     }
 
     [Fact]

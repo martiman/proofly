@@ -46,8 +46,8 @@ public sealed class EntityIsolationTests : IClassFixture<SeededDb>, IAsyncLifeti
         Assert.True(unmapped.Count == 0, "Add a seeded resource for path parameter(s) " + string.Join(", ", unmapped) + " in SeededDb.IdsOf (or SeededDb.GlobalIds if not entity-owned).");
     }
 
-    // downloadEvidencePack: 404 until a pack exists (covered in EvidenceAuditTests); getLineage: not yet implemented in the API.
-    private static readonly HashSet<string> NoSeedNeeded = ["downloadEvidencePack", "getLineage"];
+    // downloadEvidencePack: 404 until a pack exists (covered in EvidenceAuditTests). getLineage is seeded (EXCEPTION subject).
+    private static readonly HashSet<string> NoSeedNeeded = ["downloadEvidencePack"];
 
     [Fact]
     public async Task Control_the_seeded_entity_B_resources_exist_for_a_caller_in_scope_of_everything()

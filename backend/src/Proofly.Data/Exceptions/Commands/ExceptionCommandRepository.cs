@@ -14,7 +14,8 @@ namespace Proofly.Data.Exceptions.Commands;
 public interface IExceptionCommandRepository
 {
     Task<ExceptionRef?> FindAsync(string exceptionId, CancellationToken ct = default);
-    Task<CommandOutcome> AssignAsync(string exceptionId, int expectedVersion, string? ownerId, string? note, CommandContext ctx, CancellationToken ct = default);
+    /// <param name="reason">Audit reason; when null the note is used.</param>
+    Task<CommandOutcome> AssignAsync(string exceptionId, int expectedVersion, string? ownerId, string? note, CommandContext ctx, CancellationToken ct = default, string? reason = null);
     Task<CommandOutcome> AddNoteAsync(string exceptionId, int expectedVersion, string text, CommandContext ctx, CancellationToken ct = default);
     Task<CommandOutcome> RequestEvidenceAsync(string exceptionId, int expectedVersion, string text, string? requestedFrom, CommandContext ctx, CancellationToken ct = default);
 
@@ -110,7 +111,7 @@ public sealed class ExceptionCommandRepository(NpgsqlDataSource db, IAuditWriter
     private static string Json(params (string Key, string? Value)[] items) =>
         JsonSerializer.Serialize(items.ToDictionary(i => i.Key, i => i.Value));
 
-    public async Task<CommandOutcome> AssignAsync(string exceptionId, int expectedVersion, string? ownerId, string? note, CommandContext ctx, CancellationToken ct = default)
+    public async Task<CommandOutcome> AssignAsync(string exceptionId, int expectedVersion, string? ownerId, string? note, CommandContext ctx, CancellationToken ct = default, string? reason = null)
     {
         await using var conn = await db.OpenConnectionAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
@@ -141,14 +142,14 @@ public sealed class ExceptionCommandRepository(NpgsqlDataSource db, IAuditWriter
             a.Parameters.AddWithValue("e", exceptionId);
             a.Parameters.Add(new NpgsqlParameter("o", NpgsqlDbType.Text) { Value = (object?)ownerId ?? DBNull.Value });
             a.Parameters.AddWithValue("by", ctx.ActorUserId);
-            a.Parameters.AddWithValue("r", note ?? (ownerId is null ? "Unassigned" : "Assigned"));
+            a.Parameters.AddWithValue("r", reason ?? note ?? (ownerId is null ? "Unassigned" : "Assigned"));
             await a.ExecuteNonQueryAsync(ct);
         }
 
         var summary = ownerId is null ? "Unassigned" : $"Assigned to {ownerName}";
         await TimelineAsync(tx, exceptionId, "ASSIGNMENT", ctx.ActorUserId, note is null ? summary : $"{summary}: {note}", ct);
         await audit.AppendAsync(tx, new AuditEventInput("EXCEPTION_ASSIGNED", new AuditActor(ActorType.User, ctx.ActorUserId, await ActorNameAsync(tx, ctx.ActorUserId, ct)),
-            "EXCEPTION", exceptionId, $"Exception {exceptionId}: {summary.ToLowerInvariant()}", note, e.RunId, null, ctx.RequestId,
+            "EXCEPTION", exceptionId, $"Exception {exceptionId}: {summary.ToLowerInvariant()}", reason ?? note, e.RunId, null, ctx.RequestId,
             Json(("ownerId", e.OwnerId)), Json(("ownerId", ownerId)), e.LegalEntityId), ct);
         await tx.CommitAsync(ct);
         return CommandOutcome.Ok;

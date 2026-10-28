@@ -46,6 +46,12 @@ internal static class ContractContext
     }
 }
 
+/// <summary>Optional hook: records a refused (403) request for an operation (for example denied evidence-pack access). One call per request.</summary>
+public interface IAccessDeniedAudit
+{
+    Task RecordAsync(HttpContext ctx, OperationSpec operation, Caller? caller, CancellationToken ct);
+}
+
 /// <summary>Stage 1: match the contract operation, authenticate (401), authorise by x-required-permission (403), require If-Match (428).</summary>
 public sealed class AccessMiddleware(RequestDelegate next, OpenApiContract contract, ICallerAccessor accessor)
 {
@@ -72,8 +78,22 @@ public sealed class AccessMiddleware(RequestDelegate next, OpenApiContract contr
 
         var caller = accessor.GetCaller(ctx) ?? throw new ProblemException(ProblemTypes.Unauthenticated);
         ctx.Items[CallerExtensions.ItemKey] = caller;
+        try { await AuthoriseAndRunAsync(ctx, op, caller); }
+        catch (ProblemException ex) when (ex.ProblemType.Status == StatusCodes.Status403Forbidden && ctx.RequestServices.GetService<IAccessDeniedAudit>() is { } auditor)
+        {
+            // Best effort and at most once per request (the exception ends the pipeline); a failing audit never changes the 403.
+            try { await auditor.RecordAsync(ctx, op, caller, ctx.RequestAborted); }
+            catch (Exception) when (!ctx.RequestAborted.IsCancellationRequested) { /* logged by the auditor */ }
+            throw;
+        }
+    }
+
+    private async Task AuthoriseAndRunAsync(HttpContext ctx, OperationSpec op, Caller caller)
+    {
         var needed = op.RequiredPermission;
-        if (needed is not null && needed != WireNames.ToPermission(Permission.AuthSelf) && !caller.Permissions.Contains(needed))
+        var allowed = needed is not null && (needed == WireNames.ToPermission(Permission.AuthSelf) || caller.Permissions.Contains(needed)
+            || op.RequiredPermissionAny.Any(caller.Permissions.Contains));
+        if (needed is not null && !allowed)
         {
             throw new ProblemException(ProblemTypes.Forbidden, "The caller lacks the required permission.");
         }
@@ -303,6 +323,18 @@ public sealed class ResponseValidationMiddleware(RequestDelegate next, IOptions<
     public async Task InvokeAsync(HttpContext ctx)
     {
         if (!options.Value.ValidateResponses || ctx.Feature().Operation is not { } op) { await next(ctx); return; }
+
+        // Binary downloads (a documented 2xx body without a JSON schema, e.g. the evidence pack zip) are streamed, never buffered:
+        // there is no schema to check, so only the status is verified after the handler returned.
+        if (op.Responses.Any(r => r.Key.StartsWith('2') && r.Value is { HasBody: true, SchemaPointer: null }))
+        {
+            await next(ctx);
+            if (ctx.Response.StatusCode < 400 && !op.Responses.ContainsKey(ctx.Response.StatusCode.ToString()) && !op.Responses.ContainsKey("default"))
+            {
+                logger.LogError("Response contract violation for {Operation} ({Status}): status is not documented", op.OperationId, ctx.Response.StatusCode);
+            }
+            return;
+        }
 
         var body = await ContractContext.CaptureAsync(ctx, next);
         var status = ctx.Response.StatusCode;

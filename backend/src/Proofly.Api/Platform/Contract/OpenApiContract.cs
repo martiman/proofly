@@ -2,7 +2,6 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
-using Json.Schema;
 
 namespace Proofly.Api.Platform.Contract;
 
@@ -17,6 +16,8 @@ public sealed class OperationSpec
     public required string Template { get; init; }
     public required Regex PathPattern { get; init; }
     public string? RequiredPermission { get; init; }
+    /// <summary>x-required-permission-any: the caller needs any one of these (the handler then enforces the exact permission). Empty = only RequiredPermission.</summary>
+    public IReadOnlyList<string> RequiredPermissionAny { get; init; } = [];
     public required IReadOnlyList<ParameterSpec> Parameters { get; init; }
     public bool BodyDeclared { get; init; }
     public bool BodyRequired { get; init; }
@@ -32,9 +33,7 @@ public sealed class OperationSpec
 public sealed class OpenApiDocument
 {
     private readonly JsonNode _root;
-    private readonly BuildOptions _build;
-    private readonly string _baseUri;
-    private readonly Dictionary<string, JsonSchema> _schemas = new();
+    private readonly SchemaValidator _validator;
     private static readonly string[] Methods = ["get", "put", "post", "delete", "patch"];
 
     public string BasePath { get; }
@@ -42,47 +41,36 @@ public sealed class OpenApiDocument
 
     public OpenApiDocument(string yaml, string baseUri)
     {
-        _baseUri = baseUri;
         _root = YamlJson.Parse(new StringReader(yaml)) ?? throw new InvalidDataException("Empty OpenAPI document.");
-        using var json = JsonDocument.Parse(_root.ToJsonString());
-        _build = new BuildOptions { SchemaRegistry = new SchemaRegistry() };
-        _build.SchemaRegistry.Register(new JsonElementBaseDocument(json.RootElement.Clone(), new Uri(baseUri)));
+        _validator = new SchemaValidator(_root);
 
         var server = _root["servers"]?[0]?["url"]?.GetValue<string>() ?? "";
         var idx = server.IndexOf("://", StringComparison.Ordinal);
         var slash = idx >= 0 ? server.IndexOf('/', idx + 3) : server.IndexOf('/');
         BasePath = slash >= 0 ? server[slash..].TrimEnd('/') : "";
         Operations = ParseOperations();
+        AssertSchemasSupported();
+    }
+
+    /// <summary>Fails loudly when the document uses a JSON Schema keyword or format the validator does not implement.</summary>
+    private void AssertSchemasSupported()
+    {
+        var schemas = new List<(string, JsonNode)>();
+        if (_root["components"]?["schemas"] is JsonObject comps) { foreach (var (n, node) in comps) { schemas.Add(($"/components/schemas/{n}", node!)); } }
+        foreach (var pointer in Operations.SelectMany(o => o.Parameters.Select(p => p.SchemaPointer)
+            .Concat(o.Responses.Values.Select(r => r.SchemaPointer)).Append(o.BodySchemaPointer)).Where(p => p is not null).Distinct())
+        {
+            if (Walk(pointer!) is { } node) { schemas.Add((pointer!, node)); }
+        }
+        var problems = _validator.FindUnsupported(schemas);
+        if (problems.Count > 0) { throw new InvalidDataException("The contract uses unsupported JSON Schema features: " + string.Join("; ", problems.Distinct())); }
     }
 
     /// <summary>Validates a JSON instance against the schema at a pointer in this document. Returns errors (empty = valid).</summary>
     public IReadOnlyList<(string Pointer, string Message)> Validate(string schemaPointer, JsonNode? instance)
     {
-        if (!_schemas.TryGetValue(schemaPointer, out var schema))
-        {
-            var reference = _baseUri + "#" + Uri.EscapeDataString(schemaPointer).Replace("%2F", "/");
-            schema = JsonSchema.FromText(new JsonObject { ["$ref"] = reference }.ToJsonString(), _build);
-            _schemas[schemaPointer] = schema;
-        }
-        using var doc = JsonDocument.Parse(instance is null ? "null" : instance.ToJsonString());
-        var results = schema.Evaluate(doc.RootElement, new EvaluationOptions { RequireFormatValidation = true, OutputFormat = OutputFormat.Hierarchical });
-        var errors = new List<(string, string)>();
-        if (!results.IsValid) { Collect(results, errors); }
-        if (!results.IsValid && errors.Count == 0) { errors.Add(("", "Does not match the contract schema.")); }
-        return errors;
-    }
-
-    private static void Collect(EvaluationResults r, List<(string, string)> sink)
-    {
-        if (r.Errors is { Count: > 0 })
-        {
-            foreach (var (_, message) in r.Errors)
-            {
-                var item = (r.InstanceLocation.ToString(), message);
-                if (!sink.Contains(item)) { sink.Add(item); }
-            }
-        }
-        foreach (var d in r.Details ?? []) { if (!d.IsValid) { Collect(d, sink); } }
+        var errors = _validator.Validate(schemaPointer, instance);
+        return errors.Count == 0 ? errors : errors.Distinct().ToList();
     }
 
     private List<OperationSpec> ParseOperations()
@@ -127,6 +115,7 @@ public sealed class OpenApiDocument
                     Template = template,
                     PathPattern = new Regex("^" + Regex.Replace(Regex.Escape(BasePath + template), @"\\\{[^}]+\}", "[^/]+") + "/?$", RegexOptions.CultureInvariant),
                     RequiredPermission = op["x-required-permission"]?.GetValue<string>(),
+                    RequiredPermissionAny = (op["x-required-permission-any"] as JsonArray)?.Select(n => n!.GetValue<string>()).ToList() ?? [],
                     Parameters = parameters,
                     BodyDeclared = op["requestBody"] is not null,
                     BodyRequired = bodyNode?["required"]?.GetValue<bool>() ?? false,

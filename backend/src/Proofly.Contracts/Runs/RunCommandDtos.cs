@@ -13,4 +13,4 @@ public sealed record RunComparisonAreaDto(string Area, string State, string Agai
 /// <summary>Contract schema RunComparison.</summary>
 public sealed record RunComparisonDto(
     RunDto Run, RunDto Against, IReadOnlyList<RunComparisonAreaDto> ControlAreas, IReadOnlyList<string> NewExceptionIds,
-    IReadOnlyList<string> ResolvedExceptionIds, IReadOnlyList<ChangeDriverDto> SafeguardingDelta, IReadOnlyList<string> ChangedDeliveries);
+    IReadOnlyList<string> ResolvedExceptionIds, IReadOnlyList<string> ChangedExceptionIds, IReadOnlyList<ChangeDriverDto> SafeguardingDelta, IReadOnlyList<string> ChangedDeliveries);

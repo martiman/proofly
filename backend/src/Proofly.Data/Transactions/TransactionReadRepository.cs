@@ -30,16 +30,17 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
 
     private static string Like(string s) => "%" + s.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
 
-    private static (string Where, List<NpgsqlParameter> Params) TxWhere(TransactionFilter f)
+    /// <summary>Filter on the cheap (record) columns only, or on every column when <paramref name="enrichedToo"/> (match status and exception presence need the enrichment).</summary>
+    private static (string Where, List<NpgsqlParameter> Params) TxWhere(TransactionFilter f, bool enrichedToo = true)
     {
         var w = new List<string>();
         var p = new List<NpgsqlParameter>();
         void Add(string cond, string name, object value, NpgsqlDbType type) { w.Add(cond); p.Add(new NpgsqlParameter(name, type) { Value = value }); }
         if (f.Kind is not null) { Add("kind = @kind", "kind", f.Kind, NpgsqlDbType.Text); }
-        if (f.MatchStatus is not null) { Add("match_status = @mstatus", "mstatus", f.MatchStatus, NpgsqlDbType.Text); }
+        if (enrichedToo && f.MatchStatus is not null) { Add("match_status = @mstatus", "mstatus", f.MatchStatus, NpgsqlDbType.Text); }
         if (f.AccountId is not null) { Add("account_id = @acct", "acct", f.AccountId, NpgsqlDbType.Text); }
         if (f.Currency is not null) { Add("currency = @ccy", "ccy", f.Currency, NpgsqlDbType.Text); }
-        if (f.HasException is { } he) { w.Add(he ? "cardinality(exception_ids) > 0" : "cardinality(exception_ids) = 0"); }
+        if (enrichedToo && f.HasException is { } he) { w.Add(he ? "cardinality(exception_ids) > 0" : "cardinality(exception_ids) = 0"); }
         if (f.From is { } from) { Add("ts >= @from", "from", from.UtcDateTime, NpgsqlDbType.TimestampTz); }
         if (f.To is { } to) { Add("ts <= @to", "to", to.UtcDateTime, NpgsqlDbType.TimestampTz); }
         if (!string.IsNullOrWhiteSpace(f.Search))
@@ -51,15 +52,28 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
 
     public async Task<TransactionPageResult> ListTransactionsAsync(string runId, TransactionFilter filter, TransactionCursor? after, int limit, bool includeTotal, CancellationToken ct = default)
     {
-        var (where, ps) = TxWhere(filter);
-        var cte = "WITH " + TransactionSql.TxCte + ", f AS (SELECT * FROM tx" + where + ")";
-
-        var sb = new StringBuilder(cte).Append(" SELECT ").Append(TransactionSql.TxColumns).Append(" FROM f");
-        if (after is not null) { sb.Append(" WHERE (ts, id) > (@c_ts, @c_id)"); }
-        sb.Append(" ORDER BY ts, id LIMIT @lim");
+        // Filters on the cheap record columns (the usual case) select and order the page FIRST, then enrich only its rows (lifecycle, match,
+        // exceptions are per-row index lookups). A filter on match status or exception presence needs every row enriched, so it enriches the
+        // whole run first (the earlier behaviour); results are identical either way.
+        var pageFirst = filter.MatchStatus is null && filter.HasException is null;
+        var (where, ps) = TxWhere(filter, enrichedToo: !pageFirst);
+        string pageSql, aggBase;
+        if (pageFirst)
+        {
+            var cursor = after is null ? "" : (where.Length == 0 ? " WHERE" : " AND") + " (ts, id) > (@c_ts, @c_id)";
+            pageSql = "WITH " + TransactionSql.SrcCte + ", sel AS (SELECT * FROM src_run" + where + cursor + " ORDER BY ts, id LIMIT @lim), tx AS ("
+                + TransactionSql.Enrich("sel") + ") SELECT " + TransactionSql.TxColumns + " FROM tx ORDER BY ts, id";
+            aggBase = "WITH " + TransactionSql.SrcCte + ", f AS (SELECT * FROM src_run" + where + ")";
+        }
+        else
+        {
+            var cte = "WITH " + TransactionSql.TxCte + ", f AS (SELECT * FROM tx" + where + ")";
+            pageSql = cte + " SELECT " + TransactionSql.TxColumns + " FROM f" + (after is null ? "" : " WHERE (ts, id) > (@c_ts, @c_id)") + " ORDER BY ts, id LIMIT @lim";
+            aggBase = cte;
+        }
 
         var rows = new List<TransactionRow>();
-        await using (var cmd = db.CreateCommand(sb.ToString()))
+        await using (var cmd = db.CreateCommand(pageSql))
         {
             Bind(cmd, runId, ps);
             if (after is not null)
@@ -76,7 +90,7 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
 
         // Aggregates over the full filtered set (not the page), per currency, NUMERIC arithmetic in SQL.
         var aggs = new List<CurrencyAggregate>();
-        await using (var cmd = db.CreateCommand(cte + """
+        await using (var cmd = db.CreateCommand(aggBase + """
              SELECT currency, count(*), COALESCE(SUM(amount) FILTER (WHERE direction = 'DEBIT'), 0),
                     COALESCE(SUM(amount) FILTER (WHERE direction = 'CREDIT'), 0)
                FROM f GROUP BY currency ORDER BY currency
@@ -92,6 +106,10 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
     private static void Bind(NpgsqlCommand cmd, string runId, List<NpgsqlParameter> ps)
     {
         cmd.Parameters.AddWithValue("run", runId);
+        if (cmd.CommandText.Contains("@acct::text", StringComparison.Ordinal) && !ps.Any(p => p.ParameterName == "acct"))
+        {
+            cmd.Parameters.Add(new NpgsqlParameter("acct", NpgsqlDbType.Text) { Value = DBNull.Value }); // all accounts
+        }
         foreach (var p in ps) { cmd.Parameters.Add(new NpgsqlParameter(p.ParameterName, p.NpgsqlDbType) { Value = p.Value }); }
     }
 
@@ -111,7 +129,8 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
 
     public async Task<TransactionRow?> GetTransactionAsync(string runId, string transactionId, CancellationToken ct = default)
     {
-        await using var cmd = db.CreateCommand("WITH " + TransactionSql.TxCte + " SELECT " + TransactionSql.TxColumns + " FROM tx WHERE id = @id");
+        await using var cmd = db.CreateCommand("WITH " + TransactionSql.SrcCte + ", sel AS (SELECT * FROM src_run WHERE id = @id), tx AS (" + TransactionSql.Enrich("sel")
+            + ") SELECT " + TransactionSql.TxColumns + " FROM tx");
         cmd.Parameters.AddWithValue("run", runId);
         cmd.Parameters.AddWithValue("id", transactionId);
         await using var r = await cmd.ExecuteReaderAsync(ct);
@@ -146,11 +165,11 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
         // Related records: share the instruction/reference key (own key, linked key, or linked by the other record).
         await using (var cmd = db.CreateCommand("""
             WITH 
-            """ + TransactionSql.TxCte + """
+            """ + TransactionSql.SrcCte + """
 
-            , me AS (SELECT key_a, key_b FROM tx WHERE id = @id)
+            , me AS (SELECT key_a, key_b FROM src_run WHERE id = @id)
             SELECT t.id, t.kind, t.source, t.source_row_id, t.delivery_id, t.reference, t.amount, t.currency, t.fingerprint, t.rn, t.rid
-              FROM tx t, me
+              FROM src_run t, me
              WHERE t.id <> @id
                AND ((t.key_a IS NOT NULL AND t.key_a IN (me.key_a, me.key_b))
                     OR (t.key_b IS NOT NULL AND t.key_b IN (me.key_a, me.key_b)))
@@ -219,9 +238,26 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
 
     public async Task<AccountPageResult> ListAccountsAsync(string runId, AccountFilter filter, AccountCursor? after, int limit, CancellationToken ct = default)
     {
+        // Without a state filter the page of accounts is selected and ordered from the balances alone, and only its accounts get their
+        // exceptions and state resolved (they are the expensive part). A state filter needs the state of every account, so it resolves all
+        // of them (the earlier behaviour). The per-currency aggregates (account count, total difference) never need the state unless it is filtered on.
+        var pageFirst = filter.State is null;
         var (where, ps) = AccWhere(filter);
-        var cte = "WITH " + TransactionSql.TxCte + ", " + TransactionSql.AccCte + ", f AS (SELECT * FROM acc" + where + ")";
-        var sql = cte + " SELECT " + AccColumns + " FROM f" + (after is null ? "" : " WHERE (account_id, currency) > (@c_a, @c_c)") + " ORDER BY account_id, currency LIMIT @lim";
+        string sql, aggBase;
+        if (pageFirst)
+        {
+            var cursor = after is null ? "" : (where.Length == 0 ? " WHERE" : " AND") + " (account_id, currency) > (@c_a, @c_c)";
+            sql = "WITH " + TransactionSql.SrcCte + ", " + TransactionSql.AccBaseCte + ", pg AS (SELECT * FROM acc_base" + where + cursor
+                + " ORDER BY account_id, currency LIMIT @lim), sc AS (SELECT array_agg(account_id) AS accts FROM pg), "
+                + TransactionSql.AccExCte("pg", "s.account_id = ANY((SELECT accts FROM sc)::text[])") + " SELECT " + AccColumns + " FROM acc ORDER BY account_id, currency";
+            aggBase = "WITH " + TransactionSql.AccBaseCte + ", f AS (SELECT * FROM acc_base" + where + ")";
+        }
+        else
+        {
+            var cte = "WITH " + TransactionSql.SrcCte + ", " + TransactionSql.AccCte + ", f AS (SELECT * FROM acc" + where + ")";
+            sql = cte + " SELECT " + AccColumns + " FROM f" + (after is null ? "" : " WHERE (account_id, currency) > (@c_a, @c_c)") + " ORDER BY account_id, currency LIMIT @lim";
+            aggBase = cte;
+        }
         var rows = new List<AccountRow>();
         await using (var cmd = db.CreateCommand(sql))
         {
@@ -235,7 +271,7 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
         if (hasMore) { rows.RemoveAt(rows.Count - 1); }
 
         var aggs = new List<AccountAggregate>();
-        await using (var cmd = db.CreateCommand(cte + " SELECT currency, count(*), COALESCE(SUM(difference), 0) FROM f GROUP BY currency ORDER BY currency"))
+        await using (var cmd = db.CreateCommand(aggBase + " SELECT currency, count(*), COALESCE(SUM(difference), 0) FROM f GROUP BY currency ORDER BY currency"))
         {
             Bind(cmd, runId, ps);
             await using var r = await cmd.ExecuteReaderAsync(ct);
@@ -246,10 +282,10 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
 
     public async Task<IReadOnlyList<AccountRow>> FindAccountAsync(string runId, string accountId, string? currency, CancellationToken ct = default)
     {
-        await using var cmd = db.CreateCommand("WITH " + TransactionSql.TxCte + ", " + TransactionSql.AccCte +
+        await using var cmd = db.CreateCommand("WITH " + TransactionSql.SrcCte + ", " + TransactionSql.AccCte +
             " SELECT " + AccColumns + " FROM acc WHERE account_id = @acct AND (@ccy::text IS NULL OR currency = @ccy) ORDER BY currency");
         cmd.Parameters.AddWithValue("run", runId);
-        cmd.Parameters.AddWithValue("acct", accountId);
+        cmd.Parameters.Add(new NpgsqlParameter("acct", NpgsqlDbType.Text) { Value = accountId });
         cmd.Parameters.Add(new NpgsqlParameter("ccy", NpgsqlDbType.Text) { Value = (object?)currency ?? DBNull.Value });
         var rows = new List<AccountRow>();
         await using var r = await cmd.ExecuteReaderAsync(ct);

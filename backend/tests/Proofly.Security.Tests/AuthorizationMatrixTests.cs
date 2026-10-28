@@ -23,8 +23,8 @@ public sealed class AuthorizationMatrixTests : IClassFixture<SeededDb>, IAsyncLi
 
     public async Task DisposeAsync() => await _f.DisposeAsync();
 
-    /// <summary>The only contract operation without a route today (issue: lineage API). Anything else missing is a regression.</summary>
-    private static readonly HashSet<string> KnownUnimplemented = ["GET /api/v1/lineage/{subjectKind}/{subjectId}"];
+    /// <summary>Every contract operation has a route; any operation missing one is a regression.</summary>
+    private static readonly HashSet<string> KnownUnimplemented = [];
 
     private IEnumerable<Proofly.Api.Platform.Contract.OperationSpec> Implemented(IEnumerable<Proofly.Api.Platform.Contract.OperationSpec> ops)
     {
@@ -41,6 +41,8 @@ public sealed class AuthorizationMatrixTests : IClassFixture<SeededDb>, IAsyncLi
 
     private string Id(string p) => _a.TryGetValue(p, out var v) ? v : "x-" + p;
     private static bool Holds(Role r, string wire) => RolePermissions.For(r).Any(p => WireNames.ToPermission(p) == wire);
+    /// <summary>The role passes the platform check: the primary permission or any x-required-permission-any alternative.</summary>
+    private static bool Passes(Role r, Proofly.Api.Platform.Contract.OperationSpec o) => Holds(r, o.RequiredPermission!) || o.RequiredPermissionAny.Any(a => Holds(r, a));
 
     [Fact]
     public void Every_contract_permission_is_a_known_permission_and_every_operation_declares_one()
@@ -58,7 +60,7 @@ public sealed class AuthorizationMatrixTests : IClassFixture<SeededDb>, IAsyncLi
         foreach (var role in RolePermissions.Roles)
         {
             var client = _f.As(role);
-            foreach (var op in Implemented(Contract.WithPermission).Where(o => o.RequiredPermission != "auth.self" && !Holds(role, o.RequiredPermission!)))
+            foreach (var op in Implemented(Contract.WithPermission).Where(o => o.RequiredPermission != "auth.self" && !Passes(role, o)))
             {
                 using var req = Contract.Request(op, Id);
                 var res = await client.SendAsync(req);
@@ -94,7 +96,7 @@ public sealed class AuthorizationMatrixTests : IClassFixture<SeededDb>, IAsyncLi
     {
         // Evidence packs are exports (read-only reviewer may export per roles-and-approvals.md); saved views are per-user preferences.
         var allowed = new HashSet<string> { "POST /exception-views", "DELETE /exception-views/{viewId}", "POST /runs/{runId}/evidence-pack" };
-        var offenders = Contract.Operations.Where(Contract.IsMutating).Where(o => Holds(Role.Viewer, o.RequiredPermission!))
+        var offenders = Contract.Operations.Where(Contract.IsMutating).Where(o => Passes(Role.Viewer, o))
             .Select(o => $"{o.Method} {o.Template}").Where(s => !allowed.Contains(s)).ToList();
         Assert.True(offenders.Count == 0, "VIEWER can call: " + string.Join(", ", offenders));
     }
@@ -103,7 +105,7 @@ public sealed class AuthorizationMatrixTests : IClassFixture<SeededDb>, IAsyncLi
     public async Task Viewer_gets_403_on_mutating_operations_that_change_financial_state()
     {
         var client = _f.As(Role.Viewer);
-        foreach (var op in Contract.Operations.Where(Contract.IsMutating).Where(o => !Holds(Role.Viewer, o.RequiredPermission!)))
+        foreach (var op in Contract.Operations.Where(Contract.IsMutating).Where(o => !Passes(Role.Viewer, o)))
         {
             using var req = Contract.Request(op, Id);
             Assert.Equal(HttpStatusCode.Forbidden, (await client.SendAsync(req)).StatusCode);
@@ -145,6 +147,21 @@ public sealed class AuthorizationMatrixTests : IClassFixture<SeededDb>, IAsyncLi
         Assert.False(Holds(Role.SecurityAdmin, "signoff.decide"));
         Assert.False(Holds(Role.ConfigAdmin, "signoff.decide"));
         Assert.False(Holds(Role.ConfigAdmin, "exception.approve"));
+    }
+
+    [Fact]
+    public async Task Config_changes_can_be_decided_by_config_admin_and_security_admin_only_other_roles_get_403()
+    {
+        // x-required-permission-any: settings.approve | access.manage lets both admins through the platform; the handler then enforces the kind.
+        foreach (var role in RolePermissions.Roles)
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/v1/settings/changes/CC-nope/decision") { Content = new StringContent("""{"decision":"APPROVE","reason":"ok then"}""", System.Text.Encoding.UTF8, "application/json") };
+            req.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+            req.Headers.Add("If-Match", "\"v1\"");
+            var res = await _f.As(role).SendAsync(req);
+            var passes = role is Role.ConfigAdmin or Role.SecurityAdmin;
+            Assert.True(passes ? res.StatusCode == HttpStatusCode.NotFound : res.StatusCode == HttpStatusCode.Forbidden, $"{role} -> {(int)res.StatusCode}");
+        }
     }
 
     [Fact]

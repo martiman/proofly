@@ -28,6 +28,7 @@ internal sealed class GovernanceCommandProblemMapper : IProblemExceptionMapper
     {
         GovernanceFailure.NotFound => new ProblemException(ProblemTypes.NotFound, g.Message),
         GovernanceFailure.InvalidState => new ProblemException(ProblemTypes.InvalidState, g.Message),
+        GovernanceFailure.StaleProposal => new ProblemException(ProblemTypes.StaleProposal, g.Message),
         GovernanceFailure.Duplicate => new ProblemException(ProblemTypes.Duplicate, g.Message),
         GovernanceFailure.SeparationOfDuties => new ProblemException(ProblemTypes.SeparationOfDuties, g.Message),
         GovernanceFailure.Forbidden => new ProblemException(ProblemTypes.Forbidden, g.Message),
@@ -133,6 +134,6 @@ internal sealed class ConfigChangeEndpoints : IEndpointModule
             new UserRefDto(r.ProposerId, r.ProposerName), a.ApproverId is null ? null : new UserRefDto(a.ApproverId, a.ApproverName ?? a.ApproverId),
             a.RequiredRole, a.Status, a.Decision, a.Rationale, [], a.PolicyVersion, a.ProposedAt, a.DecidedAt, canDecide);
         return new ConfigChangeDto(r.Id, r.TargetKind, r.TargetId, r.Status, true, ToDict(r.BeforeJson), ToDict(r.AfterJson)!, diff,
-            new UserRefDto(r.ProposerId, r.ProposerName), r.ProposedAt, approval, r.EffectiveFrom.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), r.Reason);
+            new UserRefDto(r.ProposerId, r.ProposerName), r.ProposedAt, approval, r.EffectiveFrom.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), r.Reason, r.RulesetVersion);
     }
 }

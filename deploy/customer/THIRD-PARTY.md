@@ -15,19 +15,19 @@ Re-run both before every release and update this file in the same PR (a licence 
 
 | Area | Packages | MIT | Apache-2.0 | PostgreSQL / BSD / ISC | Needs a decision |
 |---|---|---|---|---|---|
-| .NET shipped (Api, Worker and their libraries) | 62 | 41 | 17 | 1 | 3 (FLAG 1) |
+| .NET shipped (Api, Worker and their libraries) | 58 | 37 | 17 | 1 | 0 (FLAG 1 resolved) |
 | .NET test-only (never shipped) | 15 | 7 | 8 | 0 | 0 |
 | npm runtime closure (bundled into the web build) | 98 | 95 | 0 | 3 | 0 |
 | npm build tooling (not shipped) | 45 | - | - | - | 0 blocking (FLAG 3, tool only) |
 
 ## Findings that need an owner decision
 
-### FLAG 1: JsonSchema.Net, Json.More.Net and JsonPointer.Net use the Open Source Maintenance Fee EULA (shipped; conflicts with the MIT/Apache-only policy)
+### FLAG 1 (RESOLVED 2026-10-28): JsonSchema.Net, Json.More.Net and JsonPointer.Net (Open Source Maintenance Fee EULA)
 
-- Packages: `JsonSchema.Net 9.5.0` (direct, `Proofly.Api`), `Json.More.Net 3.0.1` and `JsonPointer.Net 7.0.3` (transitive). Their `.nuspec` says `<license type="file">OSMFEULA.txt</license>`, not an SPDX expression.
-- The source is MIT, but the pre-built NuGet binaries come with the "Open Source Maintenance Fee Agreement": users of the binary release in revenue-generating activity with annual gross revenue of US$10,000 or more owe the project a fee, unless they pay separate support or maintenance fees to the maintainers. The agreement states that the fee is not a licence fee and that self-compiled binaries are free, but it is a non-standard contractual obligation attached to a library that is shipped to customers and used on every request (contract validation in `Proofly.Api/Platform/Contract`).
-- Not acceptable under the permissive-only policy without a decision. Options: (a) pay the fee or buy support and record the agreement here; (b) build the three libraries from their MIT source in CI and consume the self-built packages; (c) replace JSON Schema validation with a library under a plain MIT or Apache licence; (d) pin a release made before the EULA (verify that version's licence first).
-- Owner: product and legal. Not changed in code by issue #52.
+- Was: `JsonSchema.Net 9.5.0` (direct, `Proofly.Api`) with `Json.More.Net 3.0.1` and `JsonPointer.Net 7.0.3` (transitive, as was `Humanizer.Core 3.0.10`, MIT, which left the graph with them); their `.nuspec` carried `<license type="file">OSMFEULA.txt</license>`, a fee agreement for binary users in revenue-generating activity, which conflicts with the permissive-only policy.
+- Resolution (option c): the three packages are removed from `Directory.Packages.props` and `Proofly.Api.csproj`. Contract validation now uses the in-house `SchemaValidator` (`backend/src/Proofly.Api/Platform/Contract/SchemaValidator.cs`), which implements only the JSON Schema keywords `openapi.yaml` uses and adds no dependency (it runs on `System.Text.Json`). Third-party alternatives were not chosen: Corvus.JsonSchema is a source-generator/code-generation based stack with a large dependency surface, NJsonSchema pulls Newtonsoft.Json and Namotion.Reflection and is a schema-generation library, and the contract needs about 20 keywords.
+- Guard: `SchemaKeywordInventoryTests` fails when the contract uses a keyword or format the validator does not implement, and `OpenApiDocument` refuses to load such a document at start-up (no silent ignoring). `SchemaValidatorTests` cover each supported keyword.
+- Evidence: `dotnet list backend/Proofly.sln package --include-transitive` lists 73 packages; the `.nuspec` of every one is `MIT`, `Apache-2.0` or `PostgreSQL` (Npgsql), except `xunit.abstractions 2.0.3` (tests only, licence URL points to the xunit Apache-2.0 licence). No `OSMFEULA`, no `type="file"` licence remains.
 
 ### FLAG 2: prerelease packages in the shipped graph
 
@@ -53,10 +53,6 @@ Accepted for the pilot because metrics are off by default and only reachable fro
 
 | Package | Version | Licence | Used by | Direct |
 |---|---|---|---|---|
-| Humanizer.Core | 3.0.10 | MIT | Api |  |
-| Json.More.Net | 3.0.1 | MIT source + Open Source Maintenance Fee EULA (FLAG 1) | Api |  |
-| JsonPointer.Net | 7.0.3 | MIT source + Open Source Maintenance Fee EULA (FLAG 1) | Api |  |
-| JsonSchema.Net | 9.5.0 | MIT source + Open Source Maintenance Fee EULA (FLAG 1) | Api | yes |
 | Microsoft.Extensions.Configuration | 10.0.0 | MIT | Data, Worker |  |
 | Microsoft.Extensions.Configuration.Abstractions | 10.0.0 | MIT | Data, Worker | yes |
 | Microsoft.Extensions.Configuration.Binder | 10.0.0 | MIT | Data, Worker |  |

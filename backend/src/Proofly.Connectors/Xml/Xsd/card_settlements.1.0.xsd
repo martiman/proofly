@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
+  <!-- card_settlements v1.0: generated from the shared column specs; do not edit. -->
+  <xs:element name="delivery">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="record" minOccurs="0" maxOccurs="unbounded">
+          <xs:complexType>
+            <xs:all>
+              <xs:element name="source_row_id">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:maxLength value="64" />
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+              <xs:element name="settlement_id">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:maxLength value="64" />
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+              <xs:element name="processor">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:maxLength value="64" />
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+              <xs:element name="legal_entity_id">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:maxLength value="64" />
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+              <xs:element name="settlement_date">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:pattern value="(\d{4}-\d{2}-\d{2})?" />
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+              <xs:element name="gross_amount">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:pattern value="(-?\d+(\.\d{1,6})?)?" />
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+              <xs:element name="fees">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:pattern value="(-?\d+(\.\d{1,6})?)?" />
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+              <xs:element name="adjustments">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:pattern value="(-?\d+(\.\d{1,6})?)?" />
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+              <xs:element name="net_amount">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:pattern value="(-?\d+(\.\d{1,6})?)?" />
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+              <xs:element name="currency">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:pattern value="([A-Z]{3})?" />
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+              <xs:element name="destination_account">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:maxLength value="64" />
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+              <xs:element name="source_status">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:enumeration value="" />
+                    <xs:enumeration value="SETTLED" />
+                    <xs:enumeration value="PENDING" />
+                    <xs:enumeration value="FAILED" />
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+            </xs:all>
+          </xs:complexType>
+        </xs:element>
+      </xs:sequence>
+      <xs:attribute name="source" use="required">
+        <xs:simpleType>
+          <xs:restriction base="xs:string">
+            <xs:enumeration value="card_settlements" />
+          </xs:restriction>
+        </xs:simpleType>
+      </xs:attribute>
+      <xs:attribute name="schemaVersion" use="required">
+        <xs:simpleType>
+          <xs:restriction base="xs:string">
+            <xs:enumeration value="1.0" />
+          </xs:restriction>
+        </xs:simpleType>
+      </xs:attribute>
+      <xs:attribute name="businessDate" use="required">
+        <xs:simpleType>
+          <xs:restriction base="xs:date">
+            <xs:pattern value="\d{4}-\d{2}-\d{2}" />
+          </xs:restriction>
+        </xs:simpleType>
+      </xs:attribute>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>

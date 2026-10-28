@@ -42,8 +42,8 @@ public sealed record AttentionRow(
     string? SourceRowId, long RowVersion);
 
 public sealed record SafeguardingRow(
-    string Currency, MoneyRow Obligation, MoneyRow EligibleBalance, MoneyRow ApprovedAdjustments, MoneyRow Result, string State,
-    IReadOnlyList<string> Qualifications, MoneyRow? PreviousResult, IReadOnlyList<string> ExceptionIds);
+    string Currency, MoneyRow Obligation, MoneyRow EligibleBalance, MoneyRow ApprovedAdjustments, MoneyRow? Result, string State,
+    IReadOnlyList<string> Qualifications, MoneyRow? PreviousResult, IReadOnlyList<string> ExceptionIds, bool Stale);
 
 public sealed record ControlRoomRows(
     RunRow Run, IReadOnlyList<DailySummaryRow> Summary, IReadOnlyList<DeliveryRow> EvidenceReadiness, IReadOnlyList<ControlAreaRow> ControlAreas,

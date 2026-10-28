@@ -49,7 +49,7 @@ public class ContractConventionTests(ContractApiFixture f)
         Assert.Contains(ContractDoc.Ops, o => o.SuccessSchemaRef?.EndsWith("Page", StringComparison.Ordinal) == true);
     }
 
-    private static readonly HashSet<string> Missing428 = ["deleteExceptionView"];
+    private static readonly HashSet<string> Missing428 = []; // every operation with If-Match declares 428
 
     [Fact]
     public void Every_operation_documents_the_401_and_mutations_with_preconditions_document_412_and_428()
@@ -60,7 +60,6 @@ public class ContractConventionTests(ContractApiFixture f)
             if (op.Spec.RequiresIfMatch)
             {
                 Assert.True(op.Spec.Responses.ContainsKey("412"), $"{op.OperationId} takes If-Match but does not declare 412.");
-                // Contract gap, to be fixed in openapi.yaml: the API answers 428 here but the response is not declared. The list must shrink.
                 var declares428 = op.Spec.Responses.ContainsKey("428");
                 Assert.Equal(Missing428.Contains(op.OperationId), !declares428);
             }
@@ -91,7 +90,7 @@ public class ContractConventionTests(ContractApiFixture f)
         // 403 (permission), unless the operation is open to every authenticated caller
         if (op.Permission != "auth.self")
         {
-            var others = ContractApiFixture.AllPermissions.Where(p => p != op.Permission);
+            var others = ContractApiFixture.AllPermissions.Where(p => !op.AcceptedPermissions.Contains(p));
             await AssertProblem(await f.Client("lacking", others).SendAsync(Requests.Build(op)), HttpStatusCode.Forbidden, op);
         }
 

@@ -59,8 +59,8 @@ internal sealed class SafeguardingEndpoints(ISafeguardingReadRepository repo) : 
     {
         var prev = v.Previous.ToDictionary(p => p.Currency);
         var positions = v.Positions.Select(p => new SafeguardingCurrencyPositionDto(
-            p.Currency, M(p.Obligation, p.Currency), M(p.Eligible, p.Currency), M(p.ApprovedAdjustments, p.Currency), M(p.Result, p.Currency),
-            p.State, p.Qualifications, prev.TryGetValue(p.Currency, out var pp) ? M(pp.Result, p.Currency) : null, p.ExceptionIds)).ToList();
+            p.Currency, M(p.Obligation, p.Currency), M(p.Eligible, p.Currency), M(p.ApprovedAdjustments, p.Currency), p.Result is { } res ? M(res, p.Currency) : null,
+            p.State, p.Qualifications, prev.TryGetValue(p.Currency, out var pp) && pp.Result is { } pr ? M(pr, p.Currency) : null, p.ExceptionIds, p.Stale)).ToList();
 
         var drivers = new List<ChangeDriverDto>();
         foreach (var p in v.Positions.Where(p => prev.ContainsKey(p.Currency)))
@@ -79,7 +79,7 @@ internal sealed class SafeguardingEndpoints(ISafeguardingReadRepository repo) : 
             v.Obligations.Select(l => new ObligationLineDto(l.AccountId, l.Currency, M(l.Amount, l.Currency), l.MovementType)).ToList(),
             v.Balances.Select(b => new EligibleBalanceLineDto(b.SourceRowId, b.RecordId, b.ExternalAccountId, b.BalanceTimestamp, M(b.Balance, b.Currency),
                 b.EvidenceReference, b.Included, b.Reason, b.FindingIds)).ToList(),
-            v.Adjustments.Select(a => Map(a, caller, v.Run.LegalEntityId)).ToList(), drivers);
+            v.Adjustments.Select(a => Map(a, caller, v.Run.LegalEntityId)).ToList(), drivers, v.Positions.Any(p => p.Stale));
     }
 
     internal static SafeguardingAdjustmentDto Map(AdjustmentRow a, Caller caller, string legalEntityId) => new(

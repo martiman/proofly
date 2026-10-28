@@ -311,7 +311,7 @@ public sealed class RunReadRepository(NpgsqlDataSource dataSource, TimeProvider 
         var previous = new Dictionary<string, decimal>();
         if (previousId is not null)
         {
-            await using var c = dataSource.CreateCommand("SELECT currency::text, difference_amount FROM safeguarding_positions WHERE run_id = @r");
+            await using var c = dataSource.CreateCommand("SELECT currency::text, difference_amount FROM safeguarding_positions WHERE run_id = @r AND difference_amount IS NOT NULL");
             c.Parameters.AddWithValue("r", previousId);
             await using var r = await c.ExecuteReaderAsync(ct);
             while (await r.ReadAsync(ct)) { previous[r.GetString(0)] = r.GetDecimal(1); }
@@ -327,7 +327,7 @@ public sealed class RunReadRepository(NpgsqlDataSource dataSource, TimeProvider 
         }
 
         await using var cmd = dataSource.CreateCommand("""
-            SELECT currency::text, obligation_amount, eligible_amount, difference_amount, state, detail::text
+            SELECT currency::text, obligation_amount, eligible_amount, difference_amount, state, detail::text, stale
             FROM safeguarding_positions WHERE run_id = @r ORDER BY currency
             """);
         cmd.Parameters.AddWithValue("r", run.Id);
@@ -337,8 +337,8 @@ public sealed class RunReadRepository(NpgsqlDataSource dataSource, TimeProvider 
         {
             var ccy = rd.GetString(0);
             list.Add(new SafeguardingRow(ccy, new MoneyRow(rd.GetDecimal(1), ccy), new MoneyRow(rd.GetDecimal(2), ccy),
-                new MoneyRow(adjustments.GetValueOrDefault(ccy), ccy), new MoneyRow(rd.GetDecimal(3), ccy), rd.GetString(4), Qualifications(rd.GetString(5)),
-                previous.TryGetValue(ccy, out var p) ? new MoneyRow(p, ccy) : null, exceptionIds.GetValueOrDefault(ccy) ?? []));
+                new MoneyRow(adjustments.GetValueOrDefault(ccy), ccy), rd.IsDBNull(3) ? null : new MoneyRow(rd.GetDecimal(3), ccy), rd.GetString(4), Qualifications(rd.GetString(5)),
+                previous.TryGetValue(ccy, out var p) ? new MoneyRow(p, ccy) : null, exceptionIds.GetValueOrDefault(ccy) ?? [], rd.GetBoolean(6)));
         }
         return list;
     }
@@ -376,9 +376,9 @@ public sealed class RunReadRepository(NpgsqlDataSource dataSource, TimeProvider 
         {
             items.Add(new DailySummaryRow($"Source {d.SourceName} is {d.State}.", "source", d.Id));
         }
-        foreach (var s in safeguarding.Where(s => s.State == "SHORTFALL"))
+        foreach (var s in safeguarding.Where(s => s.State == "SHORTFALL" && s.Result is not null))
         {
-            items.Add(new DailySummaryRow($"Safeguarding shortfall in {s.Currency}: {s.Result.Amount.ToString("0.00####", CultureInfo.InvariantCulture)}.", "control", "safeguarding"));
+            items.Add(new DailySummaryRow($"Safeguarding shortfall in {s.Currency}: {s.Result!.Amount.ToString("0.00####", CultureInfo.InvariantCulture)}.", "control", "safeguarding"));
         }
         return items;
     }

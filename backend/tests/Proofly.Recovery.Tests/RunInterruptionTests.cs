@@ -129,13 +129,26 @@ public sealed class RunInterruptionTests : IAsyncLifetime
         }
         Assert.Equal("DEAD", await _db.Scalar<string>("SELECT state FROM jobs"));
         Assert.Contains("simulated crash", await _db.Scalar<string>("SELECT last_error FROM jobs"));
-        await AssertNoTraceOfARun();
+
+        // The first attempt rolled everything back, so the FAILED marker was created in its own transaction: a visible FAILED run
+        // (no result, no exceptions, no results) with RUN_STARTED and the failure event; deliveries stay unlinked.
+        Assert.Equal(1, await _db.Count("SELECT count(*) FROM runs"));
+        Assert.Equal("FAILED", await _db.Scalar<string>("SELECT state FROM runs"));
+        Assert.Equal(0, await _db.Count("SELECT count(*) FROM runs WHERE result_hash IS NOT NULL"));
+        Assert.Equal(0, await _db.Count("SELECT count(*) FROM exceptions"));
+        Assert.Equal(0, await _db.Count("SELECT count(*) FROM source_deliveries WHERE run_id IS NOT NULL"));
+        Assert.Equal(1, await _db.Count("SELECT count(*) FROM audit_events WHERE event_type='RUN_STARTED'"));
+        Assert.Equal(1, await _db.Count("SELECT count(*) FROM audit_events WHERE event_type='CONTROL_EXECUTED' AND after->>'event'='RUN_FAILED'"));
 
         using var healthy = new Rig(_db, _dir);
         await healthy.Store.EnqueueAsync(new JobRequest(RunJobs.ProcessRun, new ProcessRunPayload(Le, Day), DedupeKey: "run.process:manual-retry"));
         Assert.True(await healthy.PollAsync("worker-2"));
         Assert.Equal(_expectedHash, await _db.Scalar<string>("SELECT result_hash FROM runs"));
-        Assert.Equal(_expectedShape, await Shape(_db));
+        Assert.Equal(1, await _db.Count("SELECT count(*) FROM runs"));
+        // Same result as an undisturbed run; the only difference is the one RUN_FAILED event of the failed attempt.
+        string WithoutAudit(string shape) => string.Join("\n", shape.Split('\n').Where(l => !l.StartsWith("audit=", StringComparison.Ordinal)));
+        Assert.Equal(WithoutAudit(_expectedShape), WithoutAudit(await Shape(_db)));
+        Assert.Equal(await _reference.Count("SELECT count(*) FROM audit_events") + 1, await _db.Count("SELECT count(*) FROM audit_events"));
     }
 
     [Fact]

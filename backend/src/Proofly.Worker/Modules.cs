@@ -1,4 +1,8 @@
+using Proofly.Connectors.Csv;
+using Proofly.Connectors.Excel;
+using Proofly.Connectors.Xml;
 using Proofly.Data;
+using Proofly.Data.Ingestion;
 using Proofly.Worker.Evidence;
 using Proofly.Worker.Jobs;
 using Proofly.Worker.Orchestration;
@@ -14,8 +18,12 @@ public static class Modules
         .AddData(configuration)
         .AddAudit()
         .AddAdjustmentExpiry()
+        .AddCsvAdapters()
         .AddEvidencePacks(configuration)
+        .AddExcelAdapters()
         .AddHeartbeat()
+        .AddIngestion(configuration)
         .AddJobWorker()
-        .AddRunProcessing();
+        .AddRunProcessing()
+        .AddXmlAdapters();
 }

@@ -44,7 +44,7 @@ internal static class RunInputLoader
         var failures = new Dictionary<string, HashSet<string>>();
         await using (var c = Cmd("""
             SELECT r.delivery_id, r.reason_code FROM delivery_rejections r JOIN source_deliveries d ON d.id = r.delivery_id
-            WHERE d.legal_entity_id = @le AND d.business_date = @d AND r.row_number IS NULL
+            WHERE d.legal_entity_id = @le AND d.business_date = @d AND r.row_number IS NULL AND NOT r.superseded_by_retry
             """))
         {
             c.Parameters.AddWithValue("le", legalEntityId);
@@ -91,7 +91,7 @@ internal static class RunInputLoader
         await using (var c = Cmd("""
             SELECT r.delivery_id, d.source_name, r.row_number, r.source_row_id, r.reason_code, r.reason
             FROM delivery_rejections r JOIN source_deliveries d ON d.id = r.delivery_id
-            WHERE d.legal_entity_id = @le AND d.business_date = @d AND d.state <> 'SUPERSEDED' AND r.row_number IS NOT NULL
+            WHERE d.legal_entity_id = @le AND d.business_date = @d AND d.state <> 'SUPERSEDED' AND r.row_number IS NOT NULL AND NOT r.superseded_by_retry
             ORDER BY r.delivery_id, r.row_number, r.id
             """))
         {

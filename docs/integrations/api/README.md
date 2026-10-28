@@ -37,7 +37,7 @@ under "New in the real API vs mock".
 - **Errors.** RFC 9457 `application/problem+json` with `type`, `title`, `status`, `detail`, `requestId`,
   and `errors[]` (JSON pointer / parameter + message) for 422. Problem types used:
   `unauthenticated` (401); `forbidden`, `out-of-scope`, `separation-of-duties` (403); `not-found` (404);
-  `invalid-state`, `record-already-used`, `run-superseded`, `stale-signoff`, `idempotency-in-progress`, `duplicate` (409);
+  `invalid-state`, `record-already-used`, `run-superseded`, `stale-signoff`, `stale-proposal`, `idempotency-in-progress`, `duplicate` (409);
   `precondition-failed` (412); `validation` (422); `precondition-required` (428); `internal` (500).
   A problem `type` is `https://proofly.example/problems/<slug>`.
   Statuses: 401 unauthenticated, 403 not permitted / out of scope / separation of duties,
@@ -54,7 +54,7 @@ under "New in the real API vs mock".
   parameter/header component, not repeated on every operation.)
 - **Auth and permissions.** OIDC bearer token. Roles and legal-entity scope are resolved server-side;
   `GET /me` returns `roles`, `legalEntityIds`, `permissions` (and optionally per-entity). Each operation
-  carries `x-required-permission`; the server checks permission **and** legal-entity scope on every call.
+  carries `x-required-permission` (and optionally `x-required-permission-any: [..]`: the caller needs any one of them and the handler enforces the exact one, used by `decideConfigChange`); the server checks permission **and** legal-entity scope on every call.
   Object-level `allowedActions` / `canDecide` flags are computed per caller so the UI never has to
   re-implement separation-of-duties rules (it may still hide actions based on `permissions`).
 - **Material decisions and audit.** Every command that is a material decision requires `reason`
@@ -93,6 +93,7 @@ clients; the structure is documented so the same record is addressed the same wa
 | `deliveryId` | the manifest `delivery_id` | `DEL-TRF-01` | |
 | `exceptionId`, `runId`, `matchGroupId`, `adjustmentId` | server issued, globally unique | `F-019` | |
 | lineage node ids | the transaction id, `DLV-<deliveryId>`, `EXC-<exceptionId>` | | |
+| `getLineage` subject | `TRANSACTION`: transaction id; `RECORD`: `recordId` of an accepted record; `EXCEPTION` / `CONTROL_RESULT`: exception id (or `EXC-<id>`) | `/lineage/TRANSACTION/TRF-4` | Unknown, malformed, or outside the optional `runId` or the caller's scope: 404. An unknown `subjectKind`: 422. |
 
 `Transaction.sourceRowId` is the source file's own row key (`source_row_id`, `ledger_entry_id`,
 `external_transaction_id`); it is not an API id. `Transaction.deliveryId` plus `SourceRecord.rowNumber` locate
@@ -329,6 +330,23 @@ additive or relax a type to nullable except where marked **breaking for a typed 
 | G16 | `LegalEntity.currencies` comes from `legal_entities.currencies` (always includes the base currency). |
 | G17 | Control names documented and enforced; `approvals.object_id` semantics documented. |
 | G18 | `ControlAreaSummary.recordCount` and omission of empty areas documented. |
+
+## Changelog (second contract pass)
+
+All additive or relaxations except where marked **breaking for a typed client**.
+
+| # | Change |
+| --- | --- |
+| H1 | `deleteExceptionView` declares 428; `SavedView.etag` added (the `If-Match` value for the delete). |
+| H2 | `assignException` / `bulkAssignExceptions` accept optional `reason` (min 3); it is the audit reason, else the note. |
+| H3 | `createExceptionView` documents 409 (`duplicate` for a repeated name, `invalid-state` for the per-user limit). **Breaking: both were 422 before.** |
+| H4 | `ResolutionProposalInput.evidenceRefs` has `minItems: 1`. |
+| H5 | Problem slug `stale-proposal` (409) for a stale `proposalVersion` in decideResolution, decideAdjustment, decideConfigChange, decideManualMatch (was `invalid-state`). **Breaking for clients that matched the slug.** |
+| H6 | Audit event types `ADJUSTMENT_EXPIRED`, `RUN_PROCESSED`, `SIGN_OFF_INVALIDATED`, `EVIDENCE_ACCESS_DENIED`. |
+| H7 | `RunComparison.changedExceptionIds`; `ConfigChange.rulesetVersion` (nullable). |
+| H8 | New extension `x-required-permission-any: [..]` (the caller needs any one; `x-required-permission` stays as the primary). `decideConfigChange` lists `settings.approve` and `access.manage`; the handler enforces `settings.approve` for CONFIG and `access.manage` for ACCESS changes. |
+| H9 | `SafeguardingCurrencyPosition.result` is nullable (null for a QUALIFIED currency); `stale` boolean on `SafeguardingCurrencyPosition` and `SafeguardingPosition`. **Breaking for a typed client reading `result.amount`.** |
+| H10 | `getLineage` implemented (no contract change). `listDeliveryRecords` for a delivery whose source is not a manifest source is 404 (the records are not addressable); `RunState` `FAILED` is reported for a run whose first processing attempt failed. |
 
 ## Lint
 

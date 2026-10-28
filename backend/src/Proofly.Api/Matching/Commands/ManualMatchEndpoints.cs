@@ -43,7 +43,7 @@ internal sealed class ManualMatchEndpoints(IMatchingRepository repo, IManualMatc
         ManualMatchOutcome.Validation => ProblemException.Validation(r.Pointer ?? "/", r.Detail ?? "Invalid input."),
         ManualMatchOutcome.RecordAlreadyUsed => new ProblemException(ManualMatchModule.RecordAlreadyUsed, r.Detail),
         ManualMatchOutcome.InvalidState => new ProblemException(ProblemTypes.InvalidState, r.Detail),
-        ManualMatchOutcome.StaleProposal => new ProblemException(ProblemTypes.InvalidState, r.Detail),
+        ManualMatchOutcome.StaleProposal => new ProblemException(ProblemTypes.StaleProposal, r.Detail),
         ManualMatchOutcome.RunLocked => new ProblemException(ProblemTypes.RunSuperseded, r.Detail),
         ManualMatchOutcome.StaleVersion => new ProblemException(ProblemTypes.PreconditionFailed, r.Detail),
         ManualMatchOutcome.SeparationOfDuties => new ProblemException(ProblemTypes.SeparationOfDuties, r.Detail),

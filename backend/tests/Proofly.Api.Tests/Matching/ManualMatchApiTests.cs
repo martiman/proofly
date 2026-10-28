@@ -223,6 +223,7 @@ public class ManualMatchApiTests(ManualMatchFixture f) : IClassFixture<ManualMat
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await Decide(other, g, "MAYBE", etag)).StatusCode);
         var stale = await other.SendAsync(Post(url, new { decision = "APPROVE", reason = "Looks right", proposalVersion = 7 }, etag));
         Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        Assert.Equal("stale-proposal", Slug(await Json(stale)));
 
         // Out of scope: existence hidden; unknown group: 404.
         var scoped = f.Factory.As(await TokenFor("appr-m2", (Role.Approver, "LE-M2")));

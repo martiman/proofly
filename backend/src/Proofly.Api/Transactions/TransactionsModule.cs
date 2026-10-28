@@ -13,7 +13,7 @@ namespace Proofly.Api.Transactions;
 public static class TransactionsModule
 {
     public static IServiceCollection AddTransactions(this IServiceCollection services) =>
-        services.AddTransactionData().AddSingleton<IEndpointModule, TransactionEndpoints>();
+        services.AddTransactionData().AddSingleton<IEndpointModule, TransactionEndpoints>().AddSingleton<IEndpointModule, LineageEndpoint>();
 }
 
 internal sealed class TransactionEndpoints(ITransactionReadRepository repo) : IEndpointModule
@@ -150,4 +150,24 @@ internal sealed class TransactionEndpoints(ITransactionReadRepository repo) : IE
                 e.OwnerId is null ? null : new UserRefDto(e.OwnerId, e.OwnerName ?? e.OwnerId), e.CreatedAt, e.DueAt, e.Blocking,
                 e.SourceFile, e.SourceRowId, ETags.ForVersion(e.Version))).ToList()));
     }
+}
+
+/// <summary>getLineage: GET /lineage/{subjectKind}/{subjectId}. Entity scope and evidence.view of the subject's legal entity (404 when out of scope).</summary>
+internal sealed class LineageEndpoint(ILineageRepository lineage) : IEndpointModule
+{
+    public void Map(IEndpointRouteBuilder app) => app.MapGet("/api/v1/lineage/{subjectKind}/{subjectId}", async (string subjectKind, string subjectId, HttpContext ctx) =>
+    {
+        if (subjectKind is not (LineageSubjectKinds.Exception or LineageSubjectKinds.Transaction or LineageSubjectKinds.Record or LineageSubjectKinds.ControlResult))
+        {
+            throw ProblemException.Validation("subjectKind", "subjectKind must be EXCEPTION, TRANSACTION, RECORD or CONTROL_RESULT.");
+        }
+        var runId = ctx.Request.Query.TryGetValue("runId", out var v) && v.Count > 0 && v[0] is { Length: > 0 } r ? r : null;
+        var subject = await lineage.FindSubjectAsync(subjectKind, subjectId, runId, ctx.RequestAborted) ?? throw new ProblemException(ProblemTypes.NotFound);
+        ctx.GetCaller().Require(Permission.EvidenceView, subject.LegalEntityId);
+        var l = await lineage.GetLineageAsync(subject, ctx.RequestAborted) ?? throw new ProblemException(ProblemTypes.NotFound);
+        return Results.Ok(new LineageDto(subjectKind, subjectId,
+            l.Nodes.Select(n => new EvidenceNodeDto(n.Id, n.Kind, n.Label, n.Source, n.SourceRowId, n.RecordId, n.Amount is { } a ? TransactionEndpoints.Money(a, n.Currency!) : null)).ToList(),
+            l.Edges.Select(e => new EvidenceEdgeDto(e.From, e.To, e.Relation)).ToList(),
+            l.Deliveries.Select(d => new LineageDeliveryDto(d.DeliveryId, d.Fingerprint, d.RowNumber, d.SchemaVersion, null)).ToList()));
+    });
 }

@@ -74,7 +74,7 @@ internal sealed class RunCommandEndpoints(
             var rows = await comparison.CompareAsync(run.Id, other.Id, ct);
             return Results.Ok(new RunComparisonDto(RunsMapping.Run(run), RunsMapping.Run(other),
                 rows.Areas.Select(a => new RunComparisonAreaDto(a.Area, a.State, a.AgainstState, a.RecordCountDelta)).ToList(),
-                rows.NewExceptionIds, rows.ResolvedExceptionIds,
+                rows.NewExceptionIds, rows.ResolvedExceptionIds, rows.ChangedExceptionIds,
                 rows.SafeguardingDelta.Select(d => new ChangeDriverDto(d.Label, d.Change.Currency, RunsMapping.Money(d.Change))).ToList(),
                 rows.ChangedDeliveries));
         });

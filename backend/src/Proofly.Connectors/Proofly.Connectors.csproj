@@ -2,4 +2,11 @@
   <ItemGroup>
     <ProjectReference Include="../Proofly.Domain/Proofly.Domain.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="ExcelDataReader" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Xml/Xsd/*.xsd" LogicalName="Proofly.Connectors.Xml.Xsd.%(Filename)%(Extension)" />
+  </ItemGroup>
 </Project>

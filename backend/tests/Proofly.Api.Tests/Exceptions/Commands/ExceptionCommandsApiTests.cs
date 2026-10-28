@@ -105,7 +105,7 @@ internal static class Seed
                   ('X-DONE','R1','LE-1','2026-03-02','Closed','matching','NO_BANK_EVIDENCE','LOW','RESOLVED',10,'GBP','2026-03-05T09:00Z'),
                   ('X-PEND','R1','LE-1','2026-03-02','Pending','matching','NO_BANK_EVIDENCE','LOW','PENDING_APPROVAL',10,'JPY','2026-03-05T09:00Z');
                 """);
-            foreach (var id in new[] { "A1", "A2", "A3", "A4", "A5", "A6", "A7", "N1", "N2", "N3", "E1", "E2", "E3", "E4", "E5", "C1", "C2", "C3", "B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "I1", "I2" })
+            foreach (var id in new[] { "A1", "A2", "A3", "A4", "A5", "A6", "A7", "AR1", "AR2", "N1", "N2", "N3", "E1", "E2", "E3", "E4", "E5", "C1", "C2", "C3", "B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "I1", "I2" })
             {
                 sb.Append($"INSERT INTO exceptions (id, run_id, legal_entity_id, business_date, title, control, reason_code, severity, status, value_amount, value_currency, due_at) VALUES ('{id}','R1','LE-1','2026-03-02','Item {id}','matching','NO_BANK_EVIDENCE','MEDIUM','OPEN',12.5,'GBP','2026-03-05T09:00Z');\n");
             }
@@ -150,6 +150,34 @@ public class ExceptionCommandsApiTests(CommandsFixture f) : IClassFixture<Comman
         Assert.Equal("local-analyst", await f.Scalar<string>("SELECT actor_id FROM audit_events WHERE subject_id = 'A1'"));
         Assert.Equal("Please take this", await f.Scalar<string>("SELECT reason FROM audit_events WHERE subject_id = 'A1'"));
         Assert.Equal("LE-1", await f.Scalar<string>("SELECT chain_id FROM audit_events WHERE subject_id = 'A1'"));
+    }
+
+    [Fact]
+    public async Task Assign_reason_is_the_audit_reason_and_defaults_to_the_note_and_must_have_three_characters()
+    {
+        var c = Analyst;
+        var etag = await EtagOf(c, "AR1");
+        Assert.Equal((HttpStatusCode)422, (await c.SendAsync(Post("/api/v1/exceptions/AR1/assign", new { ownerId = "local-approver", reason = "ab" }, etag))).StatusCode);
+        var res = await c.SendAsync(Post("/api/v1/exceptions/AR1/assign", new { ownerId = "local-approver", note = "Please take this", reason = "Workload balancing" }, etag));
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        Assert.Equal("Workload balancing", await f.Scalar<string>("SELECT reason FROM audit_events WHERE event_type='EXCEPTION_ASSIGNED' AND subject_id='AR1'"));
+
+        var res2 = await c.SendAsync(Post("/api/v1/exceptions/AR2/assign", new { ownerId = "local-approver", note = "Only a note" }, await EtagOf(c, "AR2")));
+        Assert.Equal(HttpStatusCode.OK, res2.StatusCode);
+        Assert.Equal("Only a note", await f.Scalar<string>("SELECT reason FROM audit_events WHERE event_type='EXCEPTION_ASSIGNED' AND subject_id='AR2'"));
+    }
+
+    [Fact]
+    public async Task Saved_view_carries_an_etag_that_deletes_it()
+    {
+        var c = f.As(await f.ScopedToken("viewer6", Role.Viewer, "*"));
+        var created = await c.SendAsync(Post("/api/v1/exception-views", new { name = "Mine", filters = new { } }, null));
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var view = await Json(created);
+        var etag = view.GetProperty("etag").GetString()!;
+        Assert.Equal(created.Headers.ETag!.ToString(), etag);
+        Assert.Equal(HttpStatusCode.NoContent, (await c.SendAsync(Del("/api/v1/exception-views/" + view.GetProperty("id").GetString(), etag))).StatusCode);
+        Assert.Equal(HttpStatusCode.PreconditionRequired, (await c.SendAsync(Del("/api/v1/exception-views/" + view.GetProperty("id").GetString(), null))).StatusCode);
     }
 
     [Fact]
@@ -444,7 +472,11 @@ public class ExceptionCommandsApiTests(CommandsFixture f) : IClassFixture<Comman
         Assert.Equal((HttpStatusCode)422, (await c.SendAsync(Post("/api/v1/exception-views", new { name = "W", filters = new { }, sort = "bogus" }, null))).StatusCode);
         Assert.Equal((HttpStatusCode)422, (await c.SendAsync(Post("/api/v1/exception-views", new { name = " ", filters = new { } }, null))).StatusCode);
         Assert.Equal(HttpStatusCode.Created, (await c.SendAsync(Post("/api/v1/exception-views", new { name = "Same", filters = new { } }, null))).StatusCode);
-        Assert.Equal((HttpStatusCode)422, (await c.SendAsync(Post("/api/v1/exception-views", new { name = "Same", filters = new { } }, null))).StatusCode);
+        var dup = await c.SendAsync(Post("/api/v1/exception-views", new { name = "Same", filters = new { } }, null));
+        Assert.Equal(HttpStatusCode.Conflict, dup.StatusCode);
+        Assert.EndsWith("/duplicate", (await Json(dup)).GetProperty("type").GetString());
+        var list = await Json(await c.GetAsync("/api/v1/exception-views"));
+        Assert.All(list.GetProperty("items").EnumerateArray(), v => Assert.False(string.IsNullOrEmpty(v.GetProperty("etag").GetString())));
 
         var other = f.As(await f.ScopedToken("viewer3", Role.Viewer, "*"));
         var otherList = await Json(await other.GetAsync("/api/v1/exception-views"));
@@ -461,7 +493,8 @@ public class ExceptionCommandsApiTests(CommandsFixture f) : IClassFixture<Comman
             Assert.True(r.StatusCode == HttpStatusCode.Created, i + ": " + await r.Content.ReadAsStringAsync());
         }
         var over = await c.SendAsync(Post("/api/v1/exception-views", new { name = "one too many", filters = new { } }, null));
-        Assert.Equal((HttpStatusCode)422, over.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, over.StatusCode);
+        Assert.EndsWith("/invalid-state", (await Json(over)).GetProperty("type").GetString());
         Assert.Equal(50L, await f.Scalar<long>("SELECT count(*) FROM saved_views WHERE user_id = 'u-viewer4'"));
 
         await f.Exec("INSERT INTO saved_views (id, user_id, scope, name, filters, shared) VALUES ('SV-SHARED','u-viewer1','exceptions','team','{}',true), ('SV-PRIVATE','u-viewer1','exceptions','mine','{}',false)");

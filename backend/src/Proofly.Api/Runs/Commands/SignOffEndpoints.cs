@@ -145,7 +145,7 @@ internal sealed class SignOffEndpoints(ISignOffRepository repo) : IEndpointModul
     }
 
     private static string HistoryText(SignOffHistoryRow h) =>
-        (h.Type switch { "SIGN_OFF_SUBMITTED" => "Submitted for sign-off", "SIGN_OFF_RETURNED" => "Returned to the preparer", _ => "Signed off" }) + (h.Reason is null ? "" : ": " + h.Reason);
+        (h.Type switch { "SIGN_OFF_SUBMITTED" => "Submitted for sign-off", "SIGN_OFF_RETURNED" => "Returned to the preparer", "SIGN_OFF_INVALIDATED" => "Sign-off attempt refused as stale", _ => "Signed off" }) + (h.Reason is null ? "" : ": " + h.Reason);
 
     private static string Label(string control) => control switch
     {

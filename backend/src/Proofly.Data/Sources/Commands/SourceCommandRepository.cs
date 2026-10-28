@@ -61,7 +61,7 @@ public sealed class SourceCommandRepository(NpgsqlDataSource db, IAuditWriter au
         if (d.Version != expectedVersion) { return new(SourceCommandStatus.VersionMismatch); }
 
         bool duplicate;
-        await using (var q = new NpgsqlCommand("SELECT EXISTS (SELECT 1 FROM delivery_rejections WHERE delivery_id = @d AND row_number IS NULL AND reason_code = @c)", conn, tx))
+        await using (var q = new NpgsqlCommand("SELECT EXISTS (SELECT 1 FROM delivery_rejections WHERE delivery_id = @d AND row_number IS NULL AND reason_code = @c AND NOT superseded_by_retry)", conn, tx))
         {
             q.Parameters.AddWithValue("d", deliveryId);
             q.Parameters.AddWithValue("c", DeliveryRules.DuplicateReasonCode);
@@ -75,7 +75,13 @@ public sealed class SourceCommandRepository(NpgsqlDataSource db, IAuditWriter au
         }
 
         // The ingestor only processes RECEIVED deliveries that were never ingested, so a rejected delivery is re-opened for it.
-        // Earlier rejection reasons stay in delivery_rejections as history; nothing is deleted.
+        // Earlier rejection reasons stay in delivery_rejections as history (flagged superseded_by_retry so checks and listings show the
+        // latest attempt only); nothing is deleted.
+        await using (var sup = new NpgsqlCommand("UPDATE delivery_rejections SET superseded_by_retry = true WHERE delivery_id = @d AND NOT superseded_by_retry", conn, tx))
+        {
+            sup.Parameters.AddWithValue("d", deliveryId);
+            await sup.ExecuteNonQueryAsync(ct);
+        }
         int newVersion;
         try
         {

@@ -1,4 +1,5 @@
 using Proofly.Api.Platform;
+using Proofly.Api.Platform.Contract;
 using Proofly.Api.Platform.Http;
 using Proofly.Api.Platform.Problems;
 using Proofly.Contracts.Governance;
@@ -14,6 +15,7 @@ public static class EvidenceModule
     {
         services.AddEvidenceData(configuration);
         services.AddSingleton<IEndpointModule, EvidenceEndpoints>();
+        services.AddSingleton<IAccessDeniedAudit, EvidenceAccessDeniedAudit>();
         return services;
     }
 }
@@ -61,5 +63,30 @@ internal sealed class EvidenceEndpoints : IEndpointModule
             ctx.Response.Headers["X-Content-SHA256"] = pack.Sha256;
             return Results.Stream(store.OpenRead(pack.Sha256), "application/zip");
         });
+    }
+}
+
+/// <summary>
+/// Audits refused (403) evidence-pack generation and download requests: EVIDENCE_ACCESS_DENIED, actor = the caller, one event per
+/// request (the pipeline ends at the 403, so a retry loop makes one event per attempt, never several per request). Only these two
+/// operations are audited; other 403s are not.
+/// </summary>
+internal sealed class EvidenceAccessDeniedAudit(ILogger<EvidenceAccessDeniedAudit> logger) : IAccessDeniedAudit
+{
+    private static readonly HashSet<string> Operations = new(StringComparer.Ordinal) { "generateEvidencePack", "downloadEvidencePack" };
+
+    public async Task RecordAsync(HttpContext ctx, OperationSpec operation, Caller? caller, CancellationToken ct)
+    {
+        if (caller is null || !Operations.Contains(operation.OperationId)) { return; }
+        var runId = ctx.Request.RouteValues["runId"] as string;
+        if (string.IsNullOrWhiteSpace(runId)) { return; }
+        try
+        {
+            await ctx.RequestServices.GetRequiredService<IEvidencePackCommands>().RecordAccessDeniedAsync(runId, caller.UserId, operation.OperationId, ctx.GetRequestId(), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogError(ex, "Could not audit the denied evidence access for {Operation}", operation.OperationId);
+        }
     }
 }

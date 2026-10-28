@@ -23,7 +23,8 @@ public static class MatchingCodes
 /// <summary>One record taking part in matching, normalised from a canonical record. Date null = not comparable.</summary>
 public sealed record MatchItem(string Source, string Id, string? Reference, Money Amount, DateOnly? Date)
 {
-    public string Key => Source + "/" + Id;
+    // Computed once: the matching engine and the orchestration look it up many times per record.
+    public string Key { get; } = Source + "/" + Id;
     public RecordRef Ref => new(Source, Id);
 }
 
