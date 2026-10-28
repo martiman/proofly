@@ -56,6 +56,7 @@ See [Product Capabilities](docs/product/capabilities.md) for the proposed capabi
 - [Deployment Model](docs/architecture/deployment-model.md)
 - [Repository Structure](docs/architecture/repository-structure.md)
 - [Input Data Contracts](docs/integrations/input-contracts.md)
+- [Synthetic T+1 Input Dataset](examples/synthetic-data/2026-10-27/README.md)
 - [Roles and Approvals](docs/security/roles-and-approvals.md)
 - [Data Handling](docs/security/data-handling.md)
 - [oMVP Acceptance Plan](docs/testing/omvp-acceptance-plan.md)

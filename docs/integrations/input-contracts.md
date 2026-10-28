@@ -4,6 +4,8 @@
 
 This document defines the proposed common contract for oMVP file-based sources. Source-specific schemas remain to be agreed with the pilot customer.
 
+A deterministic [synthetic T+1 input package](../../examples/synthetic-data/2026-10-27/README.md) illustrates every source type below with ten records per source. It deliberately includes valid and invalid scenarios and an expected-findings catalogue. The fixture supports development and testing; it is not a definitive pilot-customer schema.
+
 ## General delivery contract
 
 Every delivery must identify:
