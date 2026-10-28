@@ -7,6 +7,7 @@ import { useAsync, useCommand } from '../../api/composables'
 import { fieldErrors, isApiError, isSeparationOfDuties, isStale, isValidation } from '../../api/client'
 import { PageHeader, StatePlaceholder, StatusPill } from '../../components'
 import type { Status } from '../../components/StatusPill.vue'
+import { validateProposal } from './proposeValidation'
 import { useRunContext } from '../../composables/useRunContext'
 import { reloadApprovals } from '../../composables/useShellStatus'
 
@@ -49,8 +50,10 @@ async function submitPropose() {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('must be a JSON object')
     after = parsed as Record<string, unknown>
   } catch (e) { afterError.value = `Proposed object is not valid JSON: ${(e as Error).message}`; return }
+  const local = validateProposal(propose)
+  if (Object.keys(local).length) { proposeErrors.value = local; return }
   try {
-    await proposeCmd.run({ targetKind: propose.targetKind, targetId: propose.targetId.trim(), after, effectiveFrom: propose.effectiveFrom, reason: propose.reason.trim() })
+    await proposeCmd.run({ targetKind: propose.targetKind, targetId: propose.targetId.trim(), after, effectiveFrom: propose.effectiveFrom.trim(), reason: propose.reason.trim() })
     propose.open = false
     message.success('Change proposed; it now awaits a second person')
     await reloadAll()
@@ -144,6 +147,7 @@ const inboxCols = [
     <a-tabs v-model:activeKey="tab">
       <a-tab-pane key="sources" tab="Sources">
         <a-table class="card" :columns="sourceCols" :data-source="settings.data.value.sources" row-key="sourceName" :pagination="false" size="small">
+          <template #emptyText>No sources are configured for this legal entity.</template>
           <template #bodyCell="{ column, record }">
             <StatusPill v-if="column.key === 'mandatory'" :label="record.mandatory ? 'Mandatory' : 'Optional'" :status="record.mandatory ? 'info' : 'neutral'" />
             <template v-else-if="column.key === 'act'">
@@ -155,6 +159,7 @@ const inboxCols = [
       </a-tab-pane>
       <a-tab-pane key="rules" tab="Control parameters">
         <a-table class="card" :columns="ruleCols" :data-source="settings.data.value.rules" row-key="ruleId" :pagination="false" size="small">
+          <template #emptyText>No control parameters are configured for this legal entity.</template>
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'control'">{{ label(record.control) }}</template>
             <StatusPill v-else-if="column.key === 'severity'" :label="label(record.severity)" :status="sev(record.severity)" />
@@ -165,7 +170,8 @@ const inboxCols = [
           </template>
         </a-table>
         <a-descriptions title="Policies" bordered size="small" :column="1" class="card" style="margin-top: 16px">
-          <a-descriptions-item label="Freshness">{{ settings.data.value.freshnessPolicy }}</a-descriptions-item>
+          <a-descriptions-item label="Freshness">{{ settings.data.value.freshnessPolicy || 'Not configured' }}</a-descriptions-item>
+           <a-descriptions-item v-if="!settings.data.value.approvalPolicies.length" label="Approval policies">None configured</a-descriptions-item>
           <a-descriptions-item v-for="p in settings.data.value.approvalPolicies" :key="p.name" :label="`Approval: ${p.name}`">
             {{ p.description }}<template v-if="p.requiredRole"> ({{ label(p.requiredRole) }})</template>
           </a-descriptions-item>
@@ -173,9 +179,10 @@ const inboxCols = [
       </a-tab-pane>
       <a-tab-pane key="users" tab="Users & roles">
         <a-table class="card" :columns="userCols" :data-source="settings.data.value.users" row-key="id" :pagination="false" size="small">
+          <template #emptyText>No users have access to this legal entity.</template>
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'roles'"><StatusPill v-for="r in record.roles" :key="r" :label="label(r)" status="info" style="margin-right: 4px" /></template>
-            <template v-else-if="column.key === 'scope'">{{ record.legalEntityIds.join(', ') || '—' }}</template>
+            <template v-else-if="column.key === 'scope'">{{ record.legalEntityIds.map((e: string) => (e === '*' ? 'All entities' : e)).join(', ') || '—' }}</template>
             <template v-else-if="column.key === 'act'">
               <StatusPill v-if="record.pendingChangeId" label="Change pending" status="warn" />
               <a-button v-else-if="can('access.manage')" size="small" type="link" @click="openPropose('USER_ACCESS', record.id, rowCurrent(record))">Propose</a-button>

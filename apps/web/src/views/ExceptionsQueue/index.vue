@@ -143,13 +143,13 @@ async function doBulk() {
 const problemText = (r: BulkResultItem) => r.problem ? (r.problem.detail ? `${r.problem.title}: ${r.problem.detail}` : r.problem.title) : `HTTP ${r.status}`
 
 const columns = computed(() => [
-  { title: 'Severity · status', key: 'sev', width: 190, sorter: true, sortOrder: sortedBy('severity') },
+  { title: 'Severity', key: 'sev', width: 120, sorter: true, sortOrder: sortedBy('severity') },
   { title: 'Exception', key: 'ex' },
-  { title: 'Value', key: 'value', align: 'right' as const, width: 190, sorter: true, sortOrder: sortedBy('value') },
-  { title: 'Owner', key: 'owner', width: 130 },
-  { title: 'Due', key: 'due', width: 110, sorter: true, sortOrder: sortedBy('dueAt'), dataIndex: 'dueAt' },
-  { title: 'Age', key: 'age', width: 70, align: 'right' as const, sorter: true, sortOrder: sortedBy('ageDays'), dataIndex: 'ageDays' },
-  { title: 'Source', key: 'src', width: 190 },
+  { title: 'Value', key: 'value', align: 'right' as const, width: 150, sorter: true, sortOrder: sortedBy('value') },
+  { title: 'Owner / due', key: 'due', width: 150, sorter: true, sortOrder: sortedBy('dueAt'), dataIndex: 'dueAt' },
+  { title: 'Status', key: 'status', width: 110 },
+  { title: 'Age', key: 'age', width: 64, align: 'right' as const, sorter: true, sortOrder: sortedBy('ageDays'), dataIndex: 'ageDays' },
+  { title: 'Source', key: 'src', width: 170 },
 ])
 const open = (id: string) => router.push({ path: `/exceptions/${id}`, query: runId.value ? { run: runId.value } : {} })
 const tableChange = (_p: unknown, _f: unknown, s: unknown) => onTable(_p, _f, s as { field?: string; order?: 'ascend' | 'descend' | null })
@@ -253,19 +253,18 @@ const tableChange = (_p: unknown, _f: unknown, s: unknown) => onTable(_p, _f, s 
       @change="tableChange">
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'sev'">
-          <div class="pills"><StatusPill :status="sevStatus[record.severity]" :label="label(record.severity)" />
-            <StatusPill status="neutral" :label="label(record.status)" /><StatusPill v-if="record.blocking" status="fail" label="Blocking" /></div>
+          <div class="pills"><StatusPill :status="sevStatus[record.severity]" :label="label(record.severity)" /><StatusPill v-if="record.blocking" status="fail" label="Blocking" /></div>
         </template>
         <template v-else-if="column.key === 'ex'">
           <router-link :to="{ path: `/exceptions/${record.id}`, query: runId ? { run: runId } : {} }" class="mono id">{{ record.id }}</router-link>
           <div class="title">{{ record.title }}</div>
-          <div class="hint"><span class="mono">{{ record.reasonCode }}</span> · {{ label(record.control) }} · {{ record.businessDate }} · {{ record.legalEntityId }}</div>
+          <div class="hint"><span class="mono">{{ record.reasonCode }}</span> · {{ label(record.control) }}</div>
         </template>
         <template v-else-if="column.key === 'value'"><span :class="['tab', { neg: record.value?.amount.startsWith('-') }]">{{ money(record.value) }}</span></template>
-        <template v-else-if="column.key === 'owner'">{{ record.owner?.name ?? 'Unassigned' }}</template>
-        <template v-else-if="column.key === 'due'">{{ when(record.dueAt) }}</template>
+        <template v-else-if="column.key === 'status'"><StatusPill status="neutral" :label="label(record.status)" /></template>
+        <template v-else-if="column.key === 'due'"><div :class="record.owner ? 'own' : 'own warn'">{{ record.owner?.name ?? 'Unassigned' }}</div><div class="hint">Due {{ when(record.dueAt) }}</div></template>
         <template v-else-if="column.key === 'age'">{{ record.ageDays ?? '—' }}d</template>
-        <template v-else-if="column.key === 'src'"><span class="mono small">{{ record.sourceFile ?? '—' }}<template v-if="record.sourceRowId"> · {{ record.sourceRowId }}</template></span></template>
+        <template v-else-if="column.key === 'src'"><span class="mono small src">{{ record.sourceFile ?? '—' }}<template v-if="record.sourceRowId"> · {{ record.sourceRowId }}</template></span></template>
       </template>
     </a-table>
     <div class="pager">
@@ -313,6 +312,8 @@ h3 { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacin
 .title { font-size: 13px; margin: 2px 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .hint { color: var(--ink-3); font-size: 12px; }
 .small { font-size: 11px; }
+.src { overflow-wrap: anywhere; }
+.own { font-size: 12px; font-weight: 500; } .own.warn { color: var(--warn); }
 .tab { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .neg { color: var(--fail); }
 .pager { display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding: 12px 16px; }

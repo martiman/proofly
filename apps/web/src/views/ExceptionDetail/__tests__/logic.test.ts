@@ -48,3 +48,10 @@ describe('pending proposal kind', () => {
     expect(proposalKindLabel(null)).toBeNull()
   })
 })
+
+describe('proposalIdOf', () => {
+  it('uses the proposal id (objectId), not the approval id', async () => {
+    const { proposalIdOf } = await import('../logic')
+    expect(proposalIdOf({ id: 'AP-1', objectId: 'RP-9' })).toBe('RP-9')
+  })
+})

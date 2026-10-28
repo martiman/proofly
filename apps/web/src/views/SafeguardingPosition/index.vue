@@ -17,6 +17,11 @@ const LINES_LIMIT = 10
 const { runId, me } = useRunContext()
 const position = useResource(() => runId.value, (id, signal) => getSafeguardingPosition(id, { linesLimit: LINES_LIMIT }, { signal }), { isEmpty: (d) => !d.positions.length })
 const data = computed(() => position.data.value)
+const selected = ref('')
+watch(data, (d) => { if (d && !d.positions.some((p) => p.currency === selected.value)) selected.value = d.positions[0]?.currency ?? '' }, { immediate: true })
+const oblRows = computed(() => data.value?.obligations.filter((l) => l.currency === selected.value) ?? [])
+const balRows = computed(() => data.value?.eligibleBalances.filter((l) => l.balance.currency === selected.value) ?? [])
+const selPos = computed(() => data.value?.positions.find((p) => p.currency === selected.value))
 const adjustments = usePaged((q, signal) => listAdjustments(runId.value!, q, { signal }), [runId], { limit: 10, mode: 'append' })
 const canPropose = computed(() => !!me.value?.permissions.includes('safeguarding.adjustment.propose'))
 
@@ -39,7 +44,7 @@ const oblCols = [
 ]
 const balCols = [
   { title: 'External account', key: 'acc' }, { title: 'Balance', key: 'bal', align: 'right' as const },
-  { title: 'Timestamp', key: 'ts' }, { title: 'Evidence', key: 'ev' }, { title: 'Inclusion', key: 'inc' }, { title: 'Reason', dataIndex: 'reason', key: 'reason' },
+  { title: 'Evidence', key: 'ev' }, { title: 'Treatment', key: 'inc' },
 ]
 const adjCols = [
   { title: 'ID', dataIndex: 'id', key: 'id' }, { title: 'Amount', key: 'amount', align: 'right' as const }, { title: 'Status', key: 'status' },
@@ -65,7 +70,7 @@ function openDrill(currency: string, kind: 'obligation' | 'balance') { drill.sea
 const cmd = useAdjustmentCommands(() => runId.value)
 const prop = reactive({ open: false, currency: '', amount: '', reason: '', evidence: [] as string[], expiresOn: '', err: null as CommandErrorView | null, local: {} as Record<string, string> })
 const currencies = computed(() => data.value?.positions.map((p) => p.currency) ?? [])
-function openProp(c?: string) { Object.assign(prop, { open: true, currency: c ?? currencies.value[0] ?? '', amount: '', reason: '', evidence: [], expiresOn: '', err: null, local: {} }); cmd.propose.reset() }
+function openProp(c?: string) { Object.assign(prop, { open: true, currency: c ?? (selected.value || currencies.value[0]) ?? '', amount: '', reason: '', evidence: [], expiresOn: '', err: null, local: {} }); cmd.propose.reset() }
 async function refresh() { await Promise.all([position.reload(), adjustments.reload()]) }
 async function submitProp() {
   const local: Record<string, string> = {}
@@ -98,7 +103,7 @@ async function reloadDec() { dec.open = false; await refresh() }
 </script>
 
 <template>
-  <PageHeader title="Safeguarding Position" subtitle="Client-money obligation against eligible safeguarding balances">
+  <PageHeader :eyebrow="data ? `Safeguarding · ${data.legalEntityId} · ${data.businessDate}` : undefined" title="Safeguarding Position" subtitle="Client-money obligation against eligible safeguarding balances">
     <template #actions>
       <a-button v-if="canPropose" type="primary" :disabled="!data" @click="openProp()">Propose adjustment</a-button>
       <router-link to="/sign-off"><a-button :disabled="!data">Proceed to sign-off</a-button></router-link>
@@ -120,8 +125,8 @@ async function reloadDec() { dec.open = false; await refresh() }
     </div>
 
     <div class="cards">
-      <div v-for="p in data.positions" :key="p.currency" class="card pos" :class="{ bad: p.state === 'SHORTFALL' }">
-        <div class="ph2"><b>{{ p.currency }}</b><StatusPill :status="(stateMap[p.state] ?? ['neutral', p.state])[0]" :label="(stateMap[p.state] ?? ['neutral', p.state])[1]" /></div>
+      <div v-for="p in data.positions" :key="p.currency" class="card pos" :class="{ bad: p.state === 'SHORTFALL', sel: p.currency === selected }" role="button" tabindex="0" :aria-pressed="p.currency === selected" @click="selected = p.currency" @keydown.enter="selected = p.currency">
+        <div class="ph2"><b>{{ p.currency }}</b><StatusPill :status="(stateMap[p.state] ?? ['neutral', p.state])[0]" :label="(stateMap[p.state] ?? ['neutral', p.state])[1]" /><span v-if="p.currency === selected" class="selbl">Selected</span></div>
         <div class="big">
           <template v-if="p.result">{{ money(p.result) }}</template>
           <a-tooltip v-else title="Coverage cannot be established, so no difference is computed."><span>—</span></a-tooltip>
@@ -143,13 +148,12 @@ async function reloadDec() { dec.open = false; await refresh() }
 
     <div class="grid">
       <div class="card block">
-        <h3>Obligation breakdown</h3>
-        <div v-for="p in data.positions" :key="p.currency" class="sect">
-          <div class="sh"><b>{{ p.currency }}</b>
-            <span class="dim">{{ sliceNote(oblShown(p.currency), p.obligationLinesTotal) }}</span>
-            <a-button size="small" type="link" @click="openDrill(p.currency, 'obligation')">View all lines</a-button></div>
+        <h3>Obligation breakdown · {{ selected }}</h3>
+        <div v-if="selPos" class="sh">
+          <span class="dim">{{ sliceNote(oblShown(selected), selPos.obligationLinesTotal) || `${oblShown(selected)} lines` }}</span>
+          <a-button size="small" type="link" @click="openDrill(selected, 'obligation')">View all lines</a-button>
         </div>
-        <a-table :columns="oblCols" :data-source="data.obligations" :row-key="(r: any) => r.accountId + r.currency + (r.movementType ?? '')" :pagination="false" size="small">
+        <a-table :columns="oblCols" :data-source="oblRows" :row-key="(r: any) => r.accountId + r.currency + (r.movementType ?? '')" :pagination="false" size="small">
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'amount'">{{ money(record.amount) }}</template>
             <router-link v-else-if="column.key === 'accountId'" :to="`/accounts/${record.accountId}`">{{ record.accountId }}</router-link>
@@ -159,19 +163,17 @@ async function reloadDec() { dec.open = false; await refresh() }
       </div>
       <div class="stack">
         <div class="card block">
-          <h3>Eligible-balance breakdown</h3>
-          <div v-for="p in data.positions" :key="p.currency" class="sect">
-            <div class="sh"><b>{{ p.currency }}</b>
-              <span class="dim">{{ sliceNote(balShown(p.currency), p.balanceLinesTotal) }}</span>
-              <a-button size="small" type="link" @click="openDrill(p.currency, 'balance')">View all lines</a-button></div>
+          <h3>Eligible-balance breakdown · {{ selected }}</h3>
+          <div v-if="selPos" class="sh">
+            <span class="dim">{{ sliceNote(balShown(selected), selPos.balanceLinesTotal) || `${balShown(selected)} lines` }}</span>
+            <a-button size="small" type="link" @click="openDrill(selected, 'balance')">View all lines</a-button>
           </div>
-          <a-table :columns="balCols" :scroll="{ x: 'max-content' }" :data-source="data.eligibleBalances" row-key="sourceRowId" :pagination="false" size="small">
+          <a-table class="nowrap" :columns="balCols" :data-source="balRows" row-key="sourceRowId" :pagination="false" size="small">
             <template #bodyCell="{ column, record }">
               <span v-if="column.key === 'acc'" class="mono">{{ record.externalAccountId }}</span>
-              <template v-else-if="column.key === 'bal'">{{ money(record.balance) }}</template>
-              <span v-else-if="column.key === 'ts'">{{ fmtTs(record.balanceTimestamp) }}</span>
+              <span v-else-if="column.key === 'bal'" class="balc">{{ money(record.balance) }}<small>{{ fmtTs(record.balanceTimestamp) }}</small></span>
               <template v-else-if="column.key === 'ev'"><EvidenceLink v-if="record.evidenceReference || record.recordId" :label="record.evidenceReference ?? record.sourceRowId" :to="`/evidence?ref=${encodeURIComponent(record.recordId ?? record.sourceRowId)}`" /><span v-else>—</span></template>
-              <StatusPill v-else-if="column.key === 'inc'" :status="record.included ? 'pass' : 'warn'" :label="record.included ? 'Included' : 'Excluded'" />
+              <span v-else-if="column.key === 'inc'" class="treat"><StatusPill :status="record.included ? 'pass' : 'warn'" :label="record.included ? 'Included' : 'Excluded'" /><small v-if="!record.included && record.reason" :title="record.reason">{{ record.reason }}</small></span>
             </template>
           </a-table>
         </div>
@@ -221,10 +223,9 @@ async function reloadDec() { dec.open = false; await refresh() }
         <router-link v-else-if="column.key === 'accountId'" :to="`/accounts/${record.accountId}`">{{ record.accountId }}</router-link>
         <span v-else-if="column.key === 'movementType'">{{ record.movementType ?? '—' }}</span>
         <span v-else-if="column.key === 'acc'" class="mono">{{ record.externalAccountId }}</span>
-        <template v-else-if="column.key === 'bal'">{{ money(record.balance) }}</template>
-        <span v-else-if="column.key === 'ts'">{{ fmtTs(record.balanceTimestamp) }}</span>
+        <span v-else-if="column.key === 'bal'" class="balc">{{ money(record.balance) }}<small>{{ fmtTs(record.balanceTimestamp) }}</small></span>
         <template v-else-if="column.key === 'ev'"><EvidenceLink v-if="record.evidenceReference || record.recordId" :label="record.evidenceReference ?? record.sourceRowId" :to="`/evidence?ref=${encodeURIComponent(record.recordId ?? record.sourceRowId)}`" /><span v-else>—</span></template>
-        <StatusPill v-else-if="column.key === 'inc'" :status="record.included ? 'pass' : 'warn'" :label="record.included ? 'Included' : 'Excluded'" />
+        <span v-else-if="column.key === 'inc'" class="treat"><StatusPill :status="record.included ? 'pass' : 'warn'" :label="record.included ? 'Included' : 'Excluded'" /><small v-if="!record.included && record.reason" :title="record.reason">{{ record.reason }}</small></span>
       </template>
     </a-table>
     <div class="pg">
@@ -262,9 +263,18 @@ h3 { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
 .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
 .stack { display: flex; flex-direction: column; min-width: 0; }
 .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 16px; }
-.pos { padding: 16px; }
+.pos { padding: 16px; cursor: pointer; }
+.pos.sel { box-shadow: 0 0 0 1px var(--accent, #3b4bd8); }
+.selbl { margin-left: auto; font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+.nowrap :deep(.ant-table-cell) { white-space: nowrap; }
+.nowrap :deep(.ant-table-cell a) { white-space: nowrap; }
+.balc { display: flex; flex-direction: column; align-items: flex-end; white-space: nowrap; }
+.balc small { color: var(--ink-3); font-size: 11px; }
+.mono { white-space: nowrap; }
+.treat { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.treat small { color: var(--ink-3); font-size: 11px; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pos.bad { border-color: var(--fail, #B3261E); }
-.ph2 { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.ph2 { display: flex; justify-content: flex-start; gap: 8px; align-items: center; margin-bottom: 8px; }
 .big { font-size: 24px; font-weight: 600; margin-bottom: 8px; }
 .expl { font-size: 12px; color: var(--warn); margin-bottom: 10px; }
 .sub3 { display: flex; gap: 16px; font-size: 12px; flex-wrap: wrap; }
@@ -275,7 +285,7 @@ h3 { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
 .mono { font-family: var(--font-mono); font-size: 12px; }
 .exc { margin-right: 8px; }
 .drivers { margin: 0; padding-left: 18px; }
-.sh { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.sh { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; margin-bottom: 8px; }
 .dim { color: var(--ink-3); font-size: 12px; }
 .more, .pg { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; align-items: center; }
 .pg .dim { margin-right: auto; }

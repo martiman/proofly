@@ -87,11 +87,11 @@ function subjectLink(e: Ev) {
     </template>
   </PageHeader>
 
-  <div class="searchrow">
+  <div v-if="events.placeholder.value !== 'forbidden'" class="searchrow">
     <a-input-search v-model:value="search" placeholder="Search summary, subject or request id" allow-clear class="sb" />
     <a-checkbox v-model:checked="thisRun">This run only</a-checkbox>
   </div>
-  <div class="chips">
+  <div v-if="events.placeholder.value !== 'forbidden'" class="chips">
     <a-button size="small" :type="chip(kind, undefined)" @click="kind = undefined">All subjects</a-button>
     <a-button v-for="k in kinds" :key="k" size="small" :type="chip(kind, k)" @click="kind = k">{{ humanize(k) }}</a-button>
     <span class="sep" />
@@ -119,14 +119,14 @@ function subjectLink(e: Ev) {
           <template #action><a-button @click="events.reload">Retry</a-button></template>
         </StatePlaceholder>
         <template v-else>
-          <a-table size="small" row-key="id" :pagination="false" :data-source="events.items.value" :loading="events.loading.value"
+          <a-table size="small" class="evt" row-key="id" :pagination="false" :data-source="events.items.value" :loading="events.loading.value" :scroll="{ y: 560 }"
             :custom-row="(r: Ev) => ({ onClick: () => (selected = r), class: r.id === selected?.id ? 'selrow' : '' })"
-            :columns="[{ title: 'Time', key: 'at', width: 150 }, { title: 'Actor', key: 'actor', width: 150 }, { title: 'Event', key: 'type', width: 190 }, { title: 'Subject', key: 'subject', width: 130 }, { title: 'Summary', dataIndex: 'summary' }]">
+            :columns="[{ title: 'Time', key: 'at', width: 148 }, { title: 'Actor', key: 'actor', width: 100, ellipsis: true }, { title: 'Event', key: 'type', width: 130 }, { title: 'Subject', key: 'subject', width: 120, ellipsis: true }, { title: 'Summary', dataIndex: 'summary' }]">
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'at'">{{ fmt(record.at) }}</template>
-              <template v-else-if="column.key === 'actor'"><StatusPill :status="record.actor.type === 'USER' ? 'info' : 'neutral'" :label="record.actor.type === 'USER' ? 'Human' : 'System'" /> {{ record.actor.name ?? record.actor.id ?? '' }}</template>
+              <template v-else-if="column.key === 'actor'"><span :title="`${record.actor.type === 'USER' ? 'Human' : 'System'}: ${record.actor.name ?? record.actor.id ?? ''}`">{{ record.actor.type === 'USER' ? (record.actor.name ?? record.actor.id ?? 'Human') : 'System' }}</span></template>
               <template v-else-if="column.key === 'type'">{{ humanize(record.type) }}</template>
-              <template v-else-if="column.key === 'subject'"><span class="mono">{{ record.subjectId }}</span></template>
+              <template v-else-if="column.key === 'subject'"><span class="mono" :title="record.subjectId">{{ record.subjectId }}</span></template>
             </template>
           </a-table>
           <div class="pager"><span class="sub">Page {{ events.pageIndex.value + 1 }}</span><a-button size="small" :disabled="!events.hasPrev.value" @click="events.prev">Previous</a-button><a-button size="small" :disabled="!events.hasNext.value" @click="events.next">Next</a-button></div>
@@ -182,7 +182,8 @@ function subjectLink(e: Ev) {
 
       <div class="card">
         <div class="ch"><span class="lbl">Evidence pack and verification</span></div>
-        <StatePlaceholder v-if="pack.placeholder.value && pack.placeholder.value !== 'empty'" :state="pack.placeholder.value" :message="pack.message.value"><template #action><a-button @click="pack.reload">Retry</a-button></template></StatePlaceholder>
+        <div v-if="pack.placeholder.value === 'forbidden'" class="pad sub">Access restricted: your role cannot view the evidence pack.</div>
+        <StatePlaceholder v-else-if="pack.placeholder.value && pack.placeholder.value !== 'empty'" :state="pack.placeholder.value" :message="pack.message.value"><template #action><a-button @click="pack.reload">Retry</a-button></template></StatePlaceholder>
         <div v-else class="pad kvs">
           <div class="kv"><span>Pack</span><b>{{ packView?.id ?? 'Not generated' }}</b></div>
           <div class="kv"><span>Generated</span><b>{{ fmt(packView?.generatedAt) }}</b></div>
@@ -218,7 +219,9 @@ function subjectLink(e: Ev) {
 .strip { display: flex; margin-bottom: 16px; }
 .cell { flex: 1; padding: 12px 16px; border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .cell:last-child { border-right: 0; }
-.v { font-size: 15px; font-weight: 500; }
+.v { font-size: 15px; font-weight: 500; overflow-wrap: anywhere; }
+.evt :deep(td) { white-space: nowrap; }
+.evt :deep(td:last-child) { white-space: normal; }
 .cols { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
 .left, .right { display: flex; flex-direction: column; gap: 16px; }
 .ch { display: flex; gap: 10px; align-items: center; padding: 14px 16px; }

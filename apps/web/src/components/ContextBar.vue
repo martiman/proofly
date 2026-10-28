@@ -27,16 +27,16 @@ const approvalsMsg = computed(() => (isApiError(approvalsError.value) && approva
 <template>
   <header class="cb">
     <label class="sel"><span class="k">Entity</span>
-      <a-select size="small" variant="borderless" :value="legalEntityId ?? undefined" :options="entityOptions" :loading="loading" placeholder="—" class="s" :dropdown-match-select-width="false" @change="(v: string) => selectEntity(v)" />
+      <a-select size="small" variant="borderless" :value="legalEntityId ?? undefined" :options="entityOptions" :loading="loading" placeholder="—" class="s s-ent" :dropdown-match-select-width="false" @change="(v: string) => selectEntity(v)" />
     </label>
     <label class="sel"><span class="k">Business date</span>
-      <a-select size="small" variant="borderless" :value="businessDate ?? undefined" :options="dateOptions" placeholder="—" class="s" @change="(v: string) => selectBusinessDate(v)" />
+      <a-select size="small" variant="borderless" :value="businessDate ?? undefined" :options="dateOptions" placeholder="—" class="s s-date" @change="(v: string) => selectBusinessDate(v)" />
     </label>
     <div class="sel"><span class="k">Currency</span>
       <span class="v mono">{{ entity ? entity.currencies.join(' · ') : '—' }}</span>
     </div>
     <label class="sel"><span class="k">Run</span>
-      <a-select size="small" variant="borderless" :value="run?.id" :options="runOptions" placeholder="—" class="s mono" :dropdown-match-select-width="false" @change="(v: string) => selectRun(v)" />
+      <a-select size="small" variant="borderless" :value="run?.id" :options="runOptions" placeholder="—" class="s s-run mono" :dropdown-match-select-width="false" @change="(v: string) => selectRun(v)" />
     </label>
     <div class="gap" />
     <label class="search"><SearchOutlined class="ch" />
@@ -60,8 +60,9 @@ const approvalsMsg = computed(() => (isApiError(approvalsError.value) && approva
 </template>
 <style scoped>
 .cb { display: flex; align-items: center; gap: 8px; padding: 12px 32px; background: var(--surface); border-bottom: 1px solid var(--border); }
-.sel { display: flex; align-items: center; gap: 4px; padding: 2px 4px 2px 10px; border: 1px solid var(--border); border-radius: 6px; margin: 0; }
-.k { color: var(--ink-3); font-size: 11px; } .v { color: var(--ink); font-size: 12px; font-weight: 500; padding: 0 6px; }
+.sel { display: flex; white-space: nowrap; flex: none; align-items: center; gap: 4px; padding: 2px 4px 2px 10px; border: 1px solid var(--border); border-radius: 6px; margin: 0; }
+.k { color: var(--ink-3); font-size: 11px; } .v { white-space: nowrap; color: var(--ink); font-size: 12px; font-weight: 500; padding: 0 6px; }
+.s-ent { width: 200px; } .s-date { width: 112px; } .s-run { width: 150px; }
 .s { min-width: 90px; font-size: 12px; font-weight: 500; }
 .gap { flex: 1; }
 .search { width: 340px; display: flex; align-items: center; gap: 8px; padding: 7px 10px; background: var(--surface-sunk); border-radius: 6px; margin: 0; }

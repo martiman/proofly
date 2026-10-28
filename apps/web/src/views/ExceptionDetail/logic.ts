@@ -23,3 +23,6 @@ export const allows = (allowed: readonly string[] | undefined, a: Action) => !!a
 
 /** Label of the proposed resolution kind (Approval.kind); null for non-resolution approvals. */
 export const proposalKindLabel = (kind: string | null | undefined) => (kind ? kind.toLowerCase().replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase()) : null)
+
+/** The decision endpoint is keyed by the proposal id (`objectId` of the approval), never by the approval id (`id`). */
+export const proposalIdOf = (approval: { id: string; objectId: string }): string => approval.objectId

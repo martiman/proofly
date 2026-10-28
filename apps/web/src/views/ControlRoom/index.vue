@@ -7,7 +7,7 @@ import type { Schema } from '../../api/services'
 import { useResource } from '../../api/composables'
 import { StatePlaceholder, StatusPill, EvidenceLink } from '../../components'
 import { useRunContext } from '../../composables/useRunContext'
-import { conclusion, ctrlStatus, delStatus, exceptionLink, fmtDate, human, impact, sevStatus, sgStatus, showing, summaryLink } from './logic'
+import { rulesetLabel, conclusion, ctrlStatus, delStatus, exceptionLink, fmtDate, human, impact, sevStatus, sgStatus, showing, summaryLink } from './logic'
 
 type Money = Schema<'Money'>
 const router = useRouter()
@@ -67,7 +67,7 @@ const retry = () => { void room.reload() }
     <div>
       <div class="eyebrow">DAILY CONTROL ROOM</div>
       <h1>{{ data ? `Business date ${longDate}` : 'Business date' }}</h1>
-      <div class="ctx">{{ data ? `${data.run.legalEntityId} · Run v${data.run.version} · ${human(data.run.state)} · Ruleset ${data.run.rulesetVersion}` : '' }}</div>
+      <div class="ctx" :title="data?.run.rulesetVersion">{{ data ? `${data.run.legalEntityId} · Run v${data.run.version} · ${human(data.run.state)} · Ruleset ${rulesetLabel(data.run.rulesetVersion)}` : '' }}</div>
     </div>
     <div class="acts">
       <span v-if="data" class="upd">Last evidence {{ fmtDate(data.run.lastEvidenceArrivalAt) }}</span>
@@ -153,7 +153,7 @@ const retry = () => { void room.reload() }
           <span class="res">
             {{ c.recordCount.toLocaleString('en-GB') }} records
             ({{ c.changeFromPrevious >= 0 ? '+' : '' }}{{ c.changeFromPrevious }} vs previous) · {{ c.openExceptions }} open
-            <template v-for="m in c.value" :key="m.currency"> · <span class="tabular">{{ money(m) }}</span></template>
+            <template v-for="m in c.value" :key="m.currency"> · <span class="tabular nw">{{ money(m) }}</span></template>
           </span>
           <span :class="['imp', impact(c.state)[1]]">{{ impact(c.state)[0] }}</span>
         </div>
@@ -280,10 +280,13 @@ h3 { margin: 0 0 12px; font-size: 15px; font-weight: 600; }
 .area { display: grid; grid-template-columns: 1fr 380px; gap: 16px; margin-bottom: 16px; align-items: start; }
 .ch { display: flex; gap: 12px; align-items: center; padding: 14px 16px; }
 .ch .muted { flex: 1; font-size: 12px; }
-.th, .tr { display: grid; grid-template-columns: 1.4fr .9fr 2.4fr 1.1fr; gap: 12px; padding: 0 16px; align-items: center; }
+.th, .tr { display: grid; grid-template-columns: 1.3fr 1.1fr 2.4fr 1.1fr; gap: 12px; padding: 0 16px; align-items: center; }
 .th { background: var(--surface-sunk); font-size: 10px; font-weight: 600; letter-spacing: .06em; color: var(--ink-3); height: 29px; }
 .tr { min-height: 48px; padding-top: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
 .cn { font-size: 13px; font-weight: 500; }
+.nw { white-space: nowrap; }
+.tr :deep(.pill) { white-space: nowrap; }
+.it { overflow-wrap: anywhere; }
 .res { font-size: 12px; color: var(--ink-2); }
 .imp { font-size: 12px; font-weight: 600; } .imp.fail { color: var(--fail); } .imp.warn { color: var(--warn); font-weight: 400; } .imp.none { color: var(--ink-3); font-weight: 400; }
 .legend { background: var(--surface-sunk); padding: 12px 16px; display: flex; flex-direction: column; gap: 6px; font-size: 11px; color: var(--ink-3); border-radius: 0 0 5px 5px; }

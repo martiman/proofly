@@ -8,13 +8,14 @@ import { useResource, usePaged } from '../../api/composables'
 import { formatMoney } from '../../api/client'
 import { listSourceDeliveries, getSourceDelivery, getDeliveryProcessingHistory, listDeliveryRecords } from '../../api/services'
 import type { Schema } from '../../api/services'
+import { FINDINGS_SHOWN, findingsNote } from './findingsNote'
 import { useDeliveryCommands } from './deliveryCommands'
 import { describeCommandError, type CommandErrorView } from './commandError'
 
 type Delivery = Schema<'SourceDelivery'>
 type DeliveryState = Schema<'DeliveryState'>
 
-const { runId } = useRunContext()
+const { runId, legalEntityId, businessDate } = useRunContext()
 const deliveries = useResource(() => runId.value, (id, signal) => listSourceDeliveries(id, { signal }), { isEmpty: (d) => !d.items.length })
 const rows = computed(() => deliveries.data.value?.items ?? [])
 
@@ -33,7 +34,10 @@ const query = ref('')
 let timer: ReturnType<typeof setTimeout> | undefined
 watch(search, (v) => { clearTimeout(timer); timer = setTimeout(() => (query.value = v.trim()), 300) })
 const records = usePaged(
-  (q, signal) => listDeliveryRecords(selectedId.value!, { ...q, accepted: rejectedOnly.value ? false : undefined, search: query.value || undefined }, { signal }),
+  async (q, signal) => {
+    if (!selectedId.value) return { items: [] as Awaited<ReturnType<typeof listDeliveryRecords>>['items'], page: { hasMore: false, nextCursor: null } }
+    return listDeliveryRecords(selectedId.value, { ...q, accepted: rejectedOnly.value ? false : undefined, search: query.value || undefined }, { signal })
+  },
   [selectedId, rejectedOnly, query], { limit: 10, includeTotal: true },
 )
 
@@ -54,8 +58,7 @@ const rejectedSources = computed(() => rows.value.filter((r) => r.rejectedRecord
 const mismatch = (r: Delivery) => r.declaredRecordCount !== null && r.declaredRecordCount !== r.actualRecordCount
 const note = (r: Delivery) => (mismatch(r) ? 'count mismatch' : r.rejectedRecords ? `${r.rejectedRecords} rejected` : '—')
 const noteCls = (r: Delivery) => (mismatch(r) ? 'fail' : r.rejectedRecords ? 'warn' : 'dim')
-const findingText = (x: { findingIds: string[]; findingCount?: number }) =>
-  x.findingCount !== undefined && x.findingCount > x.findingIds.length ? `showing ${x.findingIds.length} of ${x.findingCount}` : ''
+const findingText = findingsNote
 
 const checkPill = (r: string): Status => (r === 'PASS' ? 'pass' : r === 'FAIL' ? 'fail' : r === 'WARN' ? 'warn' : 'neutral')
 const outcomePill = (r: string): Status => (r === 'OK' ? 'pass' : r === 'ERROR' ? 'fail' : 'warn')
@@ -90,7 +93,7 @@ async function reloadAfterConflict() { dlg.err = null; await refreshAll() }
 <template>
   <div class="ph">
     <div>
-      <div class="eyebrow">Sources</div>
+      <div class="eyebrow">Sources<template v-if="legalEntityId"> · {{ legalEntityId }}</template><template v-if="businessDate"> · {{ businessDate }}</template></div>
       <h1>Sources</h1>
       <p>Whether every required input arrived, passed validation and can be relied on for the selected business date.</p>
     </div>
@@ -165,7 +168,7 @@ async function reloadAfterConflict() { dlg.err = null; await refreshAll() }
           </div>
           <div v-for="q in d.qualifications" :key="q" class="kv warn"><span>Qualification</span><b>{{ q }}</b></div>
           <div class="kv"><span>Findings</span>
-            <b><router-link v-for="f in d.findingIds" :key="f" :to="`/exceptions/${f}`" class="fl">{{ f }}</router-link><template v-if="!d.findingIds.length">none</template>
+            <b><router-link v-for="f in d.findingIds.slice(0, FINDINGS_SHOWN)" :key="f" :to="`/exceptions/${f}`" class="fl">{{ f }}</router-link><template v-if="!d.findingIds.length">none</template>
               <small v-if="findingText(d)" class="dim"> {{ findingText(d) }}</small></b></div>
         </div>
         <div class="col">
@@ -248,7 +251,8 @@ p { margin: 0; font-size: 13px; color: var(--ink-2); }
 .cols { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--border); }
 .col { padding: 14px 20px; display: flex; flex-direction: column; gap: 8px; border-right: 1px solid var(--border); }
 .col:last-child { border-right: 0; }
-.kv { display: flex; gap: 12px; font-size: 12px; align-items: center; }
+.kv { display: flex; gap: 12px; font-size: 12px; align-items: flex-start; }
+.kv b { min-width: 0; overflow-wrap: anywhere; }
 .kv span { width: 120px; flex: none; color: var(--ink-3); }
 .kv b { font-weight: 500; color: var(--ink); }
 .kv.warn b { color: var(--warn); }

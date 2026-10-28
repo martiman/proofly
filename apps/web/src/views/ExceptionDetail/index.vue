@@ -4,14 +4,13 @@ import { useRoute } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { StatePlaceholder, StatusPill, EvidenceLink } from '../../components'
 import { useRunContext } from '../../composables/useRunContext'
-import { useAsync, useCommand, useResource } from '../../api/composables'
+import { useCommand, useResource } from '../../api/composables'
 import { formatMoney, isNotFound } from '../../api/client'
 import {
-  addExceptionNote, assignException, decideResolution, getException, getSettings, proposeResolution,
+  addExceptionNote, assignException, decideResolution, getException, listAssignableUsers, proposeResolution,
   reopenException, requestExceptionEvidence, type Schema,
 } from '../../api/services'
-import { investigators } from '../ExceptionsQueue/logic'
-import { allows, classifyFailure, decisionBody, proposalKindLabel, type CommandFailure } from './logic'
+import { allows, classifyFailure, decisionBody, proposalIdOf, proposalKindLabel, type CommandFailure } from './logic'
 
 type Detail = Schema<'ExceptionDetail'>
 const route = useRoute()
@@ -66,10 +65,9 @@ const addNote = () => note.value.trim() && exec(() => noteCmd.run({ text: note.v
 const evText = ref(''); const evFrom = ref('')
 const askEvidence = () => evText.value.trim() && exec(() => evCmd.run({ text: evText.value.trim(), requestedFrom: evFrom.value.trim() || undefined }), 'Evidence requested', () => { evText.value = ''; evFrom.value = '' })
 
-const settings = useAsync((s) => getSettings({}, { signal: s }).catch(() => null), { isEmpty: () => false })
+const assignable = useResource(() => res.data.value?.legalEntityId, (le, signal) => listAssignableUsers(le, { signal }).catch(() => []), { isEmpty: () => false })
 const ownerOptions = computed(() => {
-  const us = settings.data.value?.users
-  const base = us ? investigators(us).map((u) => ({ value: u.id, label: u.name })) : []
+  const base = (assignable.data.value ?? []).map((u) => ({ value: u.id, label: u.name }))
   if (me.value && !base.some((o) => o.value === me.value!.id)) base.unshift({ value: me.value.id, label: `${me.value.name} (me)` })
   return base
 })
@@ -94,7 +92,7 @@ function decide(decision: 'APPROVE' | 'REJECT') {
     title: decision === 'APPROVE' ? 'Approve this resolution?' : 'Reject this resolution?',
     content: `Proposal v${p.proposalVersion} by ${p.proposer.name}. This is a material decision and is audited.`,
     okText: decision === 'APPROVE' ? 'Approve' : 'Reject', okButtonProps: { danger: decision === 'REJECT' },
-    onOk: () => exec(() => decideCmd.run({ proposalId: p.id, body: decisionBody(decision, decideReason.value, p.proposalVersion) }), decision === 'APPROVE' ? 'Resolution approved' : 'Resolution rejected', () => (decideReason.value = '')),
+    onOk: () => exec(() => decideCmd.run({ proposalId: proposalIdOf(p), body: decisionBody(decision, decideReason.value, p.proposalVersion) }), decision === 'APPROVE' ? 'Resolution approved' : 'Resolution rejected', () => (decideReason.value = '')),
   })
 }
 const reopenReason = ref('')
@@ -179,7 +177,7 @@ const reopen = () => Modal.confirm({
             </template>
           </a-table>
           <ul v-if="ex.evidenceEdges.length" class="edges">
-            <li v-for="(e, i) in ex.evidenceEdges" :key="i">{{ nodeLabel(e.from) }} <b>{{ e.relation }}</b> {{ nodeLabel(e.to) }}</li>
+            <li v-for="(e, i) in ex.evidenceEdges" :key="i">{{ nodeLabel(e.from) }} <b>{{ label(e.relation) }}</b> {{ nodeLabel(e.to) }}</li>
           </ul>
         </section>
 

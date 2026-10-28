@@ -87,7 +87,7 @@ const details = computed<[string, string][]>(() => {
   if (!x) return []
   return [
     ['Type', nice(x.kind)], ['Source', x.source], ['Source row', x.sourceRowId], ['Reference', x.reference],
-    ['Direction', x.direction ?? '—'], ['Timestamp', dt(x.timestamp)], ['Source status', x.sourceStatus],
+    ['Direction', x.direction ? nice(x.direction) : '—'], ['Timestamp', dt(x.timestamp)], ['Source status', x.sourceStatus],
     ['Delivery', x.deliveryId ?? '—'], ['Match group', x.matchGroupId ?? '—'], ['Accepted', x.accepted ? 'Yes' : 'No'],
   ]
 })
@@ -146,7 +146,7 @@ const nodeCols = [
     </div>
 
     <div class="detail">
-      <div v-if="!selectedId && !recordNotFound" class="card ph">Select a transaction to see its lifecycle, record details and evidence.</div>
+      <div v-if="!selectedId && !recordNotFound" class="card pick">Select a transaction to see its lifecycle, record details and evidence.</div>
       <StatePlaceholder v-else-if="recordNotFound" state="empty" :message="`No transaction was found for source record ${recordIdQ}.`" />
       <StatePlaceholder v-else-if="tx.placeholder.value === 'loading'" state="loading" />
       <StatePlaceholder v-else-if="notFound" state="empty" :message="`Transaction ${selectedId} was not found in this run.`" />
@@ -171,17 +171,15 @@ const nodeCols = [
         </div>
         <div class="card blk">
           <h3>Record details</h3>
-          <a-descriptions size="small" :column="2" bordered>
-            <a-descriptions-item label="Account">
-              <router-link v-if="t.accountId" :to="{ path: `/accounts/${t.accountId}`, query: { ...(runId ? { run: runId } : {}), currency: t.amount.currency } }">{{ t.accountId }}</router-link><template v-else>—</template>
-            </a-descriptions-item>
-            <a-descriptions-item label="Amount">{{ fm(t.amount) }}</a-descriptions-item>
-            <a-descriptions-item v-for="[l, v] in details" :key="l" :label="l">{{ v }}</a-descriptions-item>
-            <a-descriptions-item label="Exceptions" :span="2">
+          <dl class="kv">
+            <div class="kvi"><dt>Account</dt><dd><router-link v-if="t.accountId && t.kind !== 'BANK_EVIDENCE'" :to="{ path: `/accounts/${t.accountId}`, query: { ...(runId ? { run: runId } : {}), currency: t.amount.currency } }">{{ t.accountId }}</router-link><template v-else>{{ t.accountId ?? '—' }}</template></dd></div>
+            <div class="kvi"><dt>Amount</dt><dd>{{ fm(t.amount) }}</dd></div>
+            <div v-for="[l, v] in details" :key="l" class="kvi"><dt>{{ l }}</dt><dd>{{ v }}</dd></div>
+            <div class="kvi wide"><dt>Exceptions</dt><dd>
               <router-link v-for="e in t.exceptionIds" :key="e" :to="`/exceptions/${e}`" class="exl">{{ e }}</router-link>
               <span v-if="!t.exceptionIds.length">None</span>
-            </a-descriptions-item>
-          </a-descriptions>
+            </dd></div>
+          </dl>
         </div>
         <div class="card blk">
           <h3>Source records and provenance</h3>
@@ -226,21 +224,28 @@ h3 { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
 .acts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
 .row { display: grid; grid-template-columns: 320px 1fr; gap: 16px; align-items: start; }
 .results { padding: 0; overflow: hidden; }
-.rh { padding: 10px 12px; font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--ink-3); border-bottom: 1px solid var(--line, #E5E3DC); }
-.item { padding: 10px 12px; border-bottom: 1px solid var(--line, #E5E3DC); cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
-.item.on { background: #EEEDE8; box-shadow: inset 3px 0 0 var(--accent, #2F5BEA); }
+.rh { padding: 10px 12px; font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--ink-3); border-bottom: 1px solid var(--border); }
+.item { padding: 10px 12px; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
+.item.on { background: var(--surface-sunk); box-shadow: inset 3px 0 0 var(--accent); }
 .l1, .l3 { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .l2 { font-size: 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .l3 { font-size: 12px; color: var(--ink-3); }
+.l1 :deep(.pill), .dr :deep(.pill) { white-space: nowrap; }
+.kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.kvi { display: grid; grid-template-columns: 120px 1fr; border-bottom: 1px solid var(--border); }
+.kvi.wide { grid-column: 1 / -1; border-bottom: 0; }
+.kv dt { background: var(--surface-sunk); color: var(--ink-3); font-size: 12px; padding: 8px 12px; }
+.kv dd { margin: 0; padding: 8px 12px; font-size: 13px; overflow-wrap: anywhere; min-width: 0; }
+.detail :deep(a) { white-space: nowrap; }
 .mono { font-family: var(--font-mono); font-size: 12px; }
 .amt { color: var(--ink); white-space: nowrap; }
 .more { padding: 10px 12px; text-align: center; }
 .detail { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-.ph { padding: 32px; text-align: center; color: var(--ink-3); }
+.pick { padding: 32px; text-align: center; color: var(--ink-3); }
 .dh { padding: 16px; display: flex; justify-content: space-between; align-items: center; }
 .dh .big { font-size: 18px; font-weight: 600; }
 .sub { color: var(--ink-2); font-size: 12px; margin-top: 2px; }
 .dr { display: flex; gap: 12px; align-items: center; font-size: 18px; font-weight: 600; }
-.blk { padding: 16px; }
+.blk { padding: 16px; overflow-x: auto; }
 .dels { margin-top: 8px; color: var(--ink-3); display: flex; flex-direction: column; gap: 2px; }
 </style>

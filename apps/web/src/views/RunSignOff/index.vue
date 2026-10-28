@@ -15,6 +15,7 @@ import { blockerLink, can, mapCommandError, reasonError, type CommandProblem, ty
 
 type Pack = Schema<'RunSignOff'>
 const ctx = useRunContext()
+const hasPerm = (p: Schema<'Me'>['permissions'][number]) => !!ctx.me.value?.permissions.includes(p)
 const { runId } = ctx
 const res = useResource(() => runId.value, (id, signal) => getRunSignOff(id, { openMattersLimit: 20 }, { signal }))
 const override = ref<Pack | null>(null) // the response of the last command is the new pack (and its ETag is cached)
@@ -103,12 +104,13 @@ async function download() {
 <template>
   <PageHeader title="Run sign-off" subtitle="An accountable decision point. Every control links to its result and cannot be marked passed by hand.">
     <template #actions>
-      <a-button v-if="data" :disabled="busy" @click="open('REPROCESS')">Request reprocess</a-button>
-      <a-button v-if="data" :disabled="busy" @click="open('PACK')">Generate evidence pack</a-button>
+      <a-button v-if="data && hasPerm('run.reprocess')" :disabled="busy" @click="open('REPROCESS')">Request reprocess</a-button>
+      <a-button v-if="data && hasPerm('evidence.export')" :disabled="busy" @click="open('PACK')">Generate evidence pack</a-button>
       <a-button v-if="data?.evidencePackId" :disabled="busy" @click="download">Download pack</a-button>
       <a-button v-if="can(allowed, 'SUBMIT')" :disabled="busy" @click="open('SUBMIT')">Submit for sign-off</a-button>
       <a-button v-if="can(allowed, 'RETURN')" :disabled="busy" @click="open('RETURN')">Return to preparer</a-button>
       <a-button v-if="can(allowed, 'APPROVE')" type="primary" :disabled="busy" @click="open('APPROVE')">Sign off</a-button>
+      <a-button v-else-if="data" type="primary" disabled title="Sign-off is not available to you for this run in its current state.">Sign off</a-button>
     </template>
   </PageHeader>
 
@@ -129,7 +131,7 @@ async function download() {
       <StatusPill :status="signStatus" :label="human(data.run.signOffState)" />
       <div class="kv"><i>Legal entity</i>{{ data.run.legalEntityId }}</div>
       <div class="kv"><i>Business date</i>{{ data.run.businessDate }}</div>
-      <div class="kv"><i>Run</i>v{{ data.run.version }} · {{ data.run.state }}</div>
+      <div class="kv"><i>Run</i>v{{ data.run.version }} · {{ human(data.run.state) }}</div>
       <div class="kv"><i>Preparer</i>{{ data.run.preparer?.name ?? '—' }}</div>
       <div class="kv"><i>Required approver</i>{{ data.run.requiredApprover?.name ?? '—' }}</div>
       <div v-if="data.run.signedOffBy" class="kv"><i>Signed off</i>{{ data.run.signedOffBy.name }} · {{ fmtDate(data.run.signedOffAt) }}</div>
@@ -137,9 +139,9 @@ async function download() {
 
     <div v-if="data.blockers.length" class="card block" data-test="blockers">
       <h3>Blockers ({{ data.blockers.length }})</h3>
-      <ul class="plain"><li v-for="(b, i) in data.blockerDetails" :key="i">
+      <ul class="blist"><li v-for="(b, i) in data.blockerDetails" :key="i">
         <router-link v-if="blockerLink(b, runId)" :to="blockerLink(b, runId)!">{{ b.message }}</router-link><span v-else>{{ b.message }}</span>
-        <span v-if="b.control" class="mono"> · {{ b.control }}</span>
+        <span v-if="b.control" class="ctl">{{ human(b.control) }}</span>
       </li></ul>
     </div>
 
@@ -268,6 +270,11 @@ h3.mt, .mt { margin-top: 12px; }
 .row .muted { flex: 1; }
 .muted { color: var(--ink-3); font-size: 12px; }
 .cats { margin-bottom: 8px; }
+.blist { margin: 0; padding: 0; list-style: none; font-size: 13px; }
+.blist li { display: flex; gap: 12px; align-items: baseline; padding: 8px 0; border-top: 1px solid var(--border); }
+.blist li:first-child { border-top: 0; padding-top: 0; }
+.ctl { margin-left: auto; flex: none; background: var(--neutral-soft); color: var(--ink-2); border-radius: 3px; font-size: 11px; padding: 1px 6px; }
+.kv { white-space: nowrap; }
 .plain { margin: 0; padding-left: 18px; font-size: 13px; }
 .pager { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 8px; }
 .hash { word-break: break-all; font-size: 11px; }

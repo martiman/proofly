@@ -19,13 +19,15 @@ const accountId = computed(() => String(route.params.id ?? ''))
 const currency = computed(() => (typeof route.query.currency === 'string' && route.query.currency ? route.query.currency : undefined))
 const dirFilter = ref<'ALL' | 'DEBIT' | 'CREDIT'>('ALL')
 const onlyIssues = ref(false)
+const nice = (v: string) => v.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase())
 const fm = (m: Money | null | undefined) => (m ? formatMoney(m.amount, m.currency) : '—')
 
 const ledger = useResource(() => (runId.value && accountId.value ? `${runId.value}|${accountId.value}|${currency.value ?? ''}` : null),
   (k: string, signal) => { const [r, id, c] = k.split('|'); return getAccountLedger(r!, id!, { currency: (c || undefined) as never, limit: 50 }, { signal }) })
 const data = computed(() => ledger.data.value)
+const needsCurrency = computed(() => isValidation(ledger.error.value))
 // switcher: the server's availableCurrencies; before any ledger loaded (422 asking for a currency) fall back to the entity's currencies
-const currencies = computed(() => switcherCurrencies(data.value?.availableCurrencies, entityCurrencies.value))
+const currencies = computed(() => (data.value || needsCurrency.value ? switcherCurrencies(data.value?.availableCurrencies, entityCurrencies.value) : []))
 
 // further ledger pages are appended; the server's cursor is followed, nothing is derived locally
 const extra = ref<LedgerEntry[]>([])
@@ -41,7 +43,6 @@ async function loadMore() {
     extra.value = [...extra.value, ...r.entries]; cursor.value = r.entriesPage?.nextCursor ?? null
   } catch (e) { moreErr.value = (e as Error).message } finally { more.value = false }
 }
-const needsCurrency = computed(() => isValidation(ledger.error.value))
 const notFound = computed(() => isNotFound(ledger.error.value))
 function setCurrency(c: string) { router.replace({ query: { ...route.query, currency: c } }) }
 
@@ -61,7 +62,7 @@ const entryCols = [
   { title: 'Type', dataIndex: 'entryType', key: 'entryType', width: 120 },
   { title: 'Direction', dataIndex: 'direction', key: 'direction', width: 90 },
   { title: 'Amount', key: 'amount', align: 'right' as const, width: 170 },
-  { title: 'Support', key: 'support', width: 170 },
+  { title: 'Support', key: 'support', width: 250 },
 ]
 const txCols = [
   { title: 'Transaction', key: 'id' }, { title: 'Reference', dataIndex: 'reference', key: 'reference' },
@@ -100,10 +101,10 @@ const bridgeEmphasis = (l: string) => /closing/i.test(l)
       <div class="cell"><div class="lbl">STATE</div><StatusPill :status="stateMap[data.account.state].status" :label="stateMap[data.account.state].label" /><div class="sub">Opening {{ fm(data.account.openingBalance) }}</div></div>
     </div>
 
-    <a-row :gutter="16">
-      <a-col :span="16">
+    <a-row :gutter="[16, 16]">
+      <a-col :xs="24" :xl="16">
         <a-card size="small" title="BALANCE BRIDGE" style="margin-bottom: 16px">
-          <a-descriptions :column="1" size="small" :colon="false" class="bridge">
+          <a-descriptions :column="1" size="small" :colon="false" class="bridge" :class="`st-${data.account.state}`">
             <a-descriptions-item v-for="l in data.rollForward" :key="l.label" :label="l.label">
               <b v-if="bridgeEmphasis(l.label)">{{ fm(l.amount) }}</b><template v-else>{{ fm(l.amount) }}</template>
             </a-descriptions-item>
@@ -117,11 +118,12 @@ const bridgeEmphasis = (l: string) => /closing/i.test(l)
             </a-radio-group>
             <a-checkbox v-model:checked="onlyIssues">With exceptions</a-checkbox>
           </template>
-          <a-table :columns="entryCols" :data-source="entries" row-key="id" size="small" :pagination="false">
+          <a-table :columns="entryCols" :data-source="entries" row-key="id" size="small" :pagination="false" :scroll="{ x: 840 }">
             <template #bodyCell="{ column, record }">
-              <span v-if="column.key === 'amount'" class="tabular">{{ fm(record.amount) }}</span>
+              <template v-if="column.key === 'entryType' || column.key === 'direction'">{{ nice(String(record[column.key])) }}</template>
+              <span v-else-if="column.key === 'amount'" class="tabular">{{ fm(record.amount) }}</span>
               <template v-else-if="column.key === 'reference'">
-                <EvidenceLink v-if="record.recordId" :label="record.reference" :to="evTo(record.recordId)" /><template v-else>{{ record.reference }}</template>
+                <span class="nw"><EvidenceLink v-if="record.recordId" :label="record.reference" :to="evTo(record.recordId)" /><template v-else>{{ record.reference }}</template></span>
               </template>
               <template v-else-if="column.key === 'support'">
                 <template v-if="record.exceptionIds.length"><EvidenceLink v-for="x in record.exceptionIds" :key="x" :label="x" :to="`/exceptions/${x}`" style="margin-right: 6px" /></template>
@@ -134,7 +136,7 @@ const bridgeEmphasis = (l: string) => /closing/i.test(l)
         </a-card>
       </a-col>
 
-      <a-col :span="8">
+      <a-col :xs="24" :xl="8">
         <a-card size="small" title="DIFFERENCE EXPLANATION" style="margin-bottom: 16px">
           <StatePlaceholder v-if="!data.exceptions.length" state="empty" message="No exceptions contribute to this account." />
           <a-list v-else size="small" :data-source="data.exceptions">
@@ -153,7 +155,7 @@ const bridgeEmphasis = (l: string) => /closing/i.test(l)
             <template #bodyCell="{ column, record }">
               <EvidenceLink v-if="column.key === 'id'" :label="record.id" :to="{ path: '/transactions', query: { ...(runId ? { run: runId } : {}), id: record.id } }" />
               <span v-else-if="column.key === 'amount'" class="tabular">{{ fm(record.amount) }}</span>
-              <template v-else-if="column.key === 'matchStatus'">{{ String(record.matchStatus).replace(/_/g, ' ').toLowerCase() }}</template>
+              <template v-else-if="column.key === 'matchStatus'">{{ nice(String(record.matchStatus)) }}</template>
             </template>
           </a-table>
         </a-card>
@@ -174,7 +176,11 @@ const bridgeEmphasis = (l: string) => /closing/i.test(l)
 :deep(.ant-card-head-title) { font: 600 10px var(--font-mono); color: var(--ink-3); letter-spacing: 0.4px; }
 :deep(.ant-table-thead > tr > th) { background: var(--surface-sunk); font: 600 10px var(--font-mono); color: var(--ink-3); text-transform: uppercase; }
 :deep(.bridge .ant-descriptions-item-label) { width: 70%; color: var(--ink); }
-:deep(.bridge .ant-descriptions-row:nth-last-child(1) > th), :deep(.bridge .ant-descriptions-row:nth-last-child(1) > td) { background: #FBE7E4; color: var(--fail); font-weight: 600; }
+:deep(.bridge .ant-descriptions-item-content) { text-align: right; justify-content: flex-end; font-variant-numeric: tabular-nums; }
+:deep(.bridge .ant-descriptions-row:nth-last-child(1) > th), :deep(.bridge .ant-descriptions-row:nth-last-child(1) > td) { font-weight: 600; }
+:deep(.bridge.st-FAILED .ant-descriptions-row:nth-last-child(1) > *), :deep(.bridge.st-BLOCKED .ant-descriptions-row:nth-last-child(1) > *) { background: var(--fail-soft); color: var(--fail); }
+:deep(.bridge.st-REVIEW_REQUIRED .ant-descriptions-row:nth-last-child(1) > *) { background: var(--warn-soft); color: var(--warn); }
+.nw { white-space: nowrap; }
 </style>
 <style scoped>
 .more { margin-top: 8px; display: flex; gap: 8px; align-items: center }

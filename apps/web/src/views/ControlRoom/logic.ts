@@ -40,3 +40,6 @@ export function conclusion(runState: string, blockingCount: number): Conclusion 
 
 /** "Showing N of M" text; M unknown when null. */
 export const showing = (n: number, total: number | null | undefined): string => (total != null && total > n ? `Showing ${n} of ${total}` : `Showing ${n}`)
+
+/** Display form of a ruleset identifier: drops the bracketed component list (`v1+proofly-controls/1[...]` -> `v1+proofly-controls/1`); the full value stays in the tooltip. */
+export const rulesetLabel = (v: string | null | undefined): string => (v ? v.replace(/\[.*$/, '') : '—')

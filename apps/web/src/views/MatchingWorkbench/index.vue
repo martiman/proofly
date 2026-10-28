@@ -25,7 +25,9 @@ const wb = useResource(() => (focusKey.value ? JSON.stringify(focusKey.value) : 
 const data = computed(() => wb.data.value)
 const selectedGroupId = ref<string | null>(null)
 watch(data, () => { selectedGroupId.value = null; picked.value = []; problem.value = null })
-const group = computed<Group | null>(() => data.value?.groups.find((g) => g.id === selectedGroupId.value) ?? data.value?.groups[0] ?? null)
+// a group opened from the group list wins: the workbench payload only carries one group per focused record (manual proposals are not in it)
+const pinned = ref<Group | null>(null)
+const group = computed<Group | null>(() => pinned.value ?? data.value?.groups.find((g) => g.id === selectedGroupId.value) ?? data.value?.groups[0] ?? null)
 
 const statusFilter = ref<Schema<'MatchStatus'> | undefined>()
 const groups = usePaged((q, signal) => listMatchGroups(runId.value!, { ...q, status: statusFilter.value }, { signal }), [runId, statusFilter], { limit: 10 })
@@ -40,8 +42,9 @@ const money = (m: Schema<'Money'> | null | undefined) => (m ? formatMoney(m.amou
 const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—')
 const rate = computed(() => { const r = data.value?.stats.autoMatchRate; return r == null ? '—' : `${(Number(r) * 100).toFixed(0)}%` })
 
-function focus(c: { transactionId: string }) { void router.push({ path: '/matching', query: { ...route.query, transactionId: c.transactionId, exceptionId: undefined } }) }
-function openGroup(g: Group) { const t = [...g.left, ...g.right][0]; if (t) focus(t) }
+function focus(c: { transactionId: string }) { pinned.value = null; void router.push({ path: '/matching', query: { ...route.query, transactionId: c.transactionId, exceptionId: undefined } }) }
+function openGroup(g: Group) { const t = [...g.left, ...g.right][0]; if (t) focus(t); pinned.value = g }
+const repin = () => { if (pinned.value) pinned.value = groups.items.value.find((x) => x.id === pinned.value!.id) ?? null }
 
 // ---- propose
 const picked = ref<string[]>([])
@@ -70,7 +73,7 @@ async function submitPropose() {
     const g = await propose.run(body)
     message.success(`Proposed ${g.id}; a second person must approve it`)
     reason.value = ''; picked.value = []
-    await Promise.all([wb.reload(), groups.reload()])
+    await Promise.all([wb.reload(), groups.reload()]); repin()
   } catch (e) { problem.value = describeCommandError(e) }
 }
 
@@ -90,10 +93,10 @@ async function submitDecision() {
     await decide.run({ g, decision: d, reason: decideReason.value.trim() })
     message.success(d === 'APPROVE' ? 'Manual match approved' : 'Manual match rejected')
     decideOpen.value = null; decideReason.value = ''
-    await Promise.all([wb.reload(), groups.reload()])
+    await Promise.all([wb.reload(), groups.reload()]); repin()
   } catch (e) { problem.value = describeCommandError(e); decideOpen.value = null }
 }
-async function reloadAfterConflict() { problem.value = null; await Promise.all([wb.reload(), groups.reload()]) }
+async function reloadAfterConflict() { problem.value = null; await Promise.all([wb.reload(), groups.reload()]); repin() }
 
 const errStatus = computed(() => (isApiError(wb.error.value) ? wb.error.value.status : 0))
 </script>
@@ -268,21 +271,30 @@ const errStatus = computed(() => (isApiError(wb.error.value) ? wb.error.value.st
 p.muted { margin: 0; }
 .warnc { color: var(--warn); } .failc { color: var(--fail); }
 .wrow { display: grid; grid-template-columns: 260px minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+@media (max-width: 1279px) {
+  .wrow { grid-template-columns: 240px minmax(0, 1fr); }
+  .wrow > .stack:last-child { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-items: start; }
+  .strip { flex-wrap: wrap; }
+  .strip .cell { min-width: 200px; }
+}
 .stack { display: flex; flex-direction: column; gap: 16px; }
+.ch .lbl { white-space: nowrap; }
+.n.sm { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
 .ch { display: flex; align-items: center; gap: 10px; padding: 14px 20px; }
 .aside { margin-left: auto; font-size: 12px; color: var(--ink-3); }
 .did { color: var(--accent); font-weight: 600; }
 .item { display: flex; align-items: center; gap: 8px; padding: 10px 20px; border-top: 1px solid var(--border); font-size: 12px; }
 .item.sel { background: var(--accent-soft); }
 .item .amt { margin-left: auto; }
-.item a { cursor: pointer; }
+.item a { cursor: pointer; white-space: nowrap; }
+:deep(.ant-table-thead > tr > th) { background: var(--surface-sunk); font: 600 10px var(--font-mono); color: var(--ink-3); text-transform: uppercase; }
 .more { padding: 10px 20px; font-size: 11px; color: var(--ink-3); border-top: 1px solid var(--border); }
 .mono { font-family: var(--font-mono); font-size: 12px; }
 .amt { font-variant-numeric: tabular-nums; white-space: nowrap; }
-.two { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--border); }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); border-top: 1px solid var(--border); }
 .side { padding: 14px 20px; }
 .side + .side { border-left: 1px solid var(--border); }
-.rec { padding: 8px 0; font-size: 12px; }
+.rec { padding: 8px 0; font-size: 12px; overflow-wrap: anywhere; }
 .kvs { padding: 0 20px 14px; display: flex; flex-direction: column; gap: 8px; }
 .kvs.top { border-top: 1px solid var(--border); padding-top: 14px; }
 .kv { display: flex; gap: 12px; font-size: 12px; }
