@@ -57,7 +57,7 @@ Run deterministic ingestion, completeness, ledger, matching, lifecycle and safeg
 
 ### Source adapters
 
-Acquire controlled files or API extracts from configured financial systems. Connection credentials remain in the customer data plane and every ingestion attempt is audited.
+Acquire controlled files or API extracts from configured financial systems, including separate card-processor transaction-event and settlement feeds. Connection credentials remain in the customer data plane and every ingestion attempt is audited.
 
 ### Data services
 

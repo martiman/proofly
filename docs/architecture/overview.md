@@ -15,7 +15,7 @@ The initial scale target is 10,000-100,000 financial transactions per day and 10
 ```text
 Source systems and external evidence
   |-- Banking transactions and balances
-  |-- Card statements and settlements
+  |-- Card transaction events and settlements
   |-- Transfer instructions
   |-- Direct-debit instructions and outcomes
   |-- Internal ledger entries and balances
@@ -42,7 +42,7 @@ Independent ledger       Matching and lifecycle engine
 
 ### 1. Source adapters
 
-Source adapters should accept scheduled files or controlled API extracts. Each delivery should be associated with a source, business date, extraction timestamp and expected schema.
+Source adapters should accept scheduled files or controlled API extracts. Each delivery should be associated with a source, business date, extraction timestamp and expected schema. Card-processor adapters should acquire transaction-event and settlement extracts as separate, linkable populations.
 
 Adapters should not contain material control logic. Their role is to acquire evidence and preserve enough source metadata to prove where it came from.
 
@@ -64,9 +64,9 @@ Initial entities are expected to include:
 
 - source delivery and source record;
 - client account and external financial account;
-- transaction instruction and lifecycle event;
+- transaction instruction, card transaction and lifecycle event;
 - ledger entry and balance snapshot;
-- external transaction and settlement record;
+- external transaction, card event and settlement record;
 - match group and match decision;
 - control run and control result;
 - safeguarding calculation and adjustment; and
@@ -82,9 +82,9 @@ Outputs should include per-account movement totals, calculated balances, compari
 
 ### 6. Matching and lifecycle engine
 
-This engine should execute versioned, deterministic rules to relate instructions, ledger entries and external evidence. It should support one-to-one and controlled grouped matches, enforce record-use constraints and produce an explanation for every match decision.
+This engine should execute versioned, deterministic rules to relate instructions, ledger entries and external evidence. It should support one-to-one and controlled grouped matches, enforce record-use constraints and produce an explanation for every match decision. For cards, it should preserve the event chain and support many-to-one links from presentments to processor settlements and from settlements to external bank movements.
 
-Lifecycle evaluation should operate over the resulting transaction timeline and identify missing, invalid, late, returned or reversed stages.
+Lifecycle evaluation should operate over the resulting transaction timeline and identify missing, invalid, late, returned or reversed stages. Card timelines should distinguish authorisation, presentment, reversal, settlement, refund and chargeback events without treating a settlement batch as an individual card transaction.
 
 ### 7. Safeguarding engine
 
@@ -152,6 +152,7 @@ A future implementation should include:
 - secret management outside source code;
 - tamper-evident audit history;
 - data minimisation and configurable retention;
+- tokenised card references in the canonical model, with no requirement to ingest full card numbers, security codes or PIN data;
 - operational monitoring and alerting; and
 - tested backup, recovery and controlled deployment procedures.
 

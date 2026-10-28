@@ -34,7 +34,7 @@ The platform should establish the control perimeter before evaluating financial 
 Proposed functions:
 
 - register expected sources, delivery windows, business calendars and owners;
-- ingest banking transactions, card statements, transfer instructions, direct-debit records, internal ledger entries and balance snapshots;
+- ingest banking transactions, card transaction events, card settlement statements, transfer instructions, direct-debit records, internal ledger entries and balance snapshots;
 - preserve the original source object and calculate a content fingerprint;
 - validate schema, encoding, required fields, currencies, dates and decimal precision;
 - detect missing files, missing business dates, sequence gaps, duplicates and unexpected record-count or value changes;
@@ -85,13 +85,13 @@ The platform should evaluate transactions as journeys, not isolated rows.
 Proposed functions:
 
 - define allowed lifecycle states and transitions by transaction type;
-- correlate instructions, ledger postings, external movements, settlement outcomes, returns and reversals;
+- correlate instructions, card authorisations and presentments, ledger postings, external movements, settlement outcomes, refunds, chargebacks, returns and reversals;
 - identify invalid transitions, missing stages, stalled states and outcomes outside their expected service window;
 - distinguish successful completion, rejection, return, cancellation and reversal;
 - verify that accounting and external money movements reflect the final outcome; and
 - maintain a timeline of observed evidence for each transaction.
 
-Initial lifecycle types should include bank transfers, card settlements and direct debits.
+Initial lifecycle types should include bank transfers, direct debits and card transactions from authorisation or presentment through settlement, reversal, refund or chargeback.
 
 ## 5. Safeguarding coverage
 

@@ -52,7 +52,7 @@ The MVP should support controlled file-based ingestion for:
 - internal ledger entries;
 - internal client-account closing balances;
 - banking transactions and closing balances; and
-- card statements or settlement records where they are part of the selected pilot flow.
+- card transaction-event statements and card settlement records where they are part of the selected pilot flow.
 
 Each input should have a documented schema, source owner, business-date rule and expected delivery window.
 
@@ -91,8 +91,8 @@ Each input should have a documented schema, source owner, business-date rule and
 
 ### 5. Lifecycle verification
 
-- configured state models for the selected transfer and direct-debit flows;
-- correlation of instruction, internal posting and external outcome evidence;
+- configured state models for the selected transfer, direct-debit and card flows;
+- correlation of instructions, card events, internal postings, settlement records and external outcome evidence;
 - detection of missing, invalid, late, returned and reversed stages; and
 - a chronological evidence view for an individual transaction.
 

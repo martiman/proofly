@@ -22,3 +22,9 @@ F-020,card_settlements.csv,SRC-C-003,data_completeness,CONTROL_VALUE_MISMATCH,HI
 F-021,card_settlements.csv,SRC-C-008,data_completeness,REQUIRED_FIELD_MISSING,HIGH,destination_account is empty,Reject record
 F-022,card_settlements.csv,SRC-C-009,data_completeness,INVALID_VALUE,HIGH,currency EURO is not a valid ISO 4217 code,Reject record
 F-023,card_settlements.csv,SRC-C-010,data_completeness,DUPLICATE_RECORD,HIGH,settlement_id CARD-009 is duplicated,Reject or quarantine duplicate record
+F-024,card_transactions.csv,SRC-K-004,matching,VALUE_MISMATCH,MEDIUM,CTX-002 presentment is 65 EUR versus 60 EUR authorised,Create card matching exception
+F-025,card_transactions.csv,SRC-K-007,transaction_lifecycle,MISSING_AUTHORIZATION,HIGH,CTX-004 presentment has no required authorisation event,Create card lifecycle exception
+F-026,card_transactions.csv,SRC-K-008,transaction_lifecycle,MISSING_ORIGINAL_TRANSACTION,HIGH,refund references unknown card transaction CTX-999,Create card lifecycle exception
+F-027,card_transactions.csv,SRC-K-009,data_completeness,INVALID_VALUE,HIGH,currency EURO is not a valid ISO 4217 code,Reject record
+F-028,card_transactions.csv,SRC-K-010,data_completeness,DUPLICATE_RECORD,HIGH,card_event_id CEV-009 is duplicated,Reject or quarantine duplicate record
+F-029,card_transactions.csv,SRC-K-010,transaction_lifecycle,MISSING_SETTLEMENT,HIGH,presentment references unknown settlement CARD-999,Create card lifecycle exception

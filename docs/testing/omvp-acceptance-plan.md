@@ -15,7 +15,7 @@ The acceptance dataset should include:
 - 10,000-100,000 financial transactions for one business date;
 - 10,000-100,000 client accounts;
 - at least two currencies;
-- transfer and direct-debit lifecycles;
+- transfer, direct-debit and card lifecycles;
 - internal ledger entries and balances;
 - banking transactions and safeguarding balances; and
 - known injected failures with expected results.
@@ -49,6 +49,10 @@ Synthetic or properly authorised de-identified data should be used before any pr
 - ambiguous candidates remain unmatched;
 - returned direct debit has a correct reversal;
 - returned direct debit lacks a reversal;
+- card presentment links to its authorisation and settlement batch;
+- card presentment without a required authorisation creates an exception;
+- card refund or chargeback references its original transaction;
+- card presentments group into a processor settlement and the settlement links to its bank movement;
 - transaction remains pending inside its service window; and
 - transaction exceeds its service window.
 

@@ -23,7 +23,7 @@ The initial design target is an organisation processing approximately:
 Expected evidence sources include:
 
 - banking transactions;
-- card statements;
+- card transaction events and settlement statements;
 - transfer instructions;
 - direct-debit instructions and outcomes;
 - internal ledger entries; and

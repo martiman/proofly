@@ -70,7 +70,7 @@ This is a design target, not a measured performance claim.
 The initial product should be able to normalise and compare evidence from:
 
 - banking transactions and bank account balances;
-- card statements and settlement records;
+- card transaction events, card statements and settlement records;
 - transfer instructions and their status history;
 - direct-debit instructions, submissions, returns and outcomes;
 - internal ledger entries and client balances; and

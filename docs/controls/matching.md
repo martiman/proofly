@@ -12,7 +12,7 @@ Relate transaction instructions, internal ledger entries and external financial 
 
 - canonical instructions;
 - canonical ledger entries;
-- external transactions or settlement records;
+- external transactions, card events or settlement records;
 - stable identifiers and reference mappings;
 - amount, currency, account and date attributes;
 - active rule order and tolerances; and
@@ -88,4 +88,5 @@ Rematching occurs inside a new run version after late evidence or a changed rule
 - The same stable reference appears once in each source: exact match.
 - Two external transactions could match one instruction equally: ambiguous, no automatic match.
 - One settlement covers several instructions with equal currency and total value: grouped match when the configured rule permits it.
+- Several card presentments link to one processor settlement, which then links to one bank credit: controlled many-to-one matches at each stage.
 

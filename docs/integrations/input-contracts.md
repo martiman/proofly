@@ -155,6 +155,31 @@ Required initial fields:
 
 Eligibility is not accepted from the source as a final conclusion. Proofly applies the approved account-eligibility configuration.
 
+## Card transaction events
+
+Card transaction events represent individual transaction journeys and remain separate from processor settlement batches. Required initial fields should cover:
+
+- `card_event_id`;
+- `card_transaction_id`;
+- `client_account_id`;
+- `legal_entity_id`;
+- tokenised card reference;
+- `event_type`;
+- `event_timestamp`;
+- `amount`;
+- `currency`;
+- `debit_credit_indicator`;
+- merchant or acceptance reference;
+- settlement identifier when assigned;
+- original transaction identifier for reversals, refunds and chargebacks; and
+- source status.
+
+Initial event types should include authorisation, presentment, reversal, refund and chargeback. A source-specific contract may add clearing or dispute states when the processor exposes them.
+
+Proofly should not require full primary account numbers, card security codes or PIN data. Source adapters should use processor identifiers and tokenised card references sufficient for deterministic linking.
+
+Control totals: event count and value by event type, currency, debit or credit direction and source status.
+
 ## Card settlements
 
 When included in the pilot, required fields should cover:
@@ -171,6 +196,8 @@ When included in the pilot, required fields should cover:
 - source status.
 
 Control totals: batch count, gross, fees, adjustments and net value by currency.
+
+Card transaction events should link to settlement batches through the processor settlement identifier. Settlement batches should then link to the destination bank movement. This preserves the many-to-one relationship without representing a batch as an individual card transaction.
 
 ## Validation outcomes
 

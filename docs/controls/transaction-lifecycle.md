@@ -10,10 +10,9 @@ Verify that each supported transaction follows an allowed sequence of states and
 
 ## Initial transaction types
 
-- bank transfer; and
-- direct debit.
-
-Card settlement may be added to the pilot when required by the selected flow.
+- bank transfer;
+- direct debit; and
+- card transaction when included in the selected pilot flow.
 
 ## Inputs
 
@@ -62,6 +61,9 @@ Each transaction type defines:
 - `INVALID_TRANSITION`;
 - `MISSING_INTERNAL_POSTING`;
 - `MISSING_EXTERNAL_OUTCOME`;
+- `MISSING_AUTHORIZATION`;
+- `MISSING_ORIGINAL_TRANSACTION`;
+- `MISSING_SETTLEMENT`;
 - `STALLED`;
 - `LATE_OUTCOME`;
 - `RETURN_NOT_POSTED`;
@@ -81,5 +83,7 @@ Late outcomes append to the canonical timeline in a new run version. Earlier lif
 
 - A transfer is instructed, posted and observed at the bank: completed.
 - A direct debit is returned externally but no reversing ledger entry exists: exception.
+- A card presentment has no corresponding authorisation when the configured flow requires one: exception.
+- A card refund references an unknown original transaction: exception.
 - A transfer lacks external evidence but remains inside its expected window: pending, not failed.
 
