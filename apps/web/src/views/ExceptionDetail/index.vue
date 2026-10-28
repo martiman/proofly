@@ -11,7 +11,7 @@ import {
   reopenException, requestExceptionEvidence, type Schema,
 } from '../../api/services'
 import { investigators } from '../ExceptionsQueue/logic'
-import { allows, classifyFailure, decisionBody, type CommandFailure } from './logic'
+import { allows, classifyFailure, decisionBody, proposalKindLabel, type CommandFailure } from './logic'
 
 type Detail = Schema<'ExceptionDetail'>
 const route = useRoute()
@@ -218,6 +218,11 @@ const reopen = () => Modal.confirm({
           <h3>Resolution</h3>
           <template v-if="ex.pendingApproval && ex.pendingApproval.status === 'PENDING'">
             <p>Proposal v{{ ex.pendingApproval.proposalVersion }} by {{ ex.pendingApproval.proposer.name }} awaits {{ label(ex.pendingApproval.requiredRole) }} approval. Policy: {{ ex.approvalPolicy }}.</p>
+            <div class="small" data-test="proposal-detail">
+              <div v-if="proposalKindLabel(ex.pendingApproval.kind)">Proposed resolution: <b>{{ proposalKindLabel(ex.pendingApproval.kind) }}</b></div>
+              <div v-if="ex.pendingApproval.rationale">Reason: {{ ex.pendingApproval.rationale }}</div>
+              <div v-if="ex.pendingApproval.evidenceRefs?.length">Evidence: <span v-for="r in ex.pendingApproval.evidenceRefs" :key="r" class="mono">{{ r }} </span></div>
+            </div>
             <template v-if="can('APPROVE_RESOLUTION') || can('REJECT_RESOLUTION')">
               <a-textarea v-model:value="decideReason" :rows="2" placeholder="Decision reason (mandatory)" />
               <div v-if="fieldMsg('reason')" class="ferr">{{ fieldMsg('reason') }}</div>
@@ -262,7 +267,7 @@ const reopen = () => Modal.confirm({
           <div v-if="!ex.approvals?.length" class="hint">No approvals yet.</div>
           <div v-for="a in ex.approvals" :key="a.id" class="appr">
             <StatusPill :status="a.status === 'APPROVED' ? 'pass' : a.status === 'PENDING' ? 'warn' : 'neutral'" :label="label(a.status)" />
-            <span class="hint">v{{ a.proposalVersion }} · {{ a.proposer.name }}<template v-if="a.approver"> → {{ a.approver.name }}</template></span>
+            <span class="hint">v{{ a.proposalVersion }}<template v-if="proposalKindLabel(a.kind)"> · {{ proposalKindLabel(a.kind) }}</template> · {{ a.proposer.name }}<template v-if="a.approver"> → {{ a.approver.name }}</template></span>
             <div v-if="a.rationale" class="small">{{ a.rationale }}</div>
           </div>
         </section>

@@ -1,9 +1,10 @@
 <script setup lang="ts">
+import { switcherCurrencies } from './logic'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { PageHeader, StatePlaceholder, StatusPill, EvidenceLink } from '../../components'
 import type { Status } from '../../components/StatusPill.vue'
-import { getAccountLedger, listAccounts } from '../../api/services'
+import { getAccountLedger } from '../../api/services'
 import type { Schema } from '../../api/services'
 import { useResource } from '../../api/composables'
 import { formatMoney, isNotFound, isValidation } from '../../api/client'
@@ -13,21 +14,18 @@ type Money = Schema<'Money'>
 type LedgerEntry = Schema<'LedgerEntry'>
 const route = useRoute()
 const router = useRouter()
-const { runId } = useRunContext()
+const { runId, currencies: entityCurrencies } = useRunContext()
 const accountId = computed(() => String(route.params.id ?? ''))
 const currency = computed(() => (typeof route.query.currency === 'string' && route.query.currency ? route.query.currency : undefined))
 const dirFilter = ref<'ALL' | 'DEBIT' | 'CREDIT'>('ALL')
 const onlyIssues = ref(false)
 const fm = (m: Money | null | undefined) => (m ? formatMoney(m.amount, m.currency) : '—')
 
-// accounts in this run with the same id (one row per currency) feed the currency switcher
-const sameId = useResource(() => (runId.value && accountId.value ? `${runId.value}|${accountId.value}` : null),
-  async (k: string, signal) => { const [r, id] = k.split('|'); return (await listAccounts(r!, { search: id, limit: 50 }, { signal })).items.filter((a) => a.id === id) })
-const currencies = computed(() => sameId.data.value?.map((a) => a.currency) ?? [])
-
 const ledger = useResource(() => (runId.value && accountId.value ? `${runId.value}|${accountId.value}|${currency.value ?? ''}` : null),
   (k: string, signal) => { const [r, id, c] = k.split('|'); return getAccountLedger(r!, id!, { currency: (c || undefined) as never, limit: 50 }, { signal }) })
 const data = computed(() => ledger.data.value)
+// switcher: the server's availableCurrencies; before any ledger loaded (422 asking for a currency) fall back to the entity's currencies
+const currencies = computed(() => switcherCurrencies(data.value?.availableCurrencies, entityCurrencies.value))
 
 // further ledger pages are appended; the server's cursor is followed, nothing is derived locally
 const extra = ref<LedgerEntry[]>([])

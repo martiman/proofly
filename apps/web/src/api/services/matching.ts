@@ -14,3 +14,6 @@ export const proposeManualMatch = (runId: string, body: ApiBody<'proposeManualMa
 export const decideManualMatch = (runId: string, groupId: string, body: ApiBody<'decideManualMatch'>, o?: CommandOptions) =>
   command<ApiResult<'decideManualMatch'>>(`/runs/${runId}/match-groups/${groupId}`, o, (h) =>
     api().POST('/runs/{runId}/match-groups/{groupId}/decision', { params: { path: { runId, groupId }, header: h }, body, signal: o?.signal }))
+
+export const listUnmatchedRecords = (runId: string, query: ApiQuery<'listUnmatchedRecords'> = {}, o?: ReadOptions) =>
+  read(api().GET('/runs/{runId}/matching/unmatched', { params: { path: { runId }, query }, signal: o?.signal }))

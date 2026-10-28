@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { emptyFilters, fromViewFilters, ignoredBySummary, investigators, sortFromTable, splitBulk, toListQuery, toSummaryQuery, toViewFilters, validateFilters } from '../logic'
+import { emptyFilters, fromViewFilters, investigators, sortFromTable, splitBulk, toListQuery, toSummaryQuery, toViewFilters, validateFilters } from '../logic'
 
 describe('queue filters', () => {
   it('value range requires currency and is not sent without it', () => {
@@ -9,10 +9,12 @@ describe('queue filters', () => {
     expect(toListQuery({ ...f, currency: 'GBP' })).toMatchObject({ currency: 'GBP', valueMin: '10.5' })
   })
   it('rejects non-decimal values', () => { expect(validateFilters({ ...emptyFilters(), currency: 'EUR', valueMax: '1e3' }).valueMax).toBeTruthy() })
-  it('summary query only has declared keys and reports ignored filters', () => {
-    const f = { ...emptyFilters(), blocking: true, ageDaysMin: 2, severity: ['HIGH' as const] }
-    expect(toSummaryQuery(f)).toEqual({ severity: ['HIGH'] })
-    expect(ignoredBySummary(f)).toEqual(['blocking', 'age'])
+  it('summary query carries the same filters as the list (without sort)', () => {
+    const f = { ...emptyFilters(), blocking: true, ageDaysMin: 2, currency: 'GBP', valueMin: '10', severity: ['HIGH' as const] }
+    const { sort: _s, ...list } = toListQuery(f)
+    expect(toSummaryQuery(f)).toEqual(list)
+    expect(toSummaryQuery(f)).toMatchObject({ blocking: true, ageDaysMin: 2, valueMin: '10', severity: ['HIGH'] })
+    expect(toSummaryQuery(f)).not.toHaveProperty('sort')
   })
   it('unassigned wins over owner; view round trip', () => {
     const f = { ...emptyFilters(), unassigned: true, ownerId: 'u1', status: ['OPEN' as const] }

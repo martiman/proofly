@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError } from '../../api/client'
-import { can, mapCommandError, reasonError } from './logic'
+import { blockerLink, can, mapCommandError, reasonError } from './logic'
 import { conclusion, showing, summaryLink } from '../ControlRoom/logic'
 
 const err = (status: number, slug: string, errors: { pointer: string; message: string }[] = []) =>
@@ -28,14 +28,21 @@ describe('sign-off command errors', () => {
 })
 
 describe('control room helpers', () => {
-  it('conclusion prefers server blockers', () => {
-    expect(conclusion('REVIEW_REQUIRED', 11, 3).reason).toContain('11 blocking')
-    expect(conclusion('REVIEW_REQUIRED', null, 3).reason).toContain('3+')
-    expect(conclusion('READY_FOR_SIGN_OFF', 0, 0).blocked).toBe(false)
+  it('conclusion uses the server blockingCount', () => {
+    expect(conclusion('REVIEW_REQUIRED', 11).reason).toContain('11 blocking')
+    expect(conclusion('REVIEW_REQUIRED', 1).reason).toContain('1 blocking issue must')
+    expect(conclusion('READY_FOR_SIGN_OFF', 0).blocked).toBe(false)
   })
   it('showing and links', () => {
     expect(showing(10, 84)).toBe('Showing 10 of 84')
     expect(showing(5, 5)).toBe('Showing 5')
     expect(summaryLink({ kind: 'exception', id: 'E1' }, 'R1')).toEqual({ path: '/exceptions/E1', query: { run: 'R1' } })
+  })
+})
+
+describe('blocker details', () => {
+  it('links BLOCKING_EXCEPTION blockers to the exception within the run', () => {
+    expect(blockerLink({ code: 'BLOCKING_EXCEPTION', message: 'm', exceptionId: 'E1', control: 'X' }, 'R1')).toEqual({ path: '/exceptions/E1', query: { run: 'R1' } })
+    expect(blockerLink({ code: 'RUN_STATE', message: 'm', exceptionId: null, control: null }, 'R1')).toBeNull()
   })
 })

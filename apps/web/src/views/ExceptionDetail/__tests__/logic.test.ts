@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { configureApi } from '../../../api/client/http'
 import { staticTokenProvider } from '../../../api/client/auth'
 import { decideResolution, getException } from '../../../api/services'
-import { classifyFailure, decisionBody, allows } from '../logic'
+import { classifyFailure, decisionBody, allows, proposalKindLabel } from '../logic'
 
 const P = 'https://proofly.example/problems/'
 const prob = (status: number, slug: string, extra = {}) =>
@@ -39,5 +39,12 @@ describe('decide flow (mocked fetch)', () => {
   })
   it('allowedActions drives visibility', () => {
     expect(allows(['ASSIGN'], 'ASSIGN')).toBe(true); expect(allows(['ASSIGN'], 'REOPEN')).toBe(false); expect(allows(undefined, 'ASSIGN')).toBe(false)
+  })
+})
+
+describe('pending proposal kind', () => {
+  it('labels the kind and is null for other approvals', () => {
+    expect(proposalKindLabel('ACCEPTED_DIFFERENCE')).toBe('Accepted difference')
+    expect(proposalKindLabel(null)).toBeNull()
   })
 })

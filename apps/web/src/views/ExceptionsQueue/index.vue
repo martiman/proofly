@@ -8,25 +8,24 @@ import { useRunContext } from '../../composables/useRunContext'
 import { useAsync, useCommand, usePaged, useResource } from '../../api/composables'
 import { formatMoney } from '../../api/client'
 import {
-  bulkAssignExceptions, createExceptionView, deleteExceptionView, getExceptionsSummary, getSettings,
+  bulkAssignExceptions, createExceptionView, deleteExceptionView, getExceptionsSummary, listAssignableUsers,
   listExceptionViews, listExceptions, type Schema,
 } from '../../api/services'
 import {
-  CONTROLS, SEVERITIES, STATUSES, describeError, emptyFilters, fromViewFilters, ignoredBySummary,
-  investigators, sortFromTable, sortOrderFor, splitBulk, toListQuery, toSummaryQuery, toViewFilters, validateFilters,
+  CONTROLS, SEVERITIES, STATUSES, describeError, emptyFilters, fromViewFilters, 
+  sortFromTable, sortOrderFor, splitBulk, toListQuery, toSummaryQuery, toViewFilters, validateFilters,
   type BulkResultItem, type QueueFilters,
 } from './logic'
 
 type Item = Schema<'ExceptionSummary'>
 const router = useRouter()
-const { runId, run, me, currencies } = useRunContext()
+const { runId, run, me, currencies, legalEntityId } = useRunContext()
 
 const f = reactive<QueueFilters>(emptyFilters())
 const activeViewId = ref<string>()
 const filterErrors = computed(() => validateFilters(f))
 const listQuery = computed(() => JSON.stringify(toListQuery(f)))
 const summaryQuery = computed(() => JSON.stringify(toSummaryQuery(f)))
-const ignored = computed(() => ignoredBySummary(f))
 
 const sevStatus: Record<string, Status> = { CRITICAL: 'fail', HIGH: 'warn', MEDIUM: 'info', LOW: 'neutral' }
 const label = (s: string) => s.toLowerCase().replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
@@ -59,10 +58,10 @@ const maxControl = computed(() => Math.max(1, ...controlRows.value.map((x) => x.
 const reasons = computed(() => (summary.data.value?.byReason ?? []).slice(0, 6))
 
 // ---- owners for filter and bulk picker ----
-const settings = useAsync((signal) => getSettings({}, { signal }).catch(() => null), { isEmpty: () => false })
+const assignable = useResource(() => legalEntityId.value ?? null, (le, signal) => listAssignableUsers(le, { signal }).catch(() => null), { isEmpty: () => false })
 const ownerOptions = computed(() => {
-  const users = settings.data.value?.users
-  const base = users ? investigators(users).map((u) => ({ value: u.id, label: u.name })) : []
+  const users = assignable.data.value
+  const base = users ? users.map((u) => ({ value: u.id, label: u.name })) : []
   if (me.value && !base.some((o) => o.value === me.value!.id)) base.unshift({ value: me.value.id, label: `${me.value.name} (me)` })
   return base
 })
@@ -193,8 +192,6 @@ const tableChange = (_p: unknown, _f: unknown, s: unknown) => onTable(_p, _f, s 
         <div v-if="!reasons.length" class="hint">No exceptions.</div>
       </section>
     </div>
-    <a-alert v-if="ignored.length" type="info" show-icon class="mb"
-      :message="`The summary does not reflect the ${ignored.join(', ')} filter${ignored.length > 1 ? 's' : ''}; the table does.`" />
   </template>
   <div v-else class="card pad mb"><a-spin /></div>
 

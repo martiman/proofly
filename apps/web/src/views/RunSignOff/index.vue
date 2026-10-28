@@ -11,7 +11,7 @@ import type { Schema } from '../../api/services'
 import { usePaged, useCommand, useResource } from '../../api/composables'
 import { useRunContext } from '../../composables/useRunContext'
 import { ctrlStatus, exceptionLink, fmtDate, human, sevStatus, showing } from '../ControlRoom/logic'
-import { can, mapCommandError, reasonError, type CommandProblem, type SignOffAction } from './logic'
+import { blockerLink, can, mapCommandError, reasonError, type CommandProblem, type SignOffAction } from './logic'
 
 type Pack = Schema<'RunSignOff'>
 const ctx = useRunContext()
@@ -137,7 +137,10 @@ async function download() {
 
     <div v-if="data.blockers.length" class="card block" data-test="blockers">
       <h3>Blockers ({{ data.blockers.length }})</h3>
-      <ul class="plain"><li v-for="b in data.blockers" :key="b">{{ b }}</li></ul>
+      <ul class="plain"><li v-for="(b, i) in data.blockerDetails" :key="i">
+        <router-link v-if="blockerLink(b, runId)" :to="blockerLink(b, runId)!">{{ b.message }}</router-link><span v-else>{{ b.message }}</span>
+        <span v-if="b.control" class="mono"> · {{ b.control }}</span>
+      </li></ul>
     </div>
 
     <div class="cols">

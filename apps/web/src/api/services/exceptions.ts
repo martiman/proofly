@@ -46,3 +46,7 @@ export const decideResolution = (exceptionId: string, proposalId: string, body: 
 export const reopenException = (exceptionId: string, body: ApiBody<'reopenException'>, o?: CommandOptions) =>
   command<ApiResult<'reopenException'>>(`/exceptions/${exceptionId}`, o, (h) =>
     api().POST('/exceptions/{exceptionId}/reopen', { params: { path: { exceptionId }, header: h }, body, signal: o?.signal }))
+
+/** Users who can be assigned exceptions in an entity; needs `exception.assign` (not `settings.view`). */
+export const listAssignableUsers = (legalEntityId: string, o?: ReadOptions) =>
+  read(api().GET('/legal-entities/{legalEntityId}/assignable-users', { params: { path: { legalEntityId } }, signal: o?.signal }))

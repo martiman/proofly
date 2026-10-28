@@ -20,3 +20,6 @@ export function decisionBody(decision: 'APPROVE' | 'REJECT', reason: string, pro
 }
 
 export const allows = (allowed: readonly string[] | undefined, a: Action) => !!allowed?.includes(a)
+
+/** Label of the proposed resolution kind (Approval.kind); null for non-resolution approvals. */
+export const proposalKindLabel = (kind: string | null | undefined) => (kind ? kind.toLowerCase().replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase()) : null)

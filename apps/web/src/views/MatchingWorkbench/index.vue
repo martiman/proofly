@@ -7,9 +7,9 @@ import type { Status } from '../../components/StatusPill.vue'
 import { useRunContext } from '../../composables/useRunContext'
 import { useResource, usePaged, useCommand } from '../../api/composables'
 import { formatMoney, isApiError } from '../../api/client'
-import { getMatchingWorkbench, listMatchGroups, proposeManualMatch, decideManualMatch } from '../../api/services'
+import { getMatchingWorkbench, listMatchGroups, listUnmatchedRecords, proposeManualMatch, decideManualMatch } from '../../api/services'
 import type { Schema } from '../../api/services'
-import { buildProposeBody, describeCommandError, type CommandProblem } from './logic'
+import { UNMATCHED_INLINE_LIMIT, buildProposeBody, describeCommandError, unmatchedQuery, type CommandProblem } from './logic'
 
 type Group = Schema<'MatchGroup'>
 
@@ -20,7 +20,7 @@ const { runId, me } = useRunContext()
 const focusKey = computed(() => (runId.value ? { runId: runId.value, tx: route.query.transactionId as string | undefined, ex: route.query.exceptionId as string | undefined } : null))
 const wb = useResource(() => (focusKey.value ? JSON.stringify(focusKey.value) : null), (k, signal) => {
   const f = JSON.parse(k) as NonNullable<typeof focusKey.value>
-  return getMatchingWorkbench(f.runId, { transactionId: f.tx, exceptionId: f.ex }, { signal })
+  return getMatchingWorkbench(f.runId, { transactionId: f.tx, exceptionId: f.ex, unmatchedLimit: UNMATCHED_INLINE_LIMIT }, { signal })
 })
 const data = computed(() => wb.data.value)
 const selectedGroupId = ref<string | null>(null)
@@ -47,7 +47,17 @@ function openGroup(g: Group) { const t = [...g.left, ...g.right][0]; if (t) focu
 const picked = ref<string[]>([])
 const reason = ref('')
 const problem = ref<CommandProblem | null>(null)
-const pickedCandidates = computed(() => (data.value?.unmatched ?? []).filter((c) => picked.value.includes(c.transactionId)))
+// 'show all unmatched': server-paged population with search and currency filter
+const showAll = ref(false)
+const uSearch = ref('')
+const uCurrency = ref<string>()
+const uQuery = computed(() => JSON.stringify(unmatchedQuery(uSearch.value, uCurrency.value)))
+const allUnmatched = usePaged(
+  async (p, signal) => !showAll.value || !runId.value ? ({ items: [], page: { hasMore: false } } as unknown as Awaited<ReturnType<typeof listUnmatchedRecords>>) : listUnmatchedRecords(runId.value, { ...JSON.parse(uQuery.value), limit: p.limit, cursor: p.cursor, includeTotal: p.includeTotal }, { signal }),
+  [() => (showAll.value ? runId.value : null), uQuery], { limit: 50, includeTotal: true, mode: 'append' },
+)
+const popItems = computed(() => (showAll.value ? allUnmatched.items.value : data.value?.unmatched ?? []))
+const pickedCandidates = computed(() => popItems.value.filter((c) => picked.value.includes(c.transactionId)))
 const canPropose = computed(() => !!me.value?.permissions.includes('matching.propose'))
 const propose = useCommand((body: ReturnType<typeof buildProposeBody>, o) => proposeManualMatch(runId.value!, body, o))
 async function submitPropose() {
@@ -119,15 +129,26 @@ const errStatus = computed(() => (isApiError(wb.error.value) ? wb.error.value.st
 
     <div class="wrow">
       <div class="card pop">
-        <div class="ch"><span class="lbl">Unmatched population</span><span class="aside">{{ data.unmatched.length }} of {{ data.stats.unmatchedCount }}</span></div>
-        <a-empty v-if="!data.unmatched.length" description="No unmatched records." />
-        <div v-for="c in data.unmatched" :key="c.transactionId" class="item" :class="{ sel: c.transactionId === data.focusTransactionId }">
+        <div class="ch"><span class="lbl">Unmatched population</span>
+          <span class="aside">{{ showAll ? (allUnmatched.total.value ?? allUnmatched.items.value.length) : data.unmatched.length }} of {{ data.stats.unmatchedCount }}</span></div>
+        <div v-if="showAll" class="filters">
+          <a-input-search v-model:value="uSearch" allow-clear size="small" placeholder="Reference, source or transaction id" />
+          <a-select v-model:value="uCurrency" allow-clear size="small" placeholder="Currency" style="width: 100px"
+            :options="data.stats.unmatchedByCurrency.map((t) => ({ value: t.currency, label: t.currency }))" />
+        </div>
+        <StatePlaceholder v-if="showAll && allUnmatched.placeholder.value && allUnmatched.placeholder.value !== 'empty'" :state="allUnmatched.placeholder.value" message="Could not load unmatched records.">
+          <template #action><a-button @click="allUnmatched.reload">Retry</a-button></template>
+        </StatePlaceholder>
+        <a-empty v-else-if="!popItems.length" description="No unmatched records." />
+        <div v-for="c in popItems" :key="c.transactionId" class="item" :class="{ sel: c.transactionId === data.focusTransactionId }">
           <a-checkbox v-if="canPropose" :checked="picked.includes(c.transactionId)" @change="(e: any) => (picked = e.target.checked ? [...picked, c.transactionId] : picked.filter((x) => x !== c.transactionId))" />
           <a class="mono" @click="focus(c)">{{ c.transactionId }}</a>
           <span class="sub">{{ c.side === 'RIGHT' ? 'evidence' : 'operational' }}</span>
           <span class="amt">{{ money(c.amount) }}</span>
         </div>
-        <div v-if="data.unmatched.length < data.stats.unmatchedCount" class="more">Showing {{ data.unmatched.length }} of {{ data.stats.unmatchedCount }} unmatched records.</div>
+        <div v-if="showAll && allUnmatched.hasNext.value" class="more"><a-button size="small" :loading="allUnmatched.loading.value" @click="allUnmatched.loadMore">Load more</a-button></div>
+        <div v-else-if="!showAll && data.unmatched.length < data.stats.unmatchedCount" class="more">Showing {{ data.unmatched.length }} of {{ data.stats.unmatchedCount }} unmatched records. <a @click="showAll = true">Show all unmatched</a></div>
+        <div v-else-if="showAll" class="more"><a @click="showAll = false">Show first {{ data.unmatched.length }} only</a></div>
       </div>
 
       <div class="stack">

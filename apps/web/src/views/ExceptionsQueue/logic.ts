@@ -67,26 +67,10 @@ export function toListQuery(f: QueueFilters): ApiQuery<'listExceptions'> {
   return q
 }
 
-/** The summary operation only declares a subset of the list filters; the rest is reported via `ignoredBySummary`. */
+/** The summary takes exactly the list filters (everything except sort and paging), so its total equals the table total. */
 export function toSummaryQuery(f: QueueFilters): ApiQuery<'getExceptionsSummary'> {
-  const q: ApiQuery<'getExceptionsSummary'> = {}
-  if (f.severity.length) q.severity = f.severity
-  if (f.control.length) q.control = f.control
-  if (f.status.length) q.status = f.status
-  if (f.unassigned) q.unassigned = true
-  else if (f.ownerId) q.ownerId = f.ownerId
-  if (f.currency) q.currency = f.currency
-  if (f.search.trim()) q.search = f.search.trim()
-  if (f.savedViewId) q.savedViewId = f.savedViewId
-  return q
-}
-
-export function ignoredBySummary(f: QueueFilters): string[] {
-  const out: string[] = []
-  if (f.blocking) out.push('blocking')
-  if (f.valueMin.trim() || f.valueMax.trim()) out.push('value range')
-  if (f.ageDaysMin != null || f.ageDaysMax != null) out.push('age')
-  return out
+  const { sort: _s, ...rest } = toListQuery(f)
+  return rest
 }
 
 /** Saved-view `filters` payload: the same keys as the list query (without paging and sort). */

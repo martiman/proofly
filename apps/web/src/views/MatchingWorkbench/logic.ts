@@ -1,6 +1,17 @@
 import { isApiError, isSeparationOfDuties, isStale, isValidation, fieldErrors } from '../../api/client'
 import type { Schema } from '../../api/services'
 
+/** Inline unmatched candidates requested with the workbench; the rest is paged via listUnmatchedRecords. */
+export const UNMATCHED_INLINE_LIMIT = 50
+
+/** Query of the paged unmatched population (server-side search and currency filter; blank values are not sent). */
+export function unmatchedQuery(search: string, currency?: string): { search?: string; currency?: string } {
+  const q: { search?: string; currency?: string } = {}
+  if (search.trim()) q.search = search.trim()
+  if (currency) q.currency = currency
+  return q
+}
+
 type Candidate = Schema<'MatchCandidate'>
 
 /** Candidates picked in the unmatched population become the left/right id lists of a manual match proposal. */

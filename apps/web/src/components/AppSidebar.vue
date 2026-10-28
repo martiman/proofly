@@ -7,6 +7,7 @@ import {
 } from '@ant-design/icons-vue'
 import { navItems } from '../router/routes'
 import { useRunContext } from '../composables/useRunContext'
+import { environmentView } from '../composables/environment'
 import { useShellStatus } from '../composables/useShellStatus'
 
 const route = useRoute()
@@ -24,7 +25,7 @@ const allowed = (perms: string[]) => !me.value || perms.some((p) => (me.value!.p
 const to = (path: string) => (runId.value ? { path, query: { run: runId.value } } : { path })
 const counts = computed<Record<string, number | undefined>>(() => ({ '/exceptions': exceptionCount.value ?? undefined }))
 
-const environment = import.meta.env.DEV ? 'DEV · local' : 'PILOT · customer-hosted'
+const env = computed(() => environmentView(me.value?.environment))
 const fmt = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'UTC', timeZoneName: 'short' })
 const freshness = computed(() => {
   if (!run.value) return 'No run selected'
@@ -53,8 +54,9 @@ const label = (s: string) => s.charAt(0) + s.slice(1).toLowerCase().replace(/_/g
       </template>
     </template>
     <div class="spacer" />
-    <div class="env">
-      <div class="row"><i class="dot" :class="{ live: run?.lastEvidenceArrivalAt }" /><span class="mono">{{ environment }}</span></div>
+    <div class="env" :class="{ prod: env.production }" data-test="environment">
+      <div class="row"><i class="dot" :class="{ live: run?.lastEvidenceArrivalAt }" /><span class="mono">{{ env.name }}</span>
+        <span v-if="env.kind" class="kind" :class="'k-' + env.kind.toLowerCase()" data-test="environment-kind">{{ env.kind }}</span></div>
       <div class="fresh">{{ freshness }}</div>
     </div>
     <div class="user">
@@ -83,6 +85,10 @@ const label = (s: string) => s.charAt(0) + s.slice(1).toLowerCase().replace(/_/g
 .badge { background: var(--nav-line); color: var(--nav-ink); font: 11px var(--font-mono); padding: 1px 6px; border-radius: 10px; }
 .spacer { flex: 1; }
 .env { border: 1px solid var(--nav-line); border-radius: 6px; padding: 10px; display: flex; flex-direction: column; gap: 4px; }
+.env.prod { border-color: #d6453d; background: rgba(214, 69, 61, 0.12); }
+.kind { margin-left: auto; font: 600 10px var(--font-mono); padding: 1px 6px; border-radius: 4px; background: var(--nav-line); color: var(--nav-ink); letter-spacing: 0.4px; }
+.kind.k-production { background: #d6453d; color: #fff; }
+.kind.k-pilot { background: #e0a43a; color: #1d1d1d; }
 .row { display: flex; align-items: center; gap: 6px; color: var(--nav-ink); font-size: 11px; }
 .dot { width: 6px; height: 6px; border-radius: 50%; background: #e0a43a; }
 .dot.live { background: #3fb67e; }

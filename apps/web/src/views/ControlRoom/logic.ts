@@ -31,13 +31,10 @@ export function summaryLink(l: { kind: string; id: string }, runId: string | nul
 }
 
 export interface Conclusion { blocked: boolean; headline: string; reason: string }
-/**
- * Banner text from the server's sign-off blockers (count) when known, else from blocking items of the capped attention queue.
- * `blockerCount` null = sign-off pack not available to this caller.
- */
-export function conclusion(runState: string, blockerCount: number | null, queueBlocking: number): Conclusion {
-  const n = blockerCount ?? queueBlocking
-  if (n > 0) return { blocked: true, headline: 'Sign-off blocked', reason: `${n}${blockerCount === null ? '+' : ''} blocking issue${n === 1 ? '' : 's'} must be resolved before this run can be signed off.` }
+/** Banner text from the server's `blockingCount` (unresolved blocking exceptions over the whole run, the sign-off gate's definition). */
+export function conclusion(runState: string, blockingCount: number): Conclusion {
+  const n = blockingCount
+  if (n > 0) return { blocked: true, headline: 'Sign-off blocked', reason: `${n} blocking issue${n === 1 ? '' : 's'} must be resolved before this run can be signed off.` }
   return { blocked: false, headline: human(runState), reason: 'No blocking issues.' }
 }
 

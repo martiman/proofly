@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { configureApi } from '../../api/client'
 import { staticTokenProvider } from '../../api/client'
-import { proposeManualMatch, decideManualMatch } from '../../api/services'
-import { buildProposeBody, describeCommandError } from './logic'
+import { proposeManualMatch, decideManualMatch, getMatchingWorkbench, listUnmatchedRecords } from '../../api/services'
+import { UNMATCHED_INLINE_LIMIT, buildProposeBody, describeCommandError, unmatchedQuery } from './logic'
 
 const BASE = 'http://api.test/api/v1'
 const problem = (status: number, slug: string) => new Response(JSON.stringify({ type: `https://proofly.example/problems/${slug}`, title: slug, status }), { status, headers: { 'Content-Type': 'application/problem+json' } })
@@ -30,5 +30,18 @@ describe('manual match commands', () => {
     expect(describeCommandError(await proposeManualMatch('R1', { leftTransactionIds: ['TRF-1'], rightTransactionIds: [], reason: 'x' }).catch((e) => e)).kind).toBe('used')
     setup(() => problem(412, 'precondition-failed'))
     expect(describeCommandError(await decideManualMatch('R1', 'MG-1', { decision: 'REJECT', reason: 'x' }, { ifMatch: '"1"' }).catch((e) => e)).kind).toBe('stale')
+  })
+})
+
+describe('unmatched population', () => {
+  it('requests unmatchedLimit and pages unmatched records with search/currency/includeTotal', async () => {
+    const calls = setup(() => new Response(JSON.stringify({ items: [], page: { hasMore: false } }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    await getMatchingWorkbench('R1', { unmatchedLimit: UNMATCHED_INLINE_LIMIT })
+    await listUnmatchedRecords('R1', { ...unmatchedQuery(' TRF-4 ', 'GBP'), limit: 50, includeTotal: true })
+    const u0 = new URL(calls[0]!.url), u1 = new URL(calls[1]!.url)
+    expect(u0.searchParams.get('unmatchedLimit')).toBe('50')
+    expect(u1.pathname).toBe('/api/v1/runs/R1/matching/unmatched')
+    expect(Object.fromEntries(u1.searchParams)).toEqual({ search: 'TRF-4', currency: 'GBP', limit: '50', includeTotal: 'true' })
+    expect(unmatchedQuery('  ', undefined)).toEqual({})
   })
 })

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { compareRuns, getControlRoom, getRunSignOff } from '../../api/services'
+import { compareRuns, getControlRoom } from '../../api/services'
 import { formatMoney } from '../../api/client'
 import type { Schema } from '../../api/services'
 import { useResource } from '../../api/composables'
@@ -14,20 +14,17 @@ const router = useRouter()
 const ctx = useRunContext()
 const { runId } = ctx
 const room = useResource(() => runId.value, (id, signal) => getControlRoom(id, { signal }))
-// Best effort: the sign-off pack carries the authoritative blockers and totals. Callers without signoff.view fall back to the queue.
-const pack = useResource(() => runId.value, (id, signal) => getRunSignOff(id, { openMattersLimit: 1 }, { signal }).catch(() => null))
 
 const data = computed(() => room.data.value)
-const signOff = computed(() => pack.data.value ?? null)
 const money = (m: Money) => formatMoney(m.amount, m.currency)
 const isNeg = (m: Money) => m.amount.startsWith('-')
 
 const longDate = computed(() =>
   data.value ? new Date(data.value.run.businessDate + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '')
 const queueBlocking = computed(() => (data.value?.attentionQueue ?? []).filter((e) => e.blocking))
-const blockers = computed(() => signOff.value?.blockers ?? null)
-const concl = computed(() => conclusion(data.value?.run.state ?? '', blockers.value ? blockers.value.length : null, queueBlocking.value.length))
-const openTotal = computed(() => signOff.value?.openMattersTotal ?? null)
+const blockingCount = computed(() => data.value?.blockingCount ?? 0)
+const concl = computed(() => conclusion(data.value?.run.state ?? '', blockingCount.value))
+const openTotal = computed(() => data.value?.openExceptionsTotal ?? null)
 const owner = (o: { name: string } | null) => o?.name ?? 'Unassigned'
 
 const progress = computed(() => {
@@ -38,7 +35,7 @@ const progress = computed(() => {
   const bad = del.some((x) => x.state === 'REJECTED' || x.state === 'MISSING')
   const st = d.run.state
   const processed = st !== 'AWAITING_EVIDENCE' && st !== 'PROCESSING'
-  const nb = blockers.value?.length ?? queueBlocking.value.length
+  const nb = blockingCount.value
   return [
     { label: 'Evidence received', detail: `${got} / ${del.length} sources`, tone: got === del.length ? 'pass' : 'warn' },
     { label: 'Source validation', detail: bad ? 'Issues found' : 'Completed', tone: bad ? 'fail' : 'pass' },
@@ -62,7 +59,7 @@ const columns = [
   { title: 'Value', key: 'value', align: 'right' as const }, { title: 'Due', key: 'dueAt' },
 ]
 const q = computed(() => (runId.value ? { run: runId.value } : {}))
-const retry = () => { void room.reload(); void pack.reload() }
+const retry = () => { void room.reload() }
 </script>
 
 <template>
@@ -131,24 +128,18 @@ const retry = () => { void room.reload(); void pack.reload() }
 
     <div v-if="concl.blocked" class="card blk" data-test="blockers">
       <div class="bh">
-        <span class="eyebrow fail">BLOCKING SIGN-OFF</span><span class="cnt">{{ blockers ? blockers.length : queueBlocking.length }}</span>
+        <span class="eyebrow fail">BLOCKING SIGN-OFF</span><span class="cnt">{{ blockingCount }}</span>
         <span class="hint">Each one stops the run on its own. Resolve it, or obtain an approved qualification.</span>
       </div>
-      <template v-if="blockers">
-        <div v-for="(b, i) in blockers.slice(0, 5)" :key="b" class="brow">
-          <span class="num" :class="{ solid: i === 0 }">{{ i + 1 }}</span>
-          <div class="issue"><div class="it">{{ b }}</div></div>
-        </div>
-        <div v-if="blockers.length > 5" class="brow muted">
-          Showing 5 of {{ blockers.length }} · <router-link :to="{ path: '/sign-off', query: q }">all blockers on the sign-off page</router-link>
-        </div>
-      </template>
-      <div v-for="(e, i) in queueBlocking" v-else :key="e.id" class="brow">
+      <div v-for="(e, i) in queueBlocking" :key="e.id" class="brow">
         <span class="num" :class="{ solid: i === 0 }">{{ i + 1 }}</span>
         <div class="issue"><div class="it">{{ e.title }}</div><span class="tag">{{ e.id }} · {{ e.severity }}</span></div>
         <div class="val"><span v-if="e.value" class="tabular">{{ money(e.value) }}</span><div class="muted">impact</div></div>
         <div class="own"><div :class="e.owner ? 'on' : 'on warn'">{{ owner(e.owner) }}</div><div class="muted">Due {{ fmtDate(e.dueAt) }}</div></div>
         <a-button size="small" @click="router.push(exceptionLink(e.id, runId))">Open</a-button>
+      </div>
+      <div v-if="queueBlocking.length < blockingCount" class="brow muted" data-test="blockers-more">
+        {{ showing(queueBlocking.length, blockingCount) }} blocking issues in the queue · <router-link :to="{ path: '/exceptions', query: { ...q, blocking: 'true' } }">all blocking exceptions</router-link>
       </div>
     </div>
 

@@ -22,3 +22,8 @@ export function mapCommandError(e: unknown): CommandProblem {
 
 export const REASON_MIN = 3
 export const reasonError = (r: string): string | null => (r.trim().length < REASON_MIN ? `Reason is required (at least ${REASON_MIN} characters).` : null)
+
+/** Route for a blocker: only blocking exceptions have a target (the exception, in the same run). */
+export function blockerLink(b: { code: string; exceptionId?: string | null; message?: string; control?: string | null }, runId: string | null) {
+  return b.code === 'BLOCKING_EXCEPTION' && b.exceptionId ? { path: `/exceptions/${b.exceptionId}`, query: runId ? { run: runId } : {} } : null
+}
