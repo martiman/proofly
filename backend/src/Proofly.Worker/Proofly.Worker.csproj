@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <ProjectReference Include="../Proofly.Data/Proofly.Data.csproj" />
+    <ProjectReference Include="../Proofly.Controls/Proofly.Controls.csproj" />
+    <ProjectReference Include="../Proofly.Connectors/Proofly.Connectors.csproj" />
+  </ItemGroup>
+</Project>
