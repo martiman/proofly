@@ -372,6 +372,13 @@ operations. Additive unless marked **breaking for a typed client**.
 
 Migration `0050` adds the partial index for the open-matter order and an index for the balance-line order.
 
+## Changelog (web client findings)
+
+| # | Change |
+| --- | --- |
+| J1 | `SafeguardingAdjustment.etag` (required) and `ConfigChange.etag` (required): the strong ETag of the row version (for example `"v3"`), same format as the `ETag` header, so `decideAdjustment` and the config decide operations can send `If-Match` after a page reload. Present in list items, command responses and the embedded `adjustments` of the safeguarding position. **Breaking for a client that builds these objects by hand.** |
+| J2 | `PageInfo.nextCursor` is now `required` (`string` or explicit `null` on the last page). Was already always written; generated types are `string | null`. |
+
 ## Lint
 
 `npx --yes @redocly/cli lint docs/integrations/api/openapi.yaml` passes with no errors. The two remaining

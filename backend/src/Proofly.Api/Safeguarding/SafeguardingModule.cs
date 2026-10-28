@@ -124,5 +124,6 @@ internal sealed class SafeguardingEndpoints(ISafeguardingReadRepository repo) : 
             a.Approval.ProposedAt, a.Approval.DecidedAt,
             a.Approval.Status == "PENDING" && a.Approval.Proposer.Id != caller.UserId && caller.Can(Permission.SafeguardingAdjustmentApprove, legalEntityId)),
         a.History.Select(h => new TimelineEventDto(h.Id, h.At, new ActorDto(h.ActorType, h.ActorId, h.ActorName),
-            h.EventType.Contains("APPROV", StringComparison.Ordinal) ? "APPROVAL" : "STATUS_CHANGE", h.Text)).ToList());
+            h.EventType.Contains("APPROV", StringComparison.Ordinal) ? "APPROVAL" : "STATUS_CHANGE", h.Text)).ToList(),
+        ETags.ForVersion(a.Version));
 }

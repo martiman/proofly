@@ -1,135 +1,123 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { getControlRoom } from '../../api'
-import type { ControlRoomData, ControlState, DeliveryState, Severity, ControlArea } from '../../api'
-import { StatePlaceholder, StatusPill, MoneyAmount, EvidenceLink } from '../../components'
-import type { Status } from '../../components/StatusPill.vue'
+import { compareRuns, getControlRoom, getRunSignOff } from '../../api/services'
+import { formatMoney } from '../../api/client'
+import type { Schema } from '../../api/services'
+import { useResource } from '../../api/composables'
+import { StatePlaceholder, StatusPill, EvidenceLink } from '../../components'
+import { useRunContext } from '../../composables/useRunContext'
+import { conclusion, ctrlStatus, delStatus, exceptionLink, fmtDate, human, impact, sevStatus, sgStatus, showing, summaryLink } from './logic'
 
+type Money = Schema<'Money'>
 const router = useRouter()
-const data = ref<ControlRoomData | null>(null)
-const loading = ref(true)
-const error = ref<string | null>(null)
-const forbidden = ref(false)
-const severity = ref<Severity | undefined>()
-const control = ref<ControlArea | undefined>()
-const currency = ref<string | undefined>()
+const ctx = useRunContext()
+const { runId } = ctx
+const room = useResource(() => runId.value, (id, signal) => getControlRoom(id, { signal }))
+// Best effort: the sign-off pack carries the authoritative blockers and totals. Callers without signoff.view fall back to the queue.
+const pack = useResource(() => runId.value, (id, signal) => getRunSignOff(id, { openMattersLimit: 1 }, { signal }).catch(() => null))
 
-async function load() {
-  loading.value = true
-  error.value = null
-  try {
-    data.value = await getControlRoom()
-  } catch (e: any) {
-    if (e?.status === 403 || e?.code === 'FORBIDDEN') forbidden.value = true
-    else error.value = e?.message ?? 'Failed to load control room'
-  } finally {
-    loading.value = false
-  }
-}
-onMounted(load)
-
-const ctrlStatus = (s: ControlState): Status =>
-  s === 'PASSED' ? 'pass' : s === 'FAILED' ? 'fail' : s === 'BLOCKED' ? 'fail' : 'warn'
-const delStatus = (s: DeliveryState): Status =>
-  s === 'RECEIVED' ? 'pass' : s === 'MISSING' || s === 'REJECTED' ? 'fail' : s === 'SUPERSEDED' ? 'neutral' : 'warn'
-const sevStatus = (s: Severity): Status => (s === 'CRITICAL' || s === 'HIGH' ? 'fail' : s === 'MEDIUM' ? 'warn' : 'neutral')
-const human = (s: string) => s.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase())
-const fmt = (d: string | null) => (d ? d.replace('T', ' ').slice(0, 16) : '—')
+const data = computed(() => room.data.value)
+const signOff = computed(() => pack.data.value ?? null)
+const money = (m: Money) => formatMoney(m.amount, m.currency)
+const isNeg = (m: Money) => m.amount.startsWith('-')
 
 const longDate = computed(() =>
   data.value ? new Date(data.value.run.businessDate + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '')
-const blockers = computed(() => (data.value?.attentionQueue ?? []).filter((e) => e.blocking))
+const queueBlocking = computed(() => (data.value?.attentionQueue ?? []).filter((e) => e.blocking))
+const blockers = computed(() => signOff.value?.blockers ?? null)
+const concl = computed(() => conclusion(data.value?.run.state ?? '', blockers.value ? blockers.value.length : null, queueBlocking.value.length))
+const openTotal = computed(() => signOff.value?.openMattersTotal ?? null)
+const owner = (o: { name: string } | null) => o?.name ?? 'Unassigned'
+
 const progress = computed(() => {
   const d = data.value
   if (!d) return []
   const del = d.evidenceReadiness
   const got = del.filter((x) => x.receivedAt).length
+  const bad = del.some((x) => x.state === 'REJECTED' || x.state === 'MISSING')
   const st = d.run.state
   const processed = st !== 'AWAITING_EVIDENCE' && st !== 'PROCESSING'
+  const nb = blockers.value?.length ?? queueBlocking.value.length
   return [
     { label: 'Evidence received', detail: `${got} / ${del.length} sources`, tone: got === del.length ? 'pass' : 'warn' },
-    { label: 'Source validation', detail: del.some((x) => x.state === 'REJECTED' || x.state === 'MISSING') ? 'Issues found' : 'Completed', tone: del.some((x) => x.state === 'REJECTED' || x.state === 'MISSING') ? 'fail' : 'pass' },
+    { label: 'Source validation', detail: bad ? 'Issues found' : 'Completed', tone: bad ? 'fail' : 'pass' },
     { label: 'Processing', detail: processed ? 'Completed' : 'In progress', tone: processed ? 'pass' : 'warn' },
-    { label: 'Review', detail: blockers.value.length ? `${blockers.value.length} blocking issues` : human(st), tone: blockers.value.length ? 'fail' : st === 'READY_FOR_SIGN_OFF' || st === 'SIGNED_OFF' ? 'pass' : 'warn' },
+    { label: 'Review', detail: nb ? `${nb} blocking issues` : human(st), tone: nb ? 'fail' : st === 'READY_FOR_SIGN_OFF' || st === 'SIGNED_OFF' ? 'pass' : 'warn' },
     { label: 'Sign-off', detail: human(d.run.signOffState), tone: 'neutral' },
   ]
 })
-const impact = (s: ControlState): [string, string] =>
-  s === 'PASSED' ? ['None', 'none'] : s === 'FAILED' || s === 'BLOCKED' ? ['Blocks', 'fail'] : ['Needs approval', 'warn']
 
-const queue = computed(() =>
-  (data.value?.attentionQueue ?? []).filter(
-    (e) =>
-      (!severity.value || e.severity === severity.value) &&
-      (!control.value || e.control === control.value) &&
-      (!currency.value || e.value?.currency === currency.value),
-  ),
-)
-const currencies = computed(() => [...new Set(data.value?.safeguarding.map((p) => p.currency))])
-const controlOptions = computed(() => data.value?.controlAreas.map((c) => ({ value: c.area, label: c.label })) ?? [])
-const severityOptions = (['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as Severity[]).map((v) => ({ value: v, label: human(v) }))
-
-function summaryLink(l: { kind: string; id: string }) {
-  if (l.kind === 'exception') return `/exceptions/${l.id}`
-  if (l.kind === 'source') return '/sources'
-  return '/exceptions'
-}
+// Run comparison (server side)
+const against = ref<string | undefined>()
+const compareOptions = computed(() =>
+  ctx.runs.value.filter((r) => r.id !== runId.value).map((r) => ({ value: r.id, label: `${r.businessDate} v${r.version}` })))
+const cmp = useResource(() => (runId.value && against.value ? { run: runId.value, against: against.value } : null),
+  (a, signal) => compareRuns(a.run, { against: a.against }, { signal }))
+const compared = computed(() => cmp.data.value)
 
 const columns = [
-  { title: 'ID', key: 'id' },
-  { title: 'Exception', key: 'title' },
-  { title: 'Control', key: 'control' },
-  { title: 'Severity', key: 'severity' },
-  { title: 'Status', key: 'status' },
-  { title: 'Owner', key: 'owner' },
-  { title: 'Value', key: 'value', align: 'right' as const },
-  { title: 'Due', key: 'dueAt' },
+  { title: 'ID', key: 'id' }, { title: 'Exception', key: 'title' }, { title: 'Control', key: 'control' },
+  { title: 'Severity', key: 'severity' }, { title: 'Status', key: 'status' }, { title: 'Owner', key: 'owner' },
+  { title: 'Value', key: 'value', align: 'right' as const }, { title: 'Due', key: 'dueAt' },
 ]
+const q = computed(() => (runId.value ? { run: runId.value } : {}))
+const retry = () => { void room.reload(); void pack.reload() }
 </script>
 
 <template>
   <div class="dh">
     <div>
       <div class="eyebrow">DAILY CONTROL ROOM</div>
-      <h1>Business date {{ longDate }}</h1>
-      <div class="ctx">{{ data ? `Run v${data.run.version} · Ruleset ${data.run.rulesetVersion}` : '' }}</div>
+      <h1>{{ data ? `Business date ${longDate}` : 'Business date' }}</h1>
+      <div class="ctx">{{ data ? `${data.run.legalEntityId} · Run v${data.run.version} · ${human(data.run.state)} · Ruleset ${data.run.rulesetVersion}` : '' }}</div>
     </div>
     <div class="acts">
-      <span v-if="data" class="upd">Last evidence {{ fmt(data.run.lastEvidenceArrivalAt) }}</span>
-      <a-button @click="router.push('/exceptions')">Open exceptions</a-button>
-      <a-button type="primary" :disabled="!data || data.run.state !== 'READY_FOR_SIGN_OFF'" @click="router.push('/sign-off')">
-        Proceed to sign-off
-      </a-button>
+      <span v-if="data" class="upd">Last evidence {{ fmtDate(data.run.lastEvidenceArrivalAt) }}</span>
+      <a-select v-model:value="against" :options="compareOptions" placeholder="Compare with run" allow-clear style="width: 190px" />
+      <a-button @click="router.push({ path: '/exceptions', query: q })">Open exceptions</a-button>
+      <a-button type="primary" :disabled="!data" @click="router.push({ path: '/sign-off', query: q })">Proceed to sign-off</a-button>
     </div>
   </div>
 
-  <StatePlaceholder v-if="loading" state="loading" />
-  <StatePlaceholder v-else-if="forbidden" state="forbidden" />
-  <StatePlaceholder v-else-if="error" state="error" :message="error">
-    <template #action><a-button @click="load">Retry</a-button></template>
+  <StatePlaceholder v-if="!runId && !ctx.loading.value && !ctx.error.value" state="empty" message="No run available." />
+  <StatePlaceholder v-else-if="room.placeholder.value" :state="room.placeholder.value" :message="room.message.value">
+    <template #action><a-button @click="retry">Retry</a-button></template>
   </StatePlaceholder>
-  <StatePlaceholder v-else-if="!data" state="empty" message="No run available for this business date." />
 
-  <template v-else>
-    <div class="concl" :class="blockers.length ? 'bad' : 'ok'">
+  <template v-else-if="data">
+    <a-alert v-if="data.run.state === 'SUPERSEDED' && data.run.supersededByRunId" type="warning" show-icon class="gap"
+      message="This run version is superseded.">
+      <template #description><router-link :to="{ path: '/control-room', query: { run: data.run.supersededByRunId } }">Open {{ data.run.supersededByRunId }}</router-link></template>
+    </a-alert>
+
+    <div class="concl" :class="concl.blocked ? 'bad' : 'ok'">
       <div class="cl">
-        <span class="icon">{{ blockers.length ? '!' : '✓' }}</span>
+        <span class="icon">{{ concl.blocked ? '!' : '✓' }}</span>
         <div>
           <div class="eyebrow">RUN CONCLUSION</div>
-          <div class="ct">{{ blockers.length ? 'Sign-off blocked' : human(data.run.state) }}</div>
-          <div class="cr">
-            {{ blockers.length
-              ? `${blockers.length} blocking issue${blockers.length === 1 ? '' : 's'} must be resolved before this run can be signed off.`
-              : 'No blocking issues.' }}
-          </div>
+          <div class="ct">{{ concl.headline }}</div>
+          <div class="cr">{{ concl.reason }}</div>
         </div>
       </div>
       <div class="ca">
-        <a-button v-if="blockers.length" type="primary" @click="router.push('/exceptions')">Review {{ blockers.length }} blockers</a-button>
-        <router-link to="/exceptions">View all exceptions ({{ data.attentionQueue.length }})</router-link>
+        <a-button v-if="concl.blocked" type="primary" @click="router.push({ path: '/exceptions', query: { ...q, blocking: 'true' } })">Review blockers</a-button>
+        <router-link :to="{ path: '/exceptions', query: q }">View all exceptions{{ openTotal != null ? ` (${openTotal})` : '' }}</router-link>
       </div>
     </div>
+
+    <div v-if="compared" class="card block" data-test="compare">
+      <h3>Compared with {{ compared.against.businessDate }} v{{ compared.against.version }}</h3>
+      <div class="cmp">
+        <span v-for="c in compared.controlAreas" :key="c.area" class="cmpi">
+          {{ human(c.area) }}: <StatusPill :status="ctrlStatus(c.againstState)" :label="human(c.againstState)" /> →
+          <StatusPill :status="ctrlStatus(c.state)" :label="human(c.state)" /> ({{ c.recordCountDelta > 0 ? '+' : '' }}{{ c.recordCountDelta }} records)
+        </span>
+      </div>
+      <div class="muted">{{ compared.newExceptionIds.length }} new and {{ compared.resolvedExceptionIds.length }} resolved exceptions.
+        <span v-for="d in compared.safeguardingDelta ?? []" :key="d.label + d.currency"> {{ d.label }} {{ d.currency }}: {{ d.change }};</span></div>
+    </div>
+    <StatePlaceholder v-else-if="against && cmp.placeholder.value" :state="cmp.placeholder.value" :message="cmp.message.value" />
 
     <div class="card progress">
       <div v-for="p in progress" :key="p.label" class="step">
@@ -141,26 +129,26 @@ const columns = [
       </div>
     </div>
 
-    <div v-if="blockers.length" class="card blk">
+    <div v-if="concl.blocked" class="card blk" data-test="blockers">
       <div class="bh">
-        <span class="eyebrow fail">BLOCKING SIGN-OFF</span><span class="cnt">{{ blockers.length }}</span>
+        <span class="eyebrow fail">BLOCKING SIGN-OFF</span><span class="cnt">{{ blockers ? blockers.length : queueBlocking.length }}</span>
         <span class="hint">Each one stops the run on its own. Resolve it, or obtain an approved qualification.</span>
       </div>
-      <div v-for="(e, i) in blockers" :key="e.id" class="brow">
+      <template v-if="blockers">
+        <div v-for="(b, i) in blockers.slice(0, 5)" :key="b" class="brow">
+          <span class="num" :class="{ solid: i === 0 }">{{ i + 1 }}</span>
+          <div class="issue"><div class="it">{{ b }}</div></div>
+        </div>
+        <div v-if="blockers.length > 5" class="brow muted">
+          Showing 5 of {{ blockers.length }} · <router-link :to="{ path: '/sign-off', query: q }">all blockers on the sign-off page</router-link>
+        </div>
+      </template>
+      <div v-for="(e, i) in queueBlocking" v-else :key="e.id" class="brow">
         <span class="num" :class="{ solid: i === 0 }">{{ i + 1 }}</span>
-        <div class="issue">
-          <div class="it">{{ e.title }}</div>
-          <span class="tag">{{ e.id }} · {{ e.severity }}</span>
-        </div>
-        <div class="val">
-          <MoneyAmount v-if="e.value" :amount="e.value.amount" :currency="e.value.currency" />
-          <div class="muted">impact</div>
-        </div>
-        <div class="own">
-          <div :class="e.owner ? 'on' : 'on warn'">{{ e.owner ?? 'Unassigned' }}</div>
-          <div class="muted">Due {{ fmt(e.dueAt) }}</div>
-        </div>
-        <a-button size="small" @click="router.push(`/exceptions/${e.id}`)">Open</a-button>
+        <div class="issue"><div class="it">{{ e.title }}</div><span class="tag">{{ e.id }} · {{ e.severity }}</span></div>
+        <div class="val"><span v-if="e.value" class="tabular">{{ money(e.value) }}</span><div class="muted">impact</div></div>
+        <div class="own"><div :class="e.owner ? 'on' : 'on warn'">{{ owner(e.owner) }}</div><div class="muted">Due {{ fmtDate(e.dueAt) }}</div></div>
+        <a-button size="small" @click="router.push(exceptionLink(e.id, runId))">Open</a-button>
       </div>
     </div>
 
@@ -174,10 +162,11 @@ const columns = [
           <span class="res">
             {{ c.recordCount.toLocaleString('en-GB') }} records
             ({{ c.changeFromPrevious >= 0 ? '+' : '' }}{{ c.changeFromPrevious }} vs previous) · {{ c.openExceptions }} open
-            <template v-for="m in c.value" :key="m.currency"> · <MoneyAmount :amount="m.amount" :currency="m.currency" /></template>
+            <template v-for="m in c.value" :key="m.currency"> · <span class="tabular">{{ money(m) }}</span></template>
           </span>
           <span :class="['imp', impact(c.state)[1]]">{{ impact(c.state)[0] }}</span>
         </div>
+        <div v-if="!data.controlAreas.length" class="muted pad">No control reported records or exceptions for this run.</div>
         <div class="legend">
           <div><b class="fail">Blocks</b> Must be resolved, or covered by an approved qualification, before the run can be signed.</div>
           <div><b class="warn">Needs approval</b> Owned exception. The control owner must approve the resolution or accepted difference.</div>
@@ -185,14 +174,19 @@ const columns = [
       </div>
       <div class="card sg">
         <div class="ch"><span class="eyebrow">SAFEGUARDING</span><span class="muted">By currency · no netting</span>
-          <router-link to="/safeguarding">Full calculation</router-link></div>
+          <router-link :to="{ path: '/safeguarding', query: q }">Full calculation</router-link></div>
         <div v-for="p in data.safeguarding" :key="p.currency" class="cur">
           <div class="crow"><b>{{ p.currency }}</b>
-            <StatusPill :status="p.state === 'COVERED' || p.state === 'SURPLUS' || p.state === 'NO_OBLIGATION' ? 'pass' : p.state === 'SHORTFALL' ? 'fail' : 'warn'" :label="human(p.state)" />
+            <span>
+              <a-tag v-if="p.stale" color="orange" title="An adjustment changed after processing; reprocess the run.">Stale</a-tag>
+              <StatusPill :status="sgStatus(p.state)" :label="human(p.state)" />
+            </span>
           </div>
-          <div class="muted">Obligation <MoneyAmount :amount="p.obligation.amount" :currency="p.currency" /> · Eligible <MoneyAmount :amount="p.eligibleBalance.amount" :currency="p.currency" /></div>
-          <div class="muted">Result <MoneyAmount :amount="p.result.amount" :currency="p.currency" /></div>
+          <div class="muted">Obligation {{ money(p.obligation) }} · Eligible {{ money(p.eligibleBalance) }}</div>
+          <div class="muted">Result <span :class="{ fail: p.result && isNeg(p.result) }">{{ p.result ? money(p.result) : '—' }}</span><template v-if="!p.result"> (not computed: qualified)</template></div>
+          <div v-if="p.exceptionCount" class="muted">{{ showing(p.exceptionIds.length, p.exceptionCount) }} open safeguarding exception(s)</div>
         </div>
+        <div v-if="!data.safeguarding.length" class="muted pad">No safeguarding currencies in this run.</div>
       </div>
     </div>
 
@@ -201,7 +195,7 @@ const columns = [
       <ul class="summary">
         <li v-for="(s, i) in data.summary" :key="i">
           {{ s.text }}
-          <EvidenceLink v-if="s.link" :label="s.link.id" :to="summaryLink(s.link)" />
+          <EvidenceLink v-if="s.link" :label="s.link.id" :to="summaryLink(s.link, runId)" />
         </li>
       </ul>
     </div>
@@ -212,13 +206,14 @@ const columns = [
         :columns="[
           { title: 'Source', key: 'src' }, { title: 'File', dataIndex: 'fileName' },
           { title: 'Expected by', key: 'exp' }, { title: 'Received', key: 'rec' },
-          { title: 'Records', key: 'cnt', align: 'right' }, { title: 'State', key: 'state' },
+          { title: 'Records', key: 'cnt', align: 'right' }, { title: 'Findings', key: 'find' }, { title: 'State', key: 'state' },
         ]">
         <template #bodyCell="{ column, record }">
-          <EvidenceLink v-if="column.key === 'src'" :label="record.sourceName" to="/sources" />
-          <template v-else-if="column.key === 'exp'">{{ fmt(record.expectedBy) }}</template>
-          <template v-else-if="column.key === 'rec'">{{ fmt(record.receivedAt) }}</template>
-          <template v-else-if="column.key === 'cnt'">{{ record.acceptedRecords }} / {{ record.declaredRecordCount }}</template>
+          <EvidenceLink v-if="column.key === 'src'" :label="record.sourceName" :to="{ path: '/sources', query: q }" />
+          <template v-else-if="column.key === 'exp'">{{ fmtDate(record.expectedBy) }}</template>
+          <template v-else-if="column.key === 'rec'">{{ fmtDate(record.receivedAt) }}</template>
+          <template v-else-if="column.key === 'cnt'">{{ record.acceptedRecords }} / {{ record.declaredRecordCount }}<span v-if="record.rejectedRecords" class="fail"> ({{ record.rejectedRecords }} rejected)</span></template>
+          <template v-else-if="column.key === 'find'">{{ record.findingCount ?? record.findingIds.length }}</template>
           <StatusPill v-else-if="column.key === 'state'" :status="delStatus(record.state)" :label="human(record.state)" />
         </template>
       </a-table>
@@ -227,29 +222,25 @@ const columns = [
     <div class="card block">
       <div class="row">
         <h3>Attention queue</h3>
-        <div class="filters">
-          <a-select v-model:value="severity" :options="severityOptions" placeholder="Severity" allow-clear style="width: 130px" />
-          <a-select v-model:value="control" :options="controlOptions" placeholder="Control area" allow-clear style="width: 190px" />
-          <a-select v-model:value="currency" :options="currencies.map((c) => ({ value: c, label: c }))" placeholder="Currency" allow-clear style="width: 110px" />
-        </div>
+        <span class="muted">{{ showing(data.attentionQueue.length, openTotal) }} · most urgent first</span>
+        <router-link :to="{ path: '/exceptions', query: q }">Open the full queue</router-link>
       </div>
-      <a-table :data-source="queue" :columns="columns" :pagination="false" size="small" row-key="id"
+      <a-table :data-source="data.attentionQueue" :columns="columns" :pagination="false" size="small" row-key="id"
         :locale="{ emptyText: 'No items need attention.' }">
         <template #bodyCell="{ column, record }">
-          <EvidenceLink v-if="column.key === 'id'" :label="record.id" :to="`/exceptions/${record.id}`" />
+          <EvidenceLink v-if="column.key === 'id'" :label="record.id" :to="exceptionLink(record.id, runId)" />
           <template v-else-if="column.key === 'title'">
             {{ record.title }} <a-tag v-if="record.blocking" color="red">Blocking</a-tag>
           </template>
           <template v-else-if="column.key === 'control'">{{ human(record.control) }}</template>
           <StatusPill v-else-if="column.key === 'severity'" :status="sevStatus(record.severity)" :label="human(record.severity)" />
           <template v-else-if="column.key === 'status'">{{ human(record.status) }}</template>
-          <template v-else-if="column.key === 'owner'">{{ record.owner ?? 'Unassigned' }}</template>
-          <MoneyAmount v-else-if="column.key === 'value' && record.value" :amount="record.value.amount" :currency="record.value.currency" />
-          <template v-else-if="column.key === 'dueAt'">{{ fmt(record.dueAt) }}</template>
+          <template v-else-if="column.key === 'owner'">{{ owner(record.owner) }}</template>
+          <template v-else-if="column.key === 'value'"><span class="tabular">{{ record.value ? money(record.value) : '—' }}</span></template>
+          <template v-else-if="column.key === 'dueAt'">{{ fmtDate(record.dueAt) }}</template>
         </template>
       </a-table>
     </div>
-
   </template>
 </template>
 
@@ -312,5 +303,10 @@ h3 { margin: 0 0 12px; font-size: 15px; font-weight: 600; }
 .row h3 { margin: 0; }
 .summary { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
 .filters { display: flex; gap: 8px; }
-.row + .ant-table-wrapper, .row + :deep(.ant-table-wrapper) { margin-top: 12px; }
+.gap { margin-bottom: 16px; }
+.pad { padding: 12px 16px; }
+.fail { color: var(--fail); }
+.cmp { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; font-size: 12px; }
+.row .muted { flex: 1; }
+.row { margin-bottom: 12px; }
 </style>

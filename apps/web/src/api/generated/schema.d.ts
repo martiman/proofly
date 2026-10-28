@@ -1108,7 +1108,8 @@ export interface components {
             currency: components["schemas"]["Currency"];
         };
         PageInfo: {
-            nextCursor?: string | null;
+            /** @description Explicit null on the last page */
+            nextCursor: string | null;
             hasMore: boolean;
             /** @description Omitted (never null) unless includeTotal=true */
             total?: number;
@@ -1775,6 +1776,8 @@ export interface components {
         };
         SafeguardingAdjustment: {
             id: string;
+            /** @description Strong ETag of the adjustment version (for example "v3"); send it as If-Match to decideAdjustment */
+            etag: string;
             runId: string;
             currency: components["schemas"]["Currency"];
             amount: components["schemas"]["Money"];
@@ -1943,6 +1946,8 @@ export interface components {
         };
         ConfigChange: {
             id: string;
+            /** @description Strong ETag of the change version (for example "v2"); send it as If-Match when deciding */
+            etag: string;
             targetKind: components["schemas"]["ConfigTargetKind"];
             targetId: string;
             status: components["schemas"]["ConfigChangeStatus"];

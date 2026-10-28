@@ -1,9 +1,0 @@
-source_name,delivery_id,business_date,schema_version,file_name,declared_record_count,declared_total_eur,declared_total_czk,expected_by,received_at,correction_of_delivery_id
-transfer_instructions,DEL-TRF-20261027-01,2026-10-27,1.0,transfer_instructions.csv,10,5065.73,18200,2026-10-28T06:00:00+01:00,2026-10-28T05:42:00+01:00,
-direct_debit_events,DEL-DD-20261027-01,2026-10-27,1.0,direct_debit_events.csv,10,1090,0,2026-10-28T06:15:00+01:00,2026-10-28T05:55:00+01:00,
-internal_ledger_entries,DEL-LED-20261027-01,2026-10-27,1.0,internal_ledger_entries.csv,10,3995.49,18200,2026-10-28T06:30:00+01:00,2026-10-28T06:12:00+01:00,
-client_account_balances,DEL-BAL-20261027-01,2026-10-27,1.0,client_account_balances.csv,10,22669.49,131800,2026-10-28T06:30:00+01:00,2026-10-28T06:13:00+01:00,
-banking_transactions,DEL-BNK-20261027-01,2026-10-27,1.0,banking_transactions.csv,9,3835.49,18200,2026-10-28T07:00:00+01:00,2026-10-28T06:41:00+01:00,
-safeguarding_balances,DEL-SFG-20261027-01,2026-10-27,1.0,safeguarding_balances.csv,10,36950,350000,2026-10-28T07:00:00+01:00,2026-10-28T06:45:00+01:00,
-card_transactions,DEL-CTX-20261027-01,2026-10-27,1.0,card_transactions.csv,10,625,0,2026-10-28T07:10:00+01:00,2026-10-28T06:50:00+01:00,
-card_settlements,DEL-CRD-20261027-01,2026-10-27,1.0,card_settlements.csv,10,7850,0,2026-10-28T07:15:00+01:00,2026-10-28T06:58:00+01:00,

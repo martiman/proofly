@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
-export default createRouter({
+const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', redirect: '/control-room' },
@@ -17,3 +17,11 @@ export default createRouter({
     { path: '/evidence', name: 'EvidenceAudit', component: () => import('../views/EvidenceAudit/index.vue'), meta: { title: 'Evidence and Audit Explorer' } },
   ],
 })
+
+// The selected run (`?run=`) follows the user across screens: links that omit it inherit it from the previous route.
+router.beforeEach((to, from) => {
+  if (!to.query.run && typeof from.query.run === 'string') return { ...to, query: { ...to.query, run: from.query.run }, replace: true }
+  return true
+})
+
+export default router

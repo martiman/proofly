@@ -134,6 +134,6 @@ internal sealed class ConfigChangeEndpoints : IEndpointModule
             new UserRefDto(r.ProposerId, r.ProposerName), a.ApproverId is null ? null : new UserRefDto(a.ApproverId, a.ApproverName ?? a.ApproverId),
             a.RequiredRole, a.Status, a.Decision, a.Rationale, [], a.PolicyVersion, a.ProposedAt, a.DecidedAt, canDecide);
         return new ConfigChangeDto(r.Id, r.TargetKind, r.TargetId, r.Status, true, ToDict(r.BeforeJson), ToDict(r.AfterJson)!, diff,
-            new UserRefDto(r.ProposerId, r.ProposerName), r.ProposedAt, approval, r.EffectiveFrom.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), r.Reason, r.RulesetVersion);
+            new UserRefDto(r.ProposerId, r.ProposerName), r.ProposedAt, approval, r.EffectiveFrom.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), r.Reason, r.RulesetVersion, ETags.ForVersion(r.Version));
     }
 }

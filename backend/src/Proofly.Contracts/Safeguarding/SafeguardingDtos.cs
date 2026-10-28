@@ -25,7 +25,7 @@ public sealed record ApprovalDto(
 
 public sealed record SafeguardingAdjustmentDto(
     string Id, string RunId, string Currency, MoneyDto Amount, string Status, UserRefDto Owner, string Reason,
-    IReadOnlyList<string> EvidenceRefs, DateOnly? ExpiresOn, ApprovalDto? Approval, IReadOnlyList<TimelineEventDto> History);
+    IReadOnlyList<string> EvidenceRefs, DateOnly? ExpiresOn, ApprovalDto? Approval, IReadOnlyList<TimelineEventDto> History, string Etag);
 
 public sealed record SafeguardingPositionDto(
     string RunId, DateOnly BusinessDate, string LegalEntityId, string EvidenceReadiness, string ApprovalState,

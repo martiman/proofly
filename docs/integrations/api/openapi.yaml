@@ -1100,9 +1100,9 @@ components:
         currency: {$ref: '#/components/schemas/Currency'}
     PageInfo:
       type: object
-      required: [hasMore]
+      required: [nextCursor, hasMore]
       properties:
-        nextCursor: {type: [string, 'null']}
+        nextCursor: {type: [string, 'null'], description: "Explicit null on the last page"}
         hasMore: {type: boolean}
         total: {type: integer, description: "Omitted (never null) unless includeTotal=true"}
     IsoDate: {type: string, format: date}
@@ -1826,9 +1826,10 @@ components:
         expiresOn: {type: [string, 'null'], format: date}
     SafeguardingAdjustment:
       type: object
-      required: [id, runId, currency, amount, status, owner, reason, evidenceRefs, history]
+      required: [id, runId, currency, amount, status, owner, reason, evidenceRefs, history, etag]
       properties:
         id: {type: string}
+        etag: {type: string, description: "Strong ETag of the adjustment version (for example \"v3\"); send it as If-Match to decideAdjustment"}
         runId: {type: string}
         currency: {$ref: '#/components/schemas/Currency'}
         amount: {$ref: '#/components/schemas/Money'}
@@ -1996,9 +1997,10 @@ components:
         reason: {$ref: '#/components/schemas/Reason'}
     ConfigChange:
       type: object
-      required: [id, targetKind, targetId, status, before, after, proposer, proposedAt, effectiveFrom, reason, material]
+      required: [id, targetKind, targetId, status, before, after, proposer, proposedAt, effectiveFrom, reason, material, etag]
       properties:
         id: {type: string}
+        etag: {type: string, description: "Strong ETag of the change version (for example \"v2\"); send it as If-Match when deciding"}
         targetKind: {$ref: '#/components/schemas/ConfigTargetKind'}
         targetId: {type: string}
         status: {$ref: '#/components/schemas/ConfigChangeStatus'}

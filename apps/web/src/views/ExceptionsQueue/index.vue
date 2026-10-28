@@ -1,195 +1,323 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { StatePlaceholder, StatusPill, MoneyAmount } from '../../components'
+import { message, Modal } from 'ant-design-vue'
+import { PageHeader, StatePlaceholder, StatusPill } from '../../components'
 import type { Status } from '../../components/StatusPill.vue'
-import { listExceptions, sumMoney } from '../../api'
-import type { ExceptionSummary, ExceptionStatus, Severity, ControlArea, Currency } from '../../api'
+import { useRunContext } from '../../composables/useRunContext'
+import { useAsync, useCommand, usePaged, useResource } from '../../api/composables'
+import { formatMoney } from '../../api/client'
+import {
+  bulkAssignExceptions, createExceptionView, deleteExceptionView, getExceptionsSummary, getSettings,
+  listExceptionViews, listExceptions, type Schema,
+} from '../../api/services'
+import {
+  CONTROLS, SEVERITIES, STATUSES, describeError, emptyFilters, fromViewFilters, ignoredBySummary,
+  investigators, sortFromTable, sortOrderFor, splitBulk, toListQuery, toSummaryQuery, toViewFilters, validateFilters,
+  type BulkResultItem, type QueueFilters,
+} from './logic'
 
+type Item = Schema<'ExceptionSummary'>
 const router = useRouter()
-const all = ref<ExceptionSummary[]>([])
-const rows = ref<ExceptionSummary[]>([])
-const total = ref(0)
-const loading = ref(true)
-const error = ref<string | null>(null)
-const forbidden = ref(false)
-const selected = ref<string[]>([])
-const f = reactive<{ severity?: Severity; control?: ControlArea; status?: ExceptionStatus; owner?: string; currency?: Currency; search?: string; page: number }>({ page: 1 })
-const PAGE_SIZE = 25
+const { runId, run, me } = useRunContext()
 
-const sevStatus: Record<Severity, Status> = { CRITICAL: 'fail', HIGH: 'warn', MEDIUM: 'info', LOW: 'neutral' }
-const controlLabel: Record<ControlArea, string> = {
-  data_completeness: 'Data completeness', matching: 'Matching', independent_ledger: 'Independent ledger',
-  transaction_lifecycle: 'Transaction lifecycle', safeguarding: 'Safeguarding',
-}
-const statusLabel: Record<ExceptionStatus, string> = {
-  OPEN: 'Open', IN_INVESTIGATION: 'Investigating', WAITING_FOR_DATA: 'Waiting for evidence', PENDING_APPROVAL: 'Approval required',
-  RESOLVED: 'Resolved', ACCEPTED_DIFFERENCE: 'Accepted difference', FALSE_POSITIVE: 'False positive',
-}
-const sevs: Severity[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']
-const opt = (o: Record<string, string>) => Object.entries(o).map(([value, label]) => ({ value, label }))
+const f = reactive<QueueFilters>(emptyFilters())
+const activeViewId = ref<string>()
+const filterErrors = computed(() => validateFilters(f))
+const listQuery = computed(() => JSON.stringify(toListQuery(f)))
+const summaryQuery = computed(() => JSON.stringify(toSummaryQuery(f)))
+const ignored = computed(() => ignoredBySummary(f))
 
-const isOpen = (e: ExceptionSummary) => !['RESOLVED', 'ACCEPTED_DIFFERENCE', 'FALSE_POSITIVE'].includes(e.status)
-const open = computed(() => all.value.filter(isOpen))
-const sevSummary = computed(() => sevs.map((s) => {
-  const items = open.value.filter((e) => e.severity === s)
-  const ccys = [...new Set(items.filter((e) => e.value).map((e) => e.value!.currency))]
-  const values = ccys.map((c) => sumMoney(items.filter((e) => e.value?.currency === c).map((e) => e.value!), c))
-  return { s, count: items.length, values }
-}))
-const overdue = computed(() => open.value.filter((e) => new Date(e.dueAt).getTime() < Date.now()))
-const unassigned = computed(() => open.value.filter((e) => !e.owner))
-const byControl = computed(() => Object.keys(controlLabel).map((c) => ({ c: c as ControlArea, n: open.value.filter((e) => e.control === c).length })).filter((x) => x.n))
-const reasons = computed(() => {
-  const m = new Map<string, number>()
-  open.value.forEach((e) => m.set(e.reasonCode, (m.get(e.reasonCode) ?? 0) + 1))
-  return [...m].filter(([, n]) => n > 1).sort((a, b) => b[1] - a[1])
+const sevStatus: Record<string, Status> = { CRITICAL: 'fail', HIGH: 'warn', MEDIUM: 'info', LOW: 'neutral' }
+const label = (s: string) => s.toLowerCase().replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
+const money = (m: { amount: string; currency: string } | null | undefined) => (m ? formatMoney(m.amount, m.currency) : '—')
+const when = (iso: string) => new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+const opts = (xs: readonly string[]) => xs.map((value) => ({ value, label: label(value) }))
+
+// ---- list (cursor paging, server sort/filter) ----
+const PAGE = 25
+const list = usePaged<Item>(
+  (p, signal) => listExceptions(runId.value!, { ...JSON.parse(listQuery.value), limit: p.limit, cursor: p.cursor, includeTotal: p.includeTotal }, { signal }),
+  [runId, listQuery], { limit: PAGE, includeTotal: true },
+)
+// ---- summary: every total shown comes from here ----
+const summary = useResource(
+  () => (runId.value ? `${runId.value}|${summaryQuery.value}` : null),
+  (_k, signal) => getExceptionsSummary(runId.value!, JSON.parse(summaryQuery.value), { signal }),
+  { isEmpty: () => false },
+)
+const sevCards = computed(() => {
+  const s = summary.data.value
+  if (!s) return []
+  return SEVERITIES.map((sev) => ({
+    sev, count: s.bySeverity?.[sev] ?? 0,
+    values: (s.bySeverityCurrency ?? []).filter((x) => x.severity === sev),
+  }))
 })
-const owners = computed(() => [...new Set(all.value.map((e) => e.owner).filter(Boolean) as string[])])
+const controlRows = computed(() => CONTROLS.map((c) => ({ c, n: summary.data.value?.byControl?.[c] ?? 0 })).filter((x) => x.n > 0))
+const maxControl = computed(() => Math.max(1, ...controlRows.value.map((x) => x.n)))
+const reasons = computed(() => (summary.data.value?.byReason ?? []).slice(0, 6))
 
-const fmtDue = (iso: string) => new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+// ---- owners for filter and bulk picker ----
+const settings = useAsync((signal) => getSettings({}, { signal }).catch(() => null), { isEmpty: () => false })
+const ownerOptions = computed(() => {
+  const users = settings.data.value?.users
+  const base = users ? investigators(users).map((u) => ({ value: u.id, label: u.name })) : []
+  if (me.value && !base.some((o) => o.value === me.value!.id)) base.unshift({ value: me.value.id, label: `${me.value.name} (me)` })
+  return base
+})
+const canAssign = computed(() => !!me.value?.permissions.includes('exception.assign'))
 
-async function load() {
-  loading.value = true; error.value = null
+// ---- saved views ----
+const views = useAsync((signal) => listExceptionViews({ signal }), { isEmpty: () => false })
+const viewOptions = computed(() => (views.data.value?.items ?? []).map((v) => ({ value: v.id, label: v.name + (v.shared ? ' (shared)' : '') })))
+function applyView(id?: string) {
+  activeViewId.value = id
+  const v = views.data.value?.items.find((x) => x.id === id)
+  if (!v) return
+  Object.assign(f, fromViewFilters(v.filters, v.sort))
+}
+const saveOpen = ref(false)
+const viewName = ref('')
+const viewShared = ref(false)
+const saveCmd = useCommand((b: { name: string; shared: boolean }, o) => createExceptionView({ name: b.name, shared: b.shared, filters: toViewFilters(f), sort: f.sort }, o))
+const saveError = ref('')
+async function saveView() {
+  saveError.value = ''
   try {
-    const { page, ...rest } = f
-    const p = await listExceptions({ ...rest, page, pageSize: PAGE_SIZE })
-    rows.value = p.items; total.value = p.total
-  } catch (e: any) {
-    if (e?.status === 403) forbidden.value = true
-    else error.value = e?.message ?? 'Failed to load exceptions'
-  } finally { loading.value = false }
+    const v = await saveCmd.run({ name: viewName.value.trim(), shared: viewShared.value })
+    message.success('View saved'); saveOpen.value = false; viewName.value = ''
+    await views.reload(); activeViewId.value = v.id
+  } catch (e) { saveError.value = describeError(e) }
 }
-onMounted(async () => {
-  try { all.value = (await listExceptions({ pageSize: 1000 })).items } catch { /* summary optional; table reports errors */ }
-  load()
-})
-watch(() => [f.severity, f.control, f.status, f.owner, f.currency, f.search], () => { f.page = 1; load() })
-watch(() => f.page, load)
-
-const columns = [
-  { title: 'Severity', key: 'severity', width: 110 },
-  { title: 'Exception', key: 'exception' },
-  { title: 'Control', key: 'control', width: 160 },
-  { title: 'Value', key: 'value', align: 'right' as const, width: 150 },
-  { title: 'Owner / due', key: 'owner', width: 150 },
-  { title: 'Status', key: 'status', width: 170 },
-]
-const rowProps = (r: ExceptionSummary) => ({ style: { cursor: 'pointer' }, onClick: () => router.push(`/exceptions/${r.id}`) })
-const isOverdue = (r: ExceptionSummary) => isOpen(r) && new Date(r.dueAt).getTime() < Date.now()
-
-function exportCsv() {
-  const head = 'id,severity,reason,control,amount,currency,owner,due,status'
-  const body = rows.value.map((r) => [r.id, r.severity, r.reasonCode, r.control, r.value?.amount ?? '', r.value?.currency ?? '', r.owner ?? '', r.dueAt, r.status].join(','))
-  const url = URL.createObjectURL(new Blob([[head, ...body].join('\n')], { type: 'text/csv' }))
-  Object.assign(document.createElement('a'), { href: url, download: 'exceptions.csv' }).click()
-  URL.revokeObjectURL(url)
+function removeView() {
+  const v = views.data.value?.items.find((x) => x.id === activeViewId.value)
+  if (!v) return
+  Modal.confirm({
+    title: `Delete view "${v.name}"?`, content: 'Saved views are personal preferences; the exception population is not changed.',
+    okText: 'Delete', okButtonProps: { danger: true },
+    onOk: async () => {
+      try { await deleteExceptionView(v.id, { ifMatch: v.etag! }); activeViewId.value = undefined; await views.reload(); message.success('View deleted') }
+      catch (e) { message.error(describeError(e)) }
+    },
+  })
 }
+
+// ---- filters ----
+function resetFilters() { Object.assign(f, emptyFilters()); activeViewId.value = undefined }
+const filtersActive = computed(() => JSON.stringify({ ...f, sort: '' }) !== JSON.stringify({ ...emptyFilters(), sort: '' }))
+const sortedBy = (field: string) => sortOrderFor(f.sort, field)
+function onTable(_p: unknown, _flt: unknown, s: { field?: string; order?: 'ascend' | 'descend' | null }) { f.sort = sortFromTable(s.field, s.order) }
+
+// ---- selection and bulk assign ----
+const selected = ref<string[]>([])
+watch([runId, listQuery], () => { selected.value = [] })
+const bulkOwner = ref<string>()
+const bulkNote = ref('')
+const bulkOutcome = ref<{ ok: BulkResultItem[]; failed: BulkResultItem[]; owner: string } | null>(null)
+const bulkError = ref('')
+const bulk = useCommand((b: { ownerId: string; note: string; items: { exceptionId: string; etag: string }[] }, o) =>
+  bulkAssignExceptions(runId.value!, { ownerId: b.ownerId, note: b.note || undefined, items: b.items }, o))
+const ownerName = (id: string) => ownerOptions.value.find((o) => o.value === id)?.label ?? id
+function confirmBulk() {
+  if (!bulkOwner.value) return
+  Modal.confirm({
+    title: `Assign ${selected.value.length} exception(s) to ${ownerName(bulkOwner.value)}?`,
+    content: 'Each exception is checked separately; failures are listed per item.',
+    okText: 'Assign', onOk: doBulk,
+  })
+}
+async function doBulk() {
+  const byId = new Map(list.items.value.map((i) => [i.id, i]))
+  const items = selected.value.map((id) => ({ exceptionId: id, etag: byId.get(id)!.etag }))
+  bulkError.value = ''
+  try {
+    const r = await bulk.run({ ownerId: bulkOwner.value!, note: bulkNote.value.trim(), items })
+    const out = splitBulk(r.results)
+    bulkOutcome.value = { ...out, owner: ownerName(bulkOwner.value!) }
+    selected.value = out.failed.map((x) => x.exceptionId)
+    if (!out.failed.length) { bulkNote.value = ''; message.success(`${out.ok.length} assigned`) }
+    await Promise.all([list.reload(), summary.reload()])
+    selected.value = out.failed.map((x) => x.exceptionId).filter((id) => list.items.value.some((i) => i.id === id))
+  } catch (e) { bulkError.value = describeError(e) }
+}
+const problemText = (r: BulkResultItem) => r.problem ? (r.problem.detail ? `${r.problem.title}: ${r.problem.detail}` : r.problem.title) : `HTTP ${r.status}`
+
+const columns = computed(() => [
+  { title: 'Severity · status', key: 'sev', width: 190, sorter: true, sortOrder: sortedBy('severity') },
+  { title: 'Exception', key: 'ex' },
+  { title: 'Value', key: 'value', align: 'right' as const, width: 190, sorter: true, sortOrder: sortedBy('value') },
+  { title: 'Owner', key: 'owner', width: 130 },
+  { title: 'Due', key: 'due', width: 110, sorter: true, sortOrder: sortedBy('dueAt'), dataIndex: 'dueAt' },
+  { title: 'Age', key: 'age', width: 70, align: 'right' as const, sorter: true, sortOrder: sortedBy('ageDays'), dataIndex: 'ageDays' },
+  { title: 'Source', key: 'src', width: 190 },
+])
+const open = (id: string) => router.push({ path: `/exceptions/${id}`, query: runId.value ? { run: runId.value } : {} })
+const tableChange = (_p: unknown, _f: unknown, s: unknown) => onTable(_p, _f, s as { field?: string; order?: 'ascend' | 'descend' | null })
 </script>
 
 <template>
-  <div class="ph">
-    <div>
-      <div class="eyebrow">EXCEPTIONS · 27 OCT 2026</div>
-      <h1>Exceptions queue</h1>
-      <p>{{ open.length }} open exceptions. Counts and values are shown separately.</p>
-    </div>
-    <div class="acts">
-      <a-button @click="exportCsv">Export filtered queue</a-button>
-      <a-button type="primary" :disabled="!selected.length">Assign selected</a-button>
-    </div>
-  </div>
+  <PageHeader eyebrow="Exceptions" title="Exceptions queue"
+    :subtitle="run ? `Run ${run.id} · ${run.businessDate}` : undefined" />
 
-  <StatePlaceholder v-if="forbidden" state="forbidden" />
-  <template v-else>
-    <div class="card cards">
-      <div class="sum"><div class="lbl">OPEN</div><div class="num">{{ open.length }}</div><div class="vals">{{ byControl.length }} control areas</div></div>
-      <div v-for="x in sevSummary.filter((y) => y.count)" :key="x.s" class="sum">
-        <div class="lbl">{{ x.s }}</div>
-        <div class="num" :class="x.s === 'MEDIUM' ? 'warn' : x.s === 'LOW' ? '' : 'fail'">{{ x.count }}</div>
-        <div class="vals"><MoneyAmount v-for="v in x.values" :key="v.currency" :amount="v.amount" :currency="v.currency" /><span v-if="!x.values.length">no value</span></div>
+  <!-- summary (server aggregates only) -->
+  <StatePlaceholder v-if="summary.state.value === 'forbidden'" state="forbidden" />
+  <a-alert v-else-if="summary.state.value === 'error'" type="error" show-icon :message="summary.message.value" class="mb">
+    <template #action><a-button size="small" @click="summary.reload()">Retry</a-button></template>
+  </a-alert>
+  <template v-else-if="summary.data.value">
+    <div class="cards">
+      <div class="card kpi"><div class="k">Exceptions</div><div class="n">{{ summary.data.value.total }}</div>
+        <div class="sub">
+          <span v-for="c in summary.data.value.byCurrency" :key="c.currency" class="ccyline">{{ c.count }} · {{ formatMoney(c.absoluteValue.amount, c.absoluteValue.currency) }} absolute</span>
+          <span v-if="summary.data.value.withoutValue">{{ summary.data.value.withoutValue }} without value</span>
+        </div></div>
+      <div v-for="c in sevCards" :key="c.sev" class="card kpi">
+        <div class="k">{{ label(c.sev) }}</div><div class="n" :class="{ fail: c.sev === 'CRITICAL' && c.count }">{{ c.count }}</div>
+        <div class="sub"><span v-for="v in c.values" :key="v.currency" class="ccyline">{{ formatMoney(v.absoluteValue.amount, v.absoluteValue.currency) }} <i>({{ v.count }})</i></span><span v-if="!c.values.length">—</span></div>
       </div>
-      <div class="sum"><div class="lbl">OVERDUE</div><div class="num fail">{{ overdue.length }}</div><div class="vals">{{ overdue.map((e) => e.id).join(', ') || 'none' }}</div></div>
-      <div class="sum"><div class="lbl">UNASSIGNED</div><div class="num warn">{{ unassigned.length }}</div><div class="vals">no owner yet</div></div>
+      <div class="card kpi"><div class="k">Blocking</div><div class="n" :class="{ fail: summary.data.value.blocking }">{{ summary.data.value.blocking ?? 0 }}</div></div>
+      <div class="card kpi"><div class="k">Unassigned</div><div class="n">{{ summary.data.value.unassigned ?? 0 }}</div></div>
+      <div class="card kpi"><div class="k">Overdue</div><div class="n" :class="{ fail: summary.data.value.overdue }">{{ summary.data.value.overdue ?? 0 }}</div></div>
     </div>
-
-    <div class="analysis">
-      <div class="card">
-        <div class="ch"><span class="lbl">BY CONTROL AREA</span><span class="muted">Open exceptions</span></div>
-        <div v-for="x in byControl" :key="x.c" class="bar"><span class="bn">{{ controlLabel[x.c] }}</span>
-          <span class="track"><i :style="{ width: (x.n / Math.max(...byControl.map((y) => y.n))) * 100 + '%' }" /></span><b>{{ x.n }}</b></div>
-      </div>
-      <div class="card">
-        <div class="ch"><span class="lbl">REPEATED REASONS</span><span class="muted">Grouping never changes severity or owner</span></div>
-        <div v-for="[r, n] in reasons" :key="r" class="line"><span class="mono">{{ r }}</span><b>×{{ n }}</b></div>
-        <div v-if="!reasons.length" class="muted">No repeated reasons.</div>
-      </div>
+    <div class="two">
+      <section class="card pad">
+        <h3>By control area</h3>
+        <div v-for="x in controlRows" :key="x.c" class="bar"><span>{{ label(x.c) }}</span>
+          <span class="track"><i :style="{ width: (x.n / maxControl) * 100 + '%' }" /></span><b>{{ x.n }}</b></div>
+        <div v-if="!controlRows.length" class="hint">No exceptions.</div>
+      </section>
+      <section class="card pad">
+        <h3>Repeated reasons <span class="hint">top {{ reasons.length }} of {{ summary.data.value.byReason?.length ?? 0 }}</span></h3>
+        <div v-for="r in reasons" :key="r.reasonCode" class="bar"><span class="mono">{{ r.reasonCode }}</span><span /><b>{{ r.count }}</b></div>
+        <div v-if="!reasons.length" class="hint">No exceptions.</div>
+      </section>
     </div>
-
-    <div class="card filters">
-      <a-input-search v-model:value="f.search" placeholder="Search exceptions" allow-clear style="width: 220px" />
-      <a-select v-model:value="f.status" placeholder="Status" allow-clear style="width: 190px" :options="opt(statusLabel)" />
-      <a-select v-model:value="f.severity" placeholder="Severity" allow-clear style="width: 120px" :options="sevs.map((s) => ({ value: s, label: s }))" />
-      <a-select v-model:value="f.control" placeholder="Control" allow-clear style="width: 190px" :options="opt(controlLabel)" />
-      <a-select v-model:value="f.owner" placeholder="Owner" allow-clear style="width: 140px" :options="owners.map((o) => ({ value: o, label: o }))" />
-      <a-select v-model:value="f.currency" placeholder="Currency" allow-clear style="width: 120px" :options="['GBP', 'EUR', 'USD'].map((c) => ({ value: c, label: c }))" />
-    </div>
-
-    <StatePlaceholder v-if="error" state="error" :message="error"><template #action><a-button @click="load">Retry</a-button></template></StatePlaceholder>
-    <StatePlaceholder v-else-if="loading && !rows.length" state="loading" />
-    <StatePlaceholder v-else-if="!rows.length" state="empty" message="No exceptions match the filters." />
-    <div v-else class="card">
-      <a-table
-        :columns="columns" :data-source="rows" row-key="id" size="middle" :loading="loading" :custom-row="rowProps"
-        :row-selection="{ selectedRowKeys: selected, onChange: (k: (string | number)[]) => (selected = k as string[]) }"
-        :pagination="{ current: f.page, pageSize: PAGE_SIZE, total, showSizeChanger: false, onChange: (p: number) => (f.page = p) }"
-      >
-        <template #bodyCell="{ column, record }">
-          <StatusPill v-if="column.key === 'severity'" :status="sevStatus[record.severity as Severity]" :label="record.severity" />
-          <template v-else-if="column.key === 'exception'">
-            <div><b>{{ record.id }}</b> <span class="muted">{{ record.reasonCode }}</span><a-tag v-if="record.blocking" color="red" style="margin-left: 6px">Blocking</a-tag></div>
-            <div>{{ record.title }}</div>
-          </template>
-          <template v-else-if="column.key === 'control'">{{ controlLabel[record.control as ControlArea] }}</template>
-          <template v-else-if="column.key === 'value'">
-            <MoneyAmount v-if="record.value" :amount="record.value.amount" :currency="record.value.currency" /><span v-else class="muted">—</span>
-          </template>
-          <template v-else-if="column.key === 'owner'">
-            <div :class="{ muted: !record.owner }">{{ record.owner ?? 'Unassigned' }}</div>
-            <div :class="isOverdue(record) ? 'od' : 'muted'">{{ isOverdue(record) ? 'Overdue ' : '' }}{{ fmtDue(record.dueAt) }}</div>
-          </template>
-          <StatusPill v-else-if="column.key === 'status'" status="neutral" :label="statusLabel[record.status as ExceptionStatus]" />
-        </template>
-      </a-table>
-      <div class="muted foot">Showing {{ rows.length }} of {{ total }} · sorted by severity · bulk actions limited to assignment, tagging and evidence requests</div>
-    </div>
+    <a-alert v-if="ignored.length" type="info" show-icon class="mb"
+      :message="`The summary does not reflect the ${ignored.join(', ')} filter${ignored.length > 1 ? 's' : ''}; the table does.`" />
   </template>
+  <div v-else class="card pad mb"><a-spin /></div>
+
+  <!-- filter and saved views bar -->
+  <section class="card pad filters">
+    <div class="frow">
+      <a-select v-model:value="f.severity" mode="multiple" allow-clear placeholder="Severity" :options="opts(SEVERITIES)" :max-tag-count="1" class="w140" />
+      <a-select v-model:value="f.status" mode="multiple" allow-clear placeholder="Status" :options="opts(STATUSES)" :max-tag-count="1" class="w160" />
+      <a-select v-model:value="f.control" mode="multiple" allow-clear placeholder="Control" :options="opts(CONTROLS)" :max-tag-count="1" class="w160" />
+      <a-select v-model:value="f.currency" allow-clear placeholder="Currency" :options="(run ? ['EUR', 'GBP', 'JPY', 'USD'] : []).map((c) => ({ value: c, label: c }))" class="w100" />
+      <a-select v-model:value="f.ownerId" allow-clear placeholder="Owner" :options="ownerOptions" :disabled="f.unassigned" class="w150" />
+      <a-checkbox v-model:checked="f.unassigned">Unassigned</a-checkbox>
+      <a-checkbox v-model:checked="f.blocking">Blocking</a-checkbox>
+    </div>
+    <div class="frow">
+      <a-input v-model:value="f.valueMin" placeholder="Value min" class="w110" :status="filterErrors.valueMin ? 'error' : undefined" />
+      <a-input v-model:value="f.valueMax" placeholder="Value max" class="w110" :status="filterErrors.valueMax ? 'error' : undefined" />
+      <a-input-number v-model:value="f.ageDaysMin" :min="0" placeholder="Age ≥ days" class="w120" />
+      <a-input-number v-model:value="f.ageDaysMax" :min="0" placeholder="Age ≤ days" class="w120" />
+      <a-input-search v-model:value="f.search" placeholder="Search id, title, reason…" allow-clear class="w240" />
+      <a-button v-if="filtersActive" type="link" @click="resetFilters">Clear filters</a-button>
+      <span class="gap" />
+      <a-select :value="activeViewId" allow-clear placeholder="Saved views" :options="viewOptions" class="w180" @change="applyView" />
+      <a-button v-if="activeViewId" danger @click="removeView">Delete view</a-button>
+      <a-button :disabled="!!Object.keys(filterErrors).length" @click="saveOpen = true">Save view</a-button>
+    </div>
+    <div v-for="(m, k) in filterErrors" :key="k" class="ferr">{{ m }}</div>
+    <div v-if="views.error.value" class="ferr">Saved views unavailable: {{ describeError(views.error.value) }}</div>
+  </section>
+
+  <!-- bulk assign -->
+  <section v-if="canAssign && selected.length" class="card pad bulk">
+    <b>{{ selected.length }} selected</b>
+    <a-select v-model:value="bulkOwner" placeholder="Assign to…" :options="ownerOptions" class="w200" />
+    <a-input v-model:value="bulkNote" placeholder="Note (optional)" class="w240" maxlength="2000" />
+    <a-button type="primary" :disabled="!bulkOwner" :loading="bulk.pending.value" @click="confirmBulk">Assign selected</a-button>
+    <a-button type="link" @click="selected = []">Clear selection</a-button>
+    <a-alert v-if="bulkError" type="error" show-icon :message="bulkError" class="full" />
+  </section>
+  <a-alert v-if="bulkOutcome" :type="bulkOutcome.failed.length ? 'warning' : 'success'" show-icon closable class="mb" @close="bulkOutcome = null">
+    <template #message>{{ bulkOutcome.ok.length }} of {{ bulkOutcome.ok.length + bulkOutcome.failed.length }} assigned to {{ bulkOutcome.owner }}</template>
+    <template v-if="bulkOutcome.failed.length" #description>
+      <div>Not assigned (reload the row and retry):</div>
+      <ul class="fails"><li v-for="r in bulkOutcome.failed" :key="r.exceptionId"><span class="mono">{{ r.exceptionId }}</span> · {{ r.status }} · {{ problemText(r) }}</li></ul>
+    </template>
+  </a-alert>
+
+  <!-- table -->
+  <StatePlaceholder v-if="list.placeholder.value && list.state.value !== 'empty'" :state="list.placeholder.value" :message="list.error.value ? describeError(list.error.value) : undefined">
+    <template #action><a-button @click="list.reload()">Retry</a-button></template>
+  </StatePlaceholder>
+  <StatePlaceholder v-else-if="list.state.value === 'empty'" state="empty" :message="filtersActive ? 'No exceptions match these filters.' : 'No exceptions in this run.'">
+    <template #action><a-button v-if="filtersActive" @click="resetFilters">Clear filters</a-button></template>
+  </StatePlaceholder>
+  <section v-else class="card">
+    <a-table :columns="columns" :data-source="list.items.value" row-key="id" size="small" :pagination="false" :loading="list.loading.value"
+      :row-selection="canAssign ? { selectedRowKeys: selected, onChange: (k: (string | number)[]) => (selected = k as string[]) } : undefined"
+      :custom-row="(r: Item) => ({ onClick: (ev: MouseEvent) => { if (!(ev.target as HTMLElement).closest('a,.ant-checkbox-wrapper')) open(r.id) }, style: 'cursor:pointer' })"
+      @change="tableChange">
+      <template #bodyCell="{ column, record }">
+        <template v-if="column.key === 'sev'">
+          <div class="pills"><StatusPill :status="sevStatus[record.severity]" :label="label(record.severity)" />
+            <StatusPill status="neutral" :label="label(record.status)" /><StatusPill v-if="record.blocking" status="fail" label="Blocking" /></div>
+        </template>
+        <template v-else-if="column.key === 'ex'">
+          <router-link :to="{ path: `/exceptions/${record.id}`, query: runId ? { run: runId } : {} }" class="mono id">{{ record.id }}</router-link>
+          <div class="title">{{ record.title }}</div>
+          <div class="hint"><span class="mono">{{ record.reasonCode }}</span> · {{ label(record.control) }} · {{ record.businessDate }} · {{ record.legalEntityId }}</div>
+        </template>
+        <template v-else-if="column.key === 'value'"><span :class="['tab', { neg: record.value?.amount.startsWith('-') }]">{{ money(record.value) }}</span></template>
+        <template v-else-if="column.key === 'owner'">{{ record.owner?.name ?? 'Unassigned' }}</template>
+        <template v-else-if="column.key === 'due'">{{ when(record.dueAt) }}</template>
+        <template v-else-if="column.key === 'age'">{{ record.ageDays ?? '—' }}d</template>
+        <template v-else-if="column.key === 'src'"><span class="mono small">{{ record.sourceFile ?? '—' }}<template v-if="record.sourceRowId"> · {{ record.sourceRowId }}</template></span></template>
+      </template>
+    </a-table>
+    <div class="pager">
+      <span class="hint">{{ list.items.value.length }} shown<template v-if="list.total.value != null"> of {{ list.total.value }}</template> · page {{ list.pageIndex.value + 1 }}</span>
+      <a-button :disabled="!list.hasPrev.value || list.loading.value" @click="list.prev()">Previous</a-button>
+      <a-button :disabled="!list.hasNext.value || list.loading.value" @click="list.next()">Next</a-button>
+    </div>
+  </section>
+
+  <a-modal v-model:open="saveOpen" title="Save current filters as a view" ok-text="Save" :confirm-loading="saveCmd.pending.value" :ok-button-props="{ disabled: !viewName.trim() }" @ok="saveView">
+    <a-input v-model:value="viewName" placeholder="View name" maxlength="80" />
+    <a-checkbox v-model:checked="viewShared" class="mt">Share with my team</a-checkbox>
+    <a-alert v-if="saveError" type="error" show-icon :message="saveError" class="mt" />
+  </a-modal>
 </template>
 
 <style scoped>
-.ph { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
-.eyebrow { font-size: 10px; font-weight: 600; letter-spacing: .08em; color: var(--ink-3); }
-h1 { margin: 4px 0; font-size: 28px; font-weight: 600; line-height: 1.3; }
-.ph p { margin: 0; color: var(--ink-2); font-size: 13px; }
-.acts { display: flex; gap: 8px; }
-.cards { display: flex; margin-bottom: 16px; }
-.sum { flex: 1; padding: 14px 16px; border-right: 1px solid var(--border); }
-.sum:last-child { border-right: 0; }
-.lbl { font-size: 10px; font-weight: 600; letter-spacing: .08em; color: var(--ink-3); margin-bottom: 4px; }
-.num { font-size: 28px; font-weight: 600; line-height: 1.3; }
-.num.fail { color: var(--fail); } .num.warn { color: var(--warn); }
-.vals { display: flex; flex-direction: column; font-size: 11px; color: var(--ink-3); }
-.analysis { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; align-items: start; }
-.analysis .card { padding: 0 16px 12px; }
-.ch { display: flex; gap: 12px; align-items: center; height: 44px; }
-.ch .lbl { margin: 0; }
-.bar { display: flex; align-items: center; gap: 12px; padding: 4px 0; font-size: 12px; }
-.bn { width: 150px; }
-.track { flex: 1; height: 8px; background: var(--surface-sunk); border-radius: 4px; overflow: hidden; }
-.track i { display: block; height: 100%; background: var(--ink); border-radius: 4px; }
-.line { display: flex; justify-content: space-between; padding: 5px 0; font-size: 12px; border-top: 1px solid var(--border); }
-.filters { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 16px; margin-bottom: 12px; }
-.muted { color: var(--ink-3); font-size: 12px; }
-.od { color: var(--fail); font-size: 12px; font-weight: 500; }
-.foot { padding: 12px 16px; background: var(--surface-sunk); border-radius: 0 0 5px 5px; }
+.mb { margin-bottom: 16px; }
+.mt { margin-top: 12px; }
+.pad { padding: 16px; }
+.cards { display: grid; grid-template-columns: 1.4fr repeat(4, 1fr) repeat(3, .8fr); gap: 12px; margin-bottom: 16px; }
+.kpi { padding: 12px 14px; }
+.k { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); }
+.n { font-size: 26px; font-weight: 600; margin: 2px 0; }
+.n.fail { color: var(--fail); }
+.sub { font-size: 11px; color: var(--ink-3); display: flex; flex-direction: column; gap: 1px; }
+.sub i { font-style: normal; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+h3 { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); margin: 0 0 10px; }
+.bar { display: grid; grid-template-columns: 170px 1fr 36px; gap: 10px; align-items: center; font-size: 12px; margin: 4px 0; }
+.bar b { text-align: right; }
+.track { background: var(--surface-sunk); height: 8px; border-radius: 4px; overflow: hidden; }
+.track i { display: block; height: 100%; background: var(--accent); }
+.filters { margin-bottom: 16px; display: flex; flex-direction: column; gap: 10px; }
+.frow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.gap { flex: 1; }
+.ferr { color: var(--fail); font-size: 12px; }
+.w100 { width: 100px } .w110 { width: 110px } .w120 { width: 120px } .w140 { width: 140px } .w150 { width: 150px }
+.w160 { width: 160px } .w180 { width: 180px } .w200 { width: 200px } .w240 { width: 240px }
+.bulk { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.full { width: 100%; }
+.fails { margin: 4px 0 0; padding-left: 18px; }
+.pills { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.id { font-weight: 600; font-size: 12px; color: var(--accent); }
+.title { font-size: 13px; margin: 2px 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.hint { color: var(--ink-3); font-size: 12px; }
+.small { font-size: 11px; }
+.tab { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.neg { color: var(--fail); }
+.pager { display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding: 12px 16px; }
+.pager .hint { margin-right: auto; }
 </style>
