@@ -2,7 +2,13 @@
 
 ## Status
 
-This directory is reserved for the future Proofly user application. It currently contains no working implementation.
+Vue 3 + TypeScript + Ant Design Vue + Vite scaffold ([ADR 0003](../../docs/architecture/decisions/0003-web-technology-stack.md)). It currently contains the application shell and navigation for the seven oMVP sections; each screen is a placeholder.
+
+```bash
+npm install
+npm run dev     # development server
+npm run build   # type-check and production build
+```
 
 ## Responsibility
 
@@ -24,7 +30,3 @@ The initial application should cover:
 - User workflows: [`docs/product/workflows/`](../../docs/product/workflows/README.md)
 - Visual design source: [`proofly.pen`](../../proofly.pen)
 - API and backend boundaries: [`docs/architecture/overview.md`](../../docs/architecture/overview.md)
-
-## Implementation boundary
-
-Do not initialise a framework until the first implementation technology decision is recorded. When implementation begins, this directory should contain the browser application, its component tests and its application-specific assets. Shared UI primitives may later move to `packages/ui/` when they are genuinely reused.
