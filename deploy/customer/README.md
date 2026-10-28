@@ -25,7 +25,8 @@ Run `install-windows-service.ps1` elevated, set `ConnectionStrings__Proofly` in 
 Environment variables override JSON (`__` replaces `:`). The process refuses to start (exit with a list of all problems) when:
 - `ConnectionStrings:Proofly` is missing;
 - `Auth:Mode=Local` in Production (Local is evaluation only);
-- `Evidence:Directory` is missing in Production, or configured but absent on disk.
+- `Evidence:Directory` is missing in Production, or configured but absent on disk;
+- in Production, development defaults are present: a database named `*_dev` or `*_test`, a loopback database host without any credential (trust authentication), `Auth:Local:SigningKey` or `Auth:Local:LogTokens`, or `Cors:AllowedOrigins` containing `*` or a localhost origin (see `docs/security/security-acceptance.md`).
 
 | Key | Meaning | Default |
 |---|---|---|

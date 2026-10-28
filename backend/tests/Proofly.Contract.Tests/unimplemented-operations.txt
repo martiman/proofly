@@ -1,0 +1,4 @@
+# Contract operations (operationId) that are declared in docs/integrations/api/openapi.yaml but have no route yet.
+# ContractDriftTests keeps this list in sync: adding an operation to the contract without a route or an entry here fails,
+# and so does implementing an operation that is still listed here (delete the line when you implement it).
+getLineage

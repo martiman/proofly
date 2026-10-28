@@ -28,11 +28,12 @@ public sealed class RunReadRepository(NpgsqlDataSource dataSource, TimeProvider 
         SELECT r.id, r.legal_entity_id, r.business_date, r.run_version, r.ruleset_version, r.state, r.sign_off_state,
                r.started_at, r.last_evidence_arrival_at, r.version,
                (SELECT s.id FROM runs s WHERE s.supersedes_run_id = r.id ORDER BY s.run_version LIMIT 1),
-               r.supersedes_run_id, so.prepared_by_user_id, pu.name, so.signed_by_user_id, su.name, so.signed_at
+               r.supersedes_run_id, so.prepared_by_user_id, pu.name, so.signed_by_user_id, su.name, so.signed_at, so.required_approver_user_id, au.name
         FROM runs r
         LEFT JOIN LATERAL (SELECT x.* FROM run_signoffs x WHERE x.run_id = r.id ORDER BY x.created_at DESC, x.id DESC LIMIT 1) so ON true
         LEFT JOIN users pu ON pu.id = so.prepared_by_user_id
         LEFT JOIN users su ON su.id = so.signed_by_user_id
+        LEFT JOIN users au ON au.id = so.required_approver_user_id
         """;
 
     private static void Scope(NpgsqlCommand cmd, EntityScope s)
@@ -118,7 +119,7 @@ public sealed class RunReadRepository(NpgsqlDataSource dataSource, TimeProvider 
                 r.GetFieldValue<DateTimeOffset>(7), r.IsDBNull(8) ? null : r.GetFieldValue<DateTimeOffset>(8), r.GetInt32(9),
                 r.IsDBNull(10) ? null : r.GetString(10), r.IsDBNull(11) ? null : r.GetString(11),
                 r.IsDBNull(12) ? null : new UserRefRow(r.GetString(12), r.GetString(13)),
-                null, // required approver is a role until a decision names the user; the schema holds no named approver before sign-off
+                r.IsDBNull(17) ? null : new UserRefRow(r.GetString(17), r.GetString(18)), // named at submission; null while the policy only names the role
                 r.IsDBNull(14) ? null : new UserRefRow(r.GetString(14), r.GetString(15)),
                 r.IsDBNull(16) ? null : r.GetFieldValue<DateTimeOffset>(16)));
         }

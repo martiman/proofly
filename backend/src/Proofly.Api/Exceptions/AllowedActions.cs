@@ -32,6 +32,8 @@ public static class AllowedActions
                 result.Add("APPROVE_RESOLUTION");
                 result.Add("REJECT_RESOLUTION");
             }
+            // A new proposal replaces (invalidates) the pending one.
+            if (c.Can(Permission.ExceptionPropose)) { result.Add("PROPOSE_RESOLUTION"); }
         }
         else if (c.Can(Permission.ExceptionPropose))
         {

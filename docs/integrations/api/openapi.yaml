@@ -1809,6 +1809,7 @@ components:
         evidencePackId: {type: [string, 'null']}
         approval: {oneOf: [{$ref: '#/components/schemas/Approval'}, {type: 'null'}]}
         history: {type: array, items: {$ref: '#/components/schemas/TimelineEvent'}}
+        allowedActions: {type: array, items: {type: string, enum: [SUBMIT, RETURN, APPROVE]}, description: "Server-computed for the caller from state, blockers, permission, scope and separation of duties; canSignOff is true iff APPROVE is listed"}
     AuditEvent:
       type: object
       required: [id, at, actor, type, runId, subjectKind, subjectId, summary, ruleVersion, hash]

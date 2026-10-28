@@ -69,6 +69,7 @@ public sealed class ExceptionCommandRepository(NpgsqlDataSource db, IAuditWriter
         if (e is null) { return new CommandOutcome(CommandStatus.NotFound); }
         if (e.Version != expectedVersion) { return new CommandOutcome(CommandStatus.Stale, "The exception changed since it was read; re-read it and retry."); }
         if (e.RunState == "SUPERSEDED") { return new CommandOutcome(CommandStatus.RunSuperseded, "The run is superseded; its exceptions are read-only."); }
+        if (e.RunState == "SIGNED_OFF") { return new CommandOutcome(CommandStatus.InvalidState, "The run is signed off and immutable; reprocess the run to change its exceptions."); }
         if (Terminal.Contains(e.Status)) { return new CommandOutcome(CommandStatus.InvalidState, $"The exception is {e.Status} and closed; reopen it first."); }
         if (!allowPendingApproval && e.Status == "PENDING_APPROVAL") { return new CommandOutcome(CommandStatus.InvalidState, "A resolution proposal is pending approval; decide it first."); }
         return null;

@@ -46,3 +46,14 @@ Decision: small in-house outbox on PostgreSQL (`jobs` table, migration `0017_job
 - Fields the server cannot know are `null` (nullable in the contract), never a made-up value.
 - Ingestion stores the 1-based file row of every accepted record in `row_number` (`RecordTables.InsertAsync`).
 - The controls orchestration (later issue) must write `account_control_results`, `exception_rule_traces`, `exception_links`, `match_group_exceptions` and the match group `tolerance`/`rationale`/`cardinality`; the read side already prefers them.
+
+## Exception resolutions and the sign-off gate (issue #41)
+- `proposeResolution` / `decideResolution` / `reopenException` live in `Proofly.Data/Exceptions/Commands/ResolutionCommandRepository.cs` (one transaction each, audit event inside it).
+- A proposal creates `resolution_proposals` (previous working status kept in `previous_status`, migration `0041`) and an `approvals` row (`EXCEPTION_RESOLUTION`, required role `APPROVER`, `proposal_version` = n-th proposal of the exception). The exception becomes `PENDING_APPROVAL`. Proposing again while pending invalidates the earlier proposal and approval.
+- The approver must differ from the proposer for every exception, blocking or not (ADR 0005): `403 separation-of-duties`, plus the DB CHECK `approver <> proposer`. A stale `proposalVersion` or a proposal that is no longer PENDING is `409 invalid-state`.
+- Approve sets the exception to the proposed kind; reject restores the previous working status. Reopen (terminal -> `OPEN`, non-superseded run only) clears the current resolution fields; proposals, approvals and audit history remain. The finding itself (control, reason code, severity, value, blocking, rule trace) is never changed.
+- Sign-off rule: `IResolutionCommandRepository.HasUnresolvedBlockingExceptionsAsync(runId)` is true when any `blocking` exception of the run is not `RESOLVED`, `ACCEPTED_DIFFERENCE` or `FALSE_POSITIVE` (open, in investigation, waiting for data and pending approval all count as unresolved). Non-blocking exceptions never block.
+
+## Security acceptance (issue #52)
+
+`tests/Proofly.Security.Tests` holds the security acceptance tests (secrets, evidence audit, sessions, dev/prod isolation, authorization matrix, legal-entity isolation, injection, CORS, headers). Matrices are generated from the OpenAPI contract and the role bundles; results, defects and residual risks are in `docs/security/security-acceptance.md`, licences in `deploy/customer/THIRD-PARTY.md`. The project runs its classes sequentially (shared PostgreSQL connection limit).

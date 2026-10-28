@@ -59,11 +59,12 @@ public static class PlatformModule
     }
 
     /// <summary>
-    /// Pipeline: request id -> problem handler -> routing -> CORS -> access (401/403/428) -> request validation (422)
+    /// Pipeline: security headers -> request id -> problem handler -> routing -> CORS -> access (401/403/428) -> request validation (422)
     /// -> idempotency -> response validation -> endpoint. Called first from MapModules.
     /// </summary>
     public static WebApplication UsePlatform(this WebApplication app)
     {
+        app.UseMiddleware<SecurityHeadersMiddleware>();
         app.UseMiddleware<RequestIdMiddleware>();
         app.UseMiddleware<ProblemExceptionMiddleware>();
         app.UseRouting();

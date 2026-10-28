@@ -291,7 +291,7 @@ public class ExceptionsApiTests(ExceptionsFixture f) : IClassFixture<ExceptionsF
             """);
         var other = await Json(await approver.GetAsync("/api/v1/exceptions/E-002"));
         Assert.Contains("APPROVE_RESOLUTION", other.GetProperty("allowedActions").EnumerateArray().Select(x => x.GetString()));
-        Assert.DoesNotContain("PROPOSE_RESOLUTION", other.GetProperty("allowedActions").EnumerateArray().Select(x => x.GetString()));
+        Assert.Contains("PROPOSE_RESOLUTION", other.GetProperty("allowedActions").EnumerateArray().Select(x => x.GetString())); // a new proposal replaces the pending one
         Assert.Equal("A-2", other.GetProperty("pendingApproval").GetProperty("id").GetString());
         Assert.True(other.GetProperty("pendingApproval").GetProperty("canDecide").GetBoolean());
         Assert.Equal(["PENDING_APPROVAL"], other.GetProperty("states").EnumerateArray().Select(x => x.GetString()!).ToArray());

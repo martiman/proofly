@@ -12,6 +12,7 @@ public static class ObservabilityModule
     {
         StartupSelfCheck.ThrowIfInvalid(builder.Configuration, builder.Environment.IsProduction());
 
+        builder.WebHost.ConfigureKestrel(o => o.AddServerHeader = false); // no server software banner
         builder.Host.UseSystemd();
         builder.Host.UseWindowsService();
         builder.Host.UseSerilog((ctx, lc) => lc

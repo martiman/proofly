@@ -1,3 +1,5 @@
+using Npgsql;
+
 namespace Proofly.Api.Observability;
 
 /// <summary>
@@ -17,6 +19,8 @@ public static class StartupSelfCheck
         {
             errors.Add("ConnectionStrings:Proofly is not configured.");
         }
+
+        if (isProduction) { ProductionIsolation(configuration, errors); }
 
         var mode = configuration["Auth:Mode"];
         if (isProduction && string.Equals(mode, "Local", StringComparison.OrdinalIgnoreCase))
@@ -40,6 +44,49 @@ public static class StartupSelfCheck
             errors.Add("Observability:Metrics:Enabled must be true or false.");
         }
         return errors;
+    }
+
+    /// <summary>
+    /// Development and production stores and credentials are isolated (docs/security/data-handling.md): Production refuses the
+    /// development database names, a loopback database without any credential (the trust-auth development setup), leftover local
+    /// signing key / token logging, and wildcard or development web origins. Messages never echo configuration values.
+    /// </summary>
+    private static void ProductionIsolation(IConfiguration configuration, List<string> errors)
+    {
+        if (!string.IsNullOrWhiteSpace(configuration.GetConnectionString("Proofly")))
+        {
+            try
+            {
+                var b = new NpgsqlConnectionStringBuilder(configuration.GetConnectionString("Proofly"));
+                var db = b.Database ?? "";
+                if (db.EndsWith("_dev", StringComparison.OrdinalIgnoreCase) || db.EndsWith("_test", StringComparison.OrdinalIgnoreCase))
+                {
+                    errors.Add("ConnectionStrings:Proofly names a development or test database; Production must use its own isolated store.");
+                }
+                var loopback = (b.Host ?? "").Split(',').Select(h => h.Trim()).Any(h => h.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+                    || (System.Net.IPAddress.TryParse(h, out var ip) && System.Net.IPAddress.IsLoopback(ip)));
+                var credential = !string.IsNullOrEmpty(b.Password) || !string.IsNullOrEmpty(b.Passfile) || !string.IsNullOrEmpty(b.SslCertificate);
+                if (loopback && !credential)
+                {
+                    errors.Add("ConnectionStrings:Proofly is a loopback database without any credential (development trust authentication); Production requires a credential.");
+                }
+            }
+            catch (Exception ex) when (ex is ArgumentException or FormatException or NotSupportedException)
+            {
+                errors.Add("ConnectionStrings:Proofly is not a valid Npgsql connection string.");
+            }
+        }
+
+        if (!string.IsNullOrEmpty(configuration["Auth:Local:SigningKey"]) || bool.TryParse(configuration["Auth:Local:LogTokens"], out var log) && log)
+        {
+            errors.Add("Auth:Local settings (signing key, token logging) are development-only and must not be configured in Production.");
+        }
+
+        var origins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+        if (origins.Any(o => o.Trim() == "*" || Uri.TryCreate(o, UriKind.Absolute, out var u) && (u.IsLoopback || u.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase))))
+        {
+            errors.Add("Cors:AllowedOrigins contains a wildcard or a development (localhost) origin; list the production web origin only.");
+        }
     }
 
     public static void ThrowIfInvalid(IConfiguration configuration, bool isProduction)
