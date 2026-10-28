@@ -1,0 +1,30 @@
+finding_id,source_file,source_row_id,control,reason_code,severity,description,expected_effect
+F-001,transfer_instructions.csv,SRC-T-009,data_completeness,REQUIRED_FIELD_MISSING,HIGH,client_account_id is empty,Reject record and qualify transfer population
+F-002,transfer_instructions.csv,SRC-T-010,data_completeness,DUPLICATE_RECORD,HIGH,instruction_id TRF-004 is duplicated,Reject or quarantine duplicate record
+F-003,direct_debit_events.csv,SRC-D-007,data_completeness,REQUIRED_FIELD_MISSING,HIGH,mandate_reference is empty,Reject record
+F-004,direct_debit_events.csv,SRC-D-008,data_completeness,REQUIRED_FIELD_MISSING,HIGH,mandate_reference is empty,Reject record
+F-005,direct_debit_events.csv,SRC-D-009,data_completeness,INVALID_VALUE,HIGH,currency EURO is not a valid ISO 4217 code,Reject record
+F-006,direct_debit_events.csv,SRC-D-010,transaction_lifecycle,MISSING_INSTRUCTION,HIGH,return references unknown instruction DD-999,Create lifecycle exception
+F-007,internal_ledger_entries.csv,LED-004,independent_ledger,INVALID_SIGN,HIGH,outgoing transfer TRF-004 is posted as CREDIT,Create balance difference
+F-008,internal_ledger_entries.csv,LED-005,transaction_lifecycle,INVALID_STATE,HIGH,rejected transfer TRF-005 has a posted debit,Create lifecycle exception
+F-009,client_account_balances.csv,CA-004,independent_ledger,BALANCE_DIFFERENCE,HIGH,recorded balance reflects wrong-sign posting,Create account exception
+F-010,client_account_balances.csv,CA-005,independent_ledger,BALANCE_DIFFERENCE,HIGH,recorded balance includes rejected transfer,Create account exception
+F-011,banking_transactions.csv,BTX-009,matching,VALUE_MISMATCH,MEDIUM,DD-003 bank amount is 205 EUR versus 210 EUR,Leave records unmatched
+F-012,banking_transactions.csv,BTX-010,matching,VALUE_MISMATCH,MEDIUM,TRF-008 bank amount is 610 EUR versus 600 EUR,Leave records unmatched
+F-013,banking_transactions.csv,BTX-008,transaction_lifecycle,RETURN_NOT_POSTED,HIGH,DD-002 return has no reversing ledger entry,Create lifecycle exception
+F-014,delivery_manifest.csv,banking_transactions,data_completeness,CONTROL_COUNT_MISMATCH,HIGH,manifest declares 9 records but file contains 10,Reject or qualify banking delivery
+F-015,safeguarding_balances.csv,SRC-S-006,data_completeness,INVALID_VALUE,HIGH,negative safeguarding balance requires explicit policy,Exclude until resolved
+F-016,safeguarding_balances.csv,SRC-S-007,safeguarding,EXTERNAL_BALANCE_STALE,HIGH,balance is dated 2026-10-25,Exclude or qualify under freshness policy
+F-017,safeguarding_balances.csv,SRC-S-009,data_completeness,REQUIRED_FIELD_MISSING,HIGH,evidence_reference is empty,Exclude balance
+F-018,safeguarding_balances.csv,SRC-S-010,data_completeness,DUPLICATE_RECORD,HIGH,duplicate account and balance timestamp for SG-EUR-001,Quarantine conflicting snapshot
+F-019,safeguarding_balances.csv,MULTIPLE,safeguarding,SHORTFALL,CRITICAL,valid unique EUR coverage is below client obligation,Create blocking safeguarding exception
+F-020,card_settlements.csv,SRC-C-003,data_completeness,CONTROL_VALUE_MISMATCH,HIGH,net amount 1170 differs from gross minus fees plus adjustments of 1176,Reject record
+F-021,card_settlements.csv,SRC-C-008,data_completeness,REQUIRED_FIELD_MISSING,HIGH,destination_account is empty,Reject record
+F-022,card_settlements.csv,SRC-C-009,data_completeness,INVALID_VALUE,HIGH,currency EURO is not a valid ISO 4217 code,Reject record
+F-023,card_settlements.csv,SRC-C-010,data_completeness,DUPLICATE_RECORD,HIGH,settlement_id CARD-009 is duplicated,Reject or quarantine duplicate record
+F-024,card_transactions.csv,SRC-K-004,matching,VALUE_MISMATCH,MEDIUM,CTX-002 presentment is 65 EUR versus 60 EUR authorised,Create card matching exception
+F-025,card_transactions.csv,SRC-K-007,transaction_lifecycle,MISSING_AUTHORIZATION,HIGH,CTX-004 presentment has no required authorisation event,Create card lifecycle exception
+F-026,card_transactions.csv,SRC-K-008,transaction_lifecycle,MISSING_ORIGINAL_TRANSACTION,HIGH,refund references unknown card transaction CTX-999,Create card lifecycle exception
+F-027,card_transactions.csv,SRC-K-009,data_completeness,INVALID_VALUE,HIGH,currency EURO is not a valid ISO 4217 code,Reject record
+F-028,card_transactions.csv,SRC-K-010,data_completeness,DUPLICATE_RECORD,HIGH,card_event_id CEV-009 is duplicated,Reject or quarantine duplicate record
+F-029,card_transactions.csv,SRC-K-010,transaction_lifecycle,MISSING_SETTLEMENT,HIGH,presentment references unknown settlement CARD-999,Create card lifecycle exception
