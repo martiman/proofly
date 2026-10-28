@@ -50,7 +50,7 @@ internal static class RunsMapping
             a.PreviousRecordCount, a.ChangeFromPrevious)).ToList(),
         c.AttentionQueue.Select(e => new ControlRoomExceptionDto(e.Id, e.RunId, e.Title, e.Control, e.ReasonCode, e.Severity, e.Status,
             e.Value is null ? null : Money(e.Value), e.LegalEntityId, e.BusinessDate, User(e.Owner), e.CreatedAt, e.AgeDays, e.DueAt, e.Blocking,
-            e.SourceFile ?? "", e.SourceRowId ?? "", ETags.ForVersion(e.RowVersion))).ToList(),
+            e.SourceFile, e.SourceRowId, ETags.ForVersion(e.RowVersion))).ToList(),
         c.Safeguarding.Select(s => new SafeguardingCurrencyPositionDto(s.Currency, Money(s.Obligation), Money(s.EligibleBalance), Money(s.ApprovedAdjustments),
             Money(s.Result), s.State, s.Qualifications, s.PreviousResult is null ? null : Money(s.PreviousResult), s.ExceptionIds)).ToList());
 }
@@ -82,7 +82,7 @@ internal sealed class RunsEndpoints(IRunReadRepository repo) : IEndpointModule
             var rows = await repo.ListRunsAsync(RunsMapping.ScopeFor(caller, Permission.RunView), new RunListFilter(legalEntityId, date, includeSuperseded ?? false),
                 page.Limit, page.Decode<RunCursor>(), page.IncludeTotal, ct);
             var paged = Paging.Create(rows.Items, page, r => new RunCursor(r.BusinessDate, r.LegalEntityId, r.Version, r.Id), rows.Total);
-            return Results.Ok(new RunPageDto(paged.Items.Select(RunsMapping.Run).ToList(), new RunPageInfoDto(paged.Page.NextCursor, paged.Page.HasMore, paged.Page.Total)));
+            return Results.Ok(new RunPageDto(paged.Items.Select(RunsMapping.Run).ToList(), paged.Page));
         });
 
         g.MapGet("/runs/{runId}", async (HttpContext ctx, string runId, CancellationToken ct) =>

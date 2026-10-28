@@ -145,6 +145,21 @@ public class SafeguardingApiTests(SafeguardingApiFixture f) : IClassFixture<Safe
     }
 
     [Fact]
+    public async Task Adjustments_are_cursor_paged_with_an_optional_total()
+    {
+        var c = f.Factory.As(f.ApproverToken);
+        var first = await Json(await c.GetAsync("/api/v1/runs/R-1/safeguarding/adjustments?limit=2&includeTotal=true"));
+        Assert.Equal(["ADJ-1", "ADJ-2"], first.GetProperty("items").EnumerateArray().Select(a => a.GetProperty("id").GetString()!).ToArray());
+        Assert.True(first.GetProperty("page").GetProperty("hasMore").GetBoolean());
+        Assert.Equal(3, first.GetProperty("page").GetProperty("total").GetInt32());
+        var cursor = first.GetProperty("page").GetProperty("nextCursor").GetString();
+        var second = await Json(await c.GetAsync("/api/v1/runs/R-1/safeguarding/adjustments?limit=2&cursor=" + Uri.EscapeDataString(cursor!)));
+        Assert.Equal(["ADJ-3"], second.GetProperty("items").EnumerateArray().Select(a => a.GetProperty("id").GetString()!).ToArray());
+        Assert.False(second.GetProperty("page").GetProperty("hasMore").GetBoolean());
+        Assert.False(second.GetProperty("page").TryGetProperty("total", out _)); // omitted, never null
+    }
+
+    [Fact]
     public async Task Invalid_status_is_rejected()
     {
         var res = await f.Factory.As(f.ViewerToken).GetAsync("/api/v1/runs/R-1/safeguarding/adjustments?status=NOPE");

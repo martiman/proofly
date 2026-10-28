@@ -93,6 +93,9 @@ internal static class ExceptionsSeed
         INSERT INTO exception_evidence_refs (exception_id, kind, ref) VALUES ('E-001','BANK_TRANSACTION','bt-1'),('E-001','ACCOUNT','acc-9');
         INSERT INTO exception_timeline (exception_id, kind, actor_type, actor_id, summary, occurred_at)
           VALUES ('E-001','ASSIGNMENT','USER','u1','Assigned to Ada','2026-10-27T09:00Z'),('E-001','SYSTEM','SYSTEM',NULL,'Raised','2026-10-27T08:00Z');
+        INSERT INTO exception_rule_traces (exception_id, rule_id, rule_version, tolerance, expected_effect, description, calculation) VALUES
+          ('E-004','NO_BANK_EVIDENCE','matching/2','0.01 GBP','Transfer is not backed by a bank booking','No bank booking within the window',
+           '{"inputs":[{"name":"transferAmount","value":"30.25 GBP"},{"name":"bankAmount","value":"none"}],"text":"bank - transfer","result":"-30.25 GBP"}');
         INSERT INTO saved_views (id, user_id, scope, name, filters, shared) VALUES ('V-1','u1','exceptions','blocking','{"blocking":true,"severity":["CRITICAL"]}',true);
         """;
 }
@@ -215,9 +218,38 @@ public class ExceptionsApiTests(ExceptionsFixture f) : IClassFixture<ExceptionsF
         Assert.Equal("GBP", cur["GBP"].GetProperty("absoluteValue").GetProperty("currency").GetString());
         Assert.Equal(3500.75m, decimal.Parse(cur["EUR"].GetProperty("absoluteValue").GetProperty("amount").GetString()!, System.Globalization.CultureInfo.InvariantCulture));
 
+        var reasons = s.GetProperty("byReason").EnumerateArray().Select(r => (r.GetProperty("reasonCode").GetString(), r.GetProperty("count").GetInt32())).ToArray();
+        Assert.Equal([("NO_BANK_EVIDENCE", 4), ("LATE_DELIVERY", 1), ("LEDGER_GAP", 1), ("SETTLEMENT_SHORT", 1)], reasons);
+        var sevCur = s.GetProperty("bySeverityCurrency").EnumerateArray()
+            .Select(x => $"{x.GetProperty("severity").GetString()}/{x.GetProperty("currency").GetString()}/{x.GetProperty("count").GetInt32()}/{x.GetProperty("absoluteValue").GetProperty("amount").GetString()}").ToArray();
+        Assert.Equal(["CRITICAL/EUR/1/1500.750000", "CRITICAL/GBP/1/100.500000", "HIGH/EUR/1/2000.000000", "HIGH/JPY/1/50000.000000", "MEDIUM/GBP/1/30.250000", "LOW/GBP/1/10.000000"], sevCur);
+        // enum-keyed maps keep their wire names (no camel-casing of dictionary keys)
+        Assert.Equal(["CRITICAL", "HIGH", "MEDIUM", "LOW"], s.GetProperty("bySeverity").EnumerateObject().Select(p => p.Name).ToArray());
+        Assert.Contains("independent_ledger", s.GetProperty("byControl").EnumerateObject().Select(p => p.Name));
+
         var filtered = await Json(await Viewer.GetAsync(Base + "/summary?currency=GBP&status=OPEN"));
         Assert.Equal(2, filtered.GetProperty("total").GetInt32());
         Assert.Single(filtered.GetProperty("byCurrency").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task Detail_reads_the_recorded_rule_trace_and_never_invents_a_tolerance()
+    {
+        var recorded = await Json(await Viewer.GetAsync("/api/v1/exceptions/E-004"));
+        var trace = recorded.GetProperty("trace");
+        Assert.Equal(("NO_BANK_EVIDENCE", "matching/2", "0.01 GBP", "bank - transfer", "-30.25 GBP"),
+            (trace.GetProperty("ruleId").GetString(), trace.GetProperty("ruleVersion").GetString(), trace.GetProperty("tolerance").GetString(),
+             trace.GetProperty("calculation").GetString(), trace.GetProperty("result").GetString()));
+        Assert.Equal(["transferAmount", "bankAmount"], trace.GetProperty("inputs").EnumerateArray().Select(i => i.GetProperty("name").GetString()!).ToArray());
+        Assert.Equal("Transfer is not backed by a bank booking", recorded.GetProperty("expectedEffect").GetString());
+        Assert.Equal("No bank booking within the window", recorded.GetProperty("description").GetString());
+
+        var derived = await Json(await Viewer.GetAsync("/api/v1/exceptions/E-001"));
+        Assert.Equal(JsonValueKind.Null, derived.GetProperty("trace").GetProperty("tolerance").ValueKind); // not 'not recorded'
+        Assert.Equal("rs-1", derived.GetProperty("trace").GetProperty("ruleVersion").GetString());
+        // SYSTEM timeline actors carry no id
+        var system = derived.GetProperty("timeline").EnumerateArray().Single(t => t.GetProperty("type").GetString() == "SYSTEM").GetProperty("actor");
+        Assert.Equal(JsonValueKind.Null, system.GetProperty("id").ValueKind);
     }
 
     [Fact]
@@ -283,6 +315,6 @@ public class ExceptionsApiTests(ExceptionsFixture f) : IClassFixture<ExceptionsF
         await f.Exec("UPDATE exceptions SET title = 'Edited' WHERE id = 'E-005'");
         var res = await Viewer.GetAsync("/api/v1/exceptions/E-005");
         Assert.Equal("\"v2\"", res.Headers.ETag!.ToString());
-        Assert.Equal("", (await Json(res)).GetProperty("sourceFile").GetString()); // null in DB; contract has no null here
+        Assert.Equal(JsonValueKind.Null, (await Json(res)).GetProperty("sourceFile").ValueKind); // null in the database stays null on the wire
     }
 }

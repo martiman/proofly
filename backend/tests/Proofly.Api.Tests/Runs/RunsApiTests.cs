@@ -62,7 +62,7 @@ public sealed class RunsFixture : IAsyncLifetime
     }
 
     private const string Seed = """
-        INSERT INTO legal_entities (id, name, base_currency) VALUES ('LE-1','Alpha Ltd','GBP'), ('LE-2','Beta GmbH','EUR');
+        INSERT INTO legal_entities (id, name, base_currency, currencies) VALUES ('LE-1','Alpha Ltd','GBP','{EUR,GBP}'), ('LE-2','Beta GmbH','EUR','{EUR}');
         INSERT INTO users (id, name, email) VALUES ('u1','Una','u1@x.test');
         INSERT INTO runs (id, legal_entity_id, business_date, run_version, ruleset_version, state, sign_off_state, started_at, last_evidence_arrival_at) VALUES
           ('R-1','LE-1','2026-10-26',1,'rs1','SUPERSEDED','SUPERSEDED','2026-10-26T08:00Z','2026-10-26T07:00Z'),

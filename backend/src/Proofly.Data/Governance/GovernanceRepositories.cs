@@ -55,7 +55,7 @@ public sealed class SettingsRepository(NpgsqlDataSource ds) : ISettingsRepositor
         LegalEntityRow? le = null;
         await using (var cmd = new NpgsqlCommand(
             """
-            SELECT id, name, base_currency FROM legal_entities
+            SELECT id, name, ARRAY(SELECT c FROM unnest(currencies) AS c ORDER BY c) FROM legal_entities
             WHERE active AND (@id::text IS NULL OR id = @id) AND (@scope::text[] IS NULL OR id = ANY(@scope))
             ORDER BY id LIMIT 1
             """, conn))
@@ -63,17 +63,23 @@ public sealed class SettingsRepository(NpgsqlDataSource ds) : ISettingsRepositor
             cmd.Parameters.Add(new NpgsqlParameter("id", NpgsqlDbType.Text) { Value = (object?)legalEntityId ?? DBNull.Value });
             cmd.Parameters.Add(Sql.TextArray("scope", scope));
             await using var r = await cmd.ExecuteReaderAsync(ct);
-            if (await r.ReadAsync(ct)) { le = new(r.GetString(0), r.GetString(1), [r.GetString(2).Trim()]); }
+            if (await r.ReadAsync(ct)) { le = new(r.GetString(0), r.GetString(1), r.GetFieldValue<string[]>(2)); }
         }
         if (le is null) { return null; }
-        // Currencies: the base currency plus every currency seen on the entity's records is not derivable here; base currency only.
 
+        // Pending changes: config changes are keyed by the config row, access changes by the user (the oldest pending change wins per target).
         var pending = new Dictionary<string, string>(StringComparer.Ordinal);
+        var pendingUsers = new Dictionary<string, string>(StringComparer.Ordinal);
         var pendingCount = 0;
-        await using (var cmd = new NpgsqlCommand("SELECT id, config_id FROM config_changes WHERE status = 'PENDING' ORDER BY created_at, id", conn))
+        await using (var cmd = new NpgsqlCommand("SELECT id, config_id, target_user_id FROM config_changes WHERE status = 'PENDING_APPROVAL' ORDER BY created_at, id", conn))
         await using (var r = await cmd.ExecuteReaderAsync(ct))
         {
-            while (await r.ReadAsync(ct)) { pendingCount++; pending[r.GetString(1)] = r.GetString(0); }
+            while (await r.ReadAsync(ct))
+            {
+                pendingCount++;
+                var target = r.IsDBNull(1) ? r.GetString(2) : r.GetString(1);
+                (r.IsDBNull(1) ? pendingUsers : pending).TryAdd(target, r.GetString(0));
+            }
         }
 
         var rules = new List<RuleConfigRow>(); var sources = new List<SourceConfigRow>(); var policies = new List<ApprovalPolicyRow>();
@@ -119,7 +125,7 @@ public sealed class SettingsRepository(NpgsqlDataSource ds) : ISettingsRepositor
         {
             cmd.Parameters.AddWithValue("le", le.Id);
             await using var r = await cmd.ExecuteReaderAsync(ct);
-            while (await r.ReadAsync(ct)) { users.Add(new(r.GetString(0), r.GetString(1), r.GetString(2), r.GetFieldValue<string[]>(3), r.GetFieldValue<string[]>(4))); }
+            while (await r.ReadAsync(ct)) { users.Add(new(r.GetString(0), r.GetString(1), r.GetString(2), r.GetFieldValue<string[]>(3), r.GetFieldValue<string[]>(4), pendingUsers.GetValueOrDefault(r.GetString(0)))); }
         }
 
         return new SettingsSnapshot(le, rules, sources, users, freshness, policies, pendingCount);
@@ -177,7 +183,7 @@ public sealed class ApprovalRepository(NpgsqlDataSource ds) : IApprovalRepositor
 
 public sealed class EvidencePackRepository(NpgsqlDataSource ds) : IEvidencePackRepository
 {
-    /// <summary>Job type #46 enqueues for generation; used only to report GENERATING / FAILED before a pack row exists.</summary>
+    /// <summary>Job type #46 enqueues for generation; used only to report GENERATING / FAILED while no pack row exists.</summary>
     public const string GenerateJobType = "evidence_pack.generate";
 
     public async Task<EvidencePackRow?> GetForRunAsync(string runId, IReadOnlyCollection<string>? scope, CancellationToken ct = default)
@@ -190,20 +196,29 @@ public sealed class EvidencePackRepository(NpgsqlDataSource ds) : IEvidencePackR
             if (await cmd.ExecuteScalarAsync(ct) is null) { return null; }
         }
 
-        // The pack table keeps no size or contents list (contract gap); those stay null / empty until the generator stores them.
-        await using (var cmd = new NpgsqlCommand("SELECT id, sha256, created_at FROM evidence_packs WHERE run_id = @r ORDER BY created_at DESC, id DESC LIMIT 1", conn))
+        await using (var cmd = new NpgsqlCommand("""
+            SELECT id, status, sha256, size_bytes, contents::text, failure_reason, created_at
+            FROM evidence_packs WHERE run_id = @r ORDER BY created_at DESC, id DESC LIMIT 1
+            """, conn))
         {
             cmd.Parameters.AddWithValue("r", runId);
             await using var r = await cmd.ExecuteReaderAsync(ct);
-            if (await r.ReadAsync(ct)) { return new(r.GetString(0), runId, r.GetFieldValue<DateTimeOffset>(2), "GENERATED", r.GetString(1).Trim(), null, []); }
+            if (await r.ReadAsync(ct))
+            {
+                var status = r.GetString(1) switch { "READY" => "GENERATED", "GENERATING" => "GENERATING", _ => "FAILED" };
+                var contents = JsonSerializer.Deserialize<string[]>(r.GetString(4)) ?? [];
+                return new(r.GetString(0), runId, status == "GENERATED" ? r.GetFieldValue<DateTimeOffset>(6) : null, status,
+                    r.IsDBNull(2) ? null : r.GetString(2).Trim(), r.IsDBNull(3) ? null : r.GetInt64(3), contents, r.IsDBNull(5) ? null : r.GetString(5));
+            }
         }
+        // No pack row yet: report the generation job (if one was enqueued) so the client can tell GENERATING / FAILED from NOT_GENERATED.
         await using (var cmd = new NpgsqlCommand("SELECT state FROM jobs WHERE type = @t AND run_id = @r ORDER BY id DESC LIMIT 1", conn))
         {
             cmd.Parameters.AddWithValue("t", GenerateJobType);
             cmd.Parameters.AddWithValue("r", runId);
             var state = await cmd.ExecuteScalarAsync(ct) as string;
             var status = state switch { "QUEUED" or "RUNNING" or "FAILED" => "GENERATING", "DEAD" => "FAILED", _ => "NOT_GENERATED" };
-            return new("none:" + runId, runId, null, status, null, null, []);
+            return new(null, runId, null, status, null, null, [], null);
         }
     }
 }

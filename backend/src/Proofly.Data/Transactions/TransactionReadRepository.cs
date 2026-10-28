@@ -11,7 +11,8 @@ public interface ITransactionReadRepository
     Task<TransactionRow?> GetTransactionAsync(string runId, string transactionId, CancellationToken ct = default);
     Task<TransactionLineage?> GetLineageAsync(string runId, string transactionId, CancellationToken ct = default);
     Task<AccountPageResult> ListAccountsAsync(string runId, AccountFilter filter, AccountCursor? after, int limit, CancellationToken ct = default);
-    Task<AccountRow?> GetAccountAsync(string runId, string accountId, CancellationToken ct = default);
+    /// <summary>Every currency position of the account in the run (or only <paramref name="currency"/>); empty when none.</summary>
+    Task<IReadOnlyList<AccountRow>> FindAccountAsync(string runId, string accountId, string? currency, CancellationToken ct = default);
     Task<LedgerEntryPage> ListLedgerEntriesAsync(string runId, string accountId, string currency, LedgerCursor? after, int limit, CancellationToken ct = default);
     Task<IReadOnlyList<AccountExceptionRow>> ListExceptionsAsync(string runId, IReadOnlyCollection<string> exceptionIds, CancellationToken ct = default);
 }
@@ -99,14 +100,14 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
         var id = r.GetString(0);
         var deliveryId = r.GetString(4);
         var sourceRowId = r.GetString(3);
-        return new TransactionRow(id, runId, r.GetString(1), r.GetString(2), sourceRowId, RecordId(deliveryId, sourceRowId), deliveryId,
-            r.GetString(5), r.IsDBNull(6) ? null : r.GetString(6), r.GetFieldValue<DateTimeOffset>(7), r.GetDecimal(8), r.GetString(9),
+        return new TransactionRow(id, runId, r.GetString(1), r.GetString(2), sourceRowId, RecordId(r.GetString(2), r.GetInt64(21)), deliveryId,
+            r.IsDBNull(20) ? null : r.GetInt32(20), r.GetString(5), r.IsDBNull(6) ? null : r.GetString(6), r.GetFieldValue<DateTimeOffset>(7), r.GetDecimal(8), r.GetString(9),
             r.IsDBNull(10) ? null : r.GetString(10), r.GetString(11), r.GetFieldValue<string[]>(12), r.GetString(13),
             r.IsDBNull(14) ? null : r.GetString(14), r.GetFieldValue<string[]>(15), r.GetBoolean(16));
     }
 
-    /// <summary>Stable record id for GET /source-records/{recordId}: "{deliveryId}/{sourceRowId}".</summary>
-    public static string RecordId(string deliveryId, string sourceRowId) => deliveryId + "/" + sourceRowId;
+    /// <summary>Record id for GET /source-records/{recordId}: "{sourceName}:{pk}" (see the API README, Identifiers).</summary>
+    public static string RecordId(string sourceName, long pk) => sourceName + ":" + pk.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     public async Task<TransactionRow?> GetTransactionAsync(string runId, string transactionId, CancellationToken ct = default)
     {
@@ -124,14 +125,21 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
 
         var nodes = new List<LineageNode>();
         var edges = new List<LineageEdge>();
-        var deliveries = new HashSet<string>(StringComparer.Ordinal);
+        var nodeDelivery = new Dictionary<string, string>(StringComparer.Ordinal);   // node id -> delivery id
+        var rowNumbers = new Dictionary<string, int>(StringComparer.Ordinal);       // delivery id -> first known row
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
         static string NodeKind(string kind) => kind switch { "BANK_EVIDENCE" => "BANK_TRANSACTION", "LEDGER_ENTRY" => "LEDGER_ENTRY", _ => "INSTRUCTION" };
+        void Track(string nodeId, string deliveryId, int? row)
+        {
+            nodeDelivery[nodeId] = deliveryId;
+            if (row is { } rn && !rowNumbers.ContainsKey(deliveryId)) { rowNumbers[deliveryId] = rn; }
+        }
         void AddTx(TransactionRow t)
         {
             if (!seen.Add(t.Id)) { return; }
             nodes.Add(new LineageNode(t.Id, NodeKind(t.Kind), t.Reference, t.Source, t.SourceRowId, t.RecordId, t.Amount, t.Currency));
+            Track(t.Id, t.DeliveryId, t.RowNumber);
         }
         AddTx(subject);
 
@@ -141,7 +149,7 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
             """ + TransactionSql.TxCte + """
 
             , me AS (SELECT key_a, key_b FROM tx WHERE id = @id)
-            SELECT t.id, t.kind, t.source, t.source_row_id, t.delivery_id, t.reference, t.amount, t.currency, t.fingerprint
+            SELECT t.id, t.kind, t.source, t.source_row_id, t.delivery_id, t.reference, t.amount, t.currency, t.fingerprint, t.rn, t.rid
               FROM tx t, me
              WHERE t.id <> @id
                AND ((t.key_a IS NOT NULL AND t.key_a IN (me.key_a, me.key_b))
@@ -157,31 +165,30 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
                 var id = r.GetString(0);
                 if (seen.Add(id))
                 {
-                    nodes.Add(new LineageNode(id, NodeKind(r.GetString(1)), r.GetString(5), r.GetString(2), r.GetString(3), RecordId(r.GetString(4), r.GetString(3)), r.GetDecimal(6), r.GetString(7)));
+                    nodes.Add(new LineageNode(id, NodeKind(r.GetString(1)), r.GetString(5), r.GetString(2), r.GetString(3), RecordId(r.GetString(2), r.GetInt64(10)), r.GetDecimal(6), r.GetString(7)));
+                    Track(id, r.GetString(4), r.IsDBNull(9) ? null : r.GetInt32(9));
                 }
                 edges.Add(new LineageEdge(id, subject.Id, "LINKED_BY_REFERENCE"));
-                deliveries.Add(r.GetString(4));
             }
         }
 
-        deliveries.Add(subject.DeliveryId);
         var deliveryRows = new List<LineageDelivery>();
         await using (var cmd = db.CreateCommand("SELECT id, fingerprint_sha256, schema_version FROM source_deliveries WHERE run_id = @run AND id = ANY(@d) ORDER BY id"))
         {
             cmd.Parameters.AddWithValue("run", runId);
-            cmd.Parameters.Add(new NpgsqlParameter("d", NpgsqlDbType.Array | NpgsqlDbType.Text) { Value = deliveries.ToArray() });
+            cmd.Parameters.Add(new NpgsqlParameter("d", NpgsqlDbType.Array | NpgsqlDbType.Text) { Value = nodeDelivery.Values.Distinct().ToArray() });
             await using var r = await cmd.ExecuteReaderAsync(ct);
-            while (await r.ReadAsync(ct)) { deliveryRows.Add(new LineageDelivery(r.GetString(0), r.GetString(1), r.GetString(2))); }
+            while (await r.ReadAsync(ct))
+            {
+                var id = r.GetString(0);
+                deliveryRows.Add(new LineageDelivery(id, r.GetString(1), r.GetString(2), rowNumbers.TryGetValue(id, out var rn) ? rn : null));
+            }
         }
         foreach (var d in deliveryRows)
         {
             nodes.Add(new LineageNode("DLV-" + d.DeliveryId, "DELIVERY", d.DeliveryId, "source_deliveries", d.DeliveryId, null, null, null));
         }
-        foreach (var n in nodes.Where(n => n.Kind != "DELIVERY" && n.Kind != "CONTROL_RESULT").ToList())
-        {
-            var did = n.RecordId![..n.RecordId!.LastIndexOf('/')];
-            edges.Add(new LineageEdge("DLV-" + did, n.Id, "DELIVERED"));
-        }
+        foreach (var (nodeId, deliveryId) in nodeDelivery) { edges.Add(new LineageEdge("DLV-" + deliveryId, nodeId, "DELIVERED")); }
 
         foreach (var exId in subject.ExceptionIds)
         {
@@ -203,10 +210,12 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
         return (w.Count == 0 ? "" : " WHERE " + string.Join(" AND ", w), p);
     }
 
-    private const string AccColumns = "account_id, currency, legal_entity_id, opening, recorded, independent, credits, debits, state, exception_ids";
+    private const string AccColumns = "account_id, currency, legal_entity_id, opening, recorded, independent, credits, debits, adjustments, difference, state, exception_ids";
 
-    private static AccountRow ReadAcc(NpgsqlDataReader r) => new(r.GetString(0), r.GetString(1), r.GetString(2), r.GetDecimal(3), r.GetDecimal(4),
-        r.GetDecimal(5), r.GetDecimal(6), r.GetDecimal(7), r.GetString(8), r.GetFieldValue<string[]>(9));
+    private static decimal? Dec(NpgsqlDataReader r, int i) => r.IsDBNull(i) ? null : r.GetDecimal(i);
+
+    private static AccountRow ReadAcc(NpgsqlDataReader r) => new(r.GetString(0), r.GetString(1).Trim(), r.GetString(2), Dec(r, 3), Dec(r, 4), Dec(r, 5),
+        r.GetDecimal(6), r.GetDecimal(7), r.GetDecimal(8), Dec(r, 9), r.GetString(10), r.GetFieldValue<string[]>(11));
 
     public async Task<AccountPageResult> ListAccountsAsync(string runId, AccountFilter filter, AccountCursor? after, int limit, CancellationToken ct = default)
     {
@@ -226,7 +235,7 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
         if (hasMore) { rows.RemoveAt(rows.Count - 1); }
 
         var aggs = new List<AccountAggregate>();
-        await using (var cmd = db.CreateCommand(cte + " SELECT currency, count(*), COALESCE(SUM(recorded - independent), 0) FROM f GROUP BY currency ORDER BY currency"))
+        await using (var cmd = db.CreateCommand(cte + " SELECT currency, count(*), COALESCE(SUM(difference), 0) FROM f GROUP BY currency ORDER BY currency"))
         {
             Bind(cmd, runId, ps);
             await using var r = await cmd.ExecuteReaderAsync(ct);
@@ -235,24 +244,29 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
         return new AccountPageResult(rows, hasMore, aggs);
     }
 
-    /// <summary>When the account exists in several currencies, the lowest currency code is returned (contract addresses accounts by id only).</summary>
-    public async Task<AccountRow?> GetAccountAsync(string runId, string accountId, CancellationToken ct = default)
+    public async Task<IReadOnlyList<AccountRow>> FindAccountAsync(string runId, string accountId, string? currency, CancellationToken ct = default)
     {
         await using var cmd = db.CreateCommand("WITH " + TransactionSql.TxCte + ", " + TransactionSql.AccCte +
-            " SELECT " + AccColumns + " FROM acc WHERE account_id = @acct ORDER BY currency LIMIT 1");
+            " SELECT " + AccColumns + " FROM acc WHERE account_id = @acct AND (@ccy::text IS NULL OR currency = @ccy) ORDER BY currency");
         cmd.Parameters.AddWithValue("run", runId);
         cmd.Parameters.AddWithValue("acct", accountId);
+        cmd.Parameters.Add(new NpgsqlParameter("ccy", NpgsqlDbType.Text) { Value = (object?)currency ?? DBNull.Value });
+        var rows = new List<AccountRow>();
         await using var r = await cmd.ExecuteReaderAsync(ct);
-        return await r.ReadAsync(ct) ? ReadAcc(r) : null;
+        while (await r.ReadAsync(ct)) { rows.Add(ReadAcc(r)); }
+        return rows;
     }
 
     public async Task<LedgerEntryPage> ListLedgerEntriesAsync(string runId, string accountId, string currency, LedgerCursor? after, int limit, CancellationToken ct = default)
     {
         var sql = """
             SELECT le.id, le.account_id, le.booking_timestamp, le.value_date, le.debit_credit_indicator, le.amount, le.currency::text,
-                   COALESCE(le.transaction_reference, le.ledger_entry_id), le.entry_type, le.source_status, le.delivery_id, le.ledger_entry_id,
-                   COALESCE((SELECT array_agg(e.id ORDER BY e.id) FROM exceptions e
-                              WHERE e.run_id = @run AND e.delivery_id = le.delivery_id AND e.source_row_id = le.ledger_entry_id), ARRAY[]::text[])
+                   COALESCE(le.transaction_reference, le.ledger_entry_id), le.entry_type, le.source_status,
+                   COALESCE((SELECT array_agg(x.id ORDER BY x.id) FROM (
+                               SELECT e.id FROM exceptions e WHERE e.run_id = @run AND e.delivery_id = le.delivery_id AND e.source_row_id = le.ledger_entry_id
+                               UNION
+                               SELECT e.id FROM exceptions e JOIN exception_links l ON l.exception_id = e.id
+                                WHERE e.run_id = @run AND l.record_table = 'ledger_entries' AND l.record_id = le.id) x), ARRAY[]::text[])
               FROM ledger_entries le
               JOIN source_deliveries d ON d.id = le.delivery_id AND d.run_id = @run
              WHERE le.account_id = @acct AND le.currency = @ccy
@@ -274,7 +288,7 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
             var internalId = r.GetInt64(0);
             rows.Add(new LedgerEntryRow("LED-" + internalId, r.GetString(1), r.GetFieldValue<DateTimeOffset>(2), DateOnly.FromDateTime(r.GetDateTime(3)),
                 r.GetString(4), r.GetDecimal(5), r.GetString(6), r.GetString(7), r.GetString(8), r.GetString(9),
-                RecordId(r.GetString(10), r.GetString(11)), r.GetFieldValue<string[]>(12), internalId));
+                RecordId("internal_ledger_entries", internalId), r.GetFieldValue<string[]>(10), internalId));
         }
         var hasMore = rows.Count > limit;
         if (hasMore) { rows.RemoveAt(rows.Count - 1); }
@@ -287,7 +301,7 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
         if (exceptionIds.Count == 0) { return rows; }
         await using var cmd = db.CreateCommand("""
             SELECT e.id, e.run_id, e.title, e.control, e.reason_code, e.severity, e.status, e.value_amount, e.value_currency::text, e.legal_entity_id,
-                   e.business_date, e.owner_user_id, u.name, e.created_at, e.due_at, e.blocking, COALESCE(e.source_file, ''), COALESCE(e.source_row_id, ''), e.version
+                   e.business_date, e.owner_user_id, u.name, e.created_at, e.due_at, e.blocking, e.source_file, e.source_row_id, e.version
               FROM exceptions e LEFT JOIN users u ON u.id = e.owner_user_id
              WHERE e.run_id = @run AND e.id = ANY(@ids) ORDER BY e.id
             """);
@@ -299,7 +313,7 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
             rows.Add(new AccountExceptionRow(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4), r.GetString(5), r.GetString(6),
                 r.IsDBNull(7) ? null : r.GetDecimal(7), r.IsDBNull(8) ? null : r.GetString(8), r.GetString(9), DateOnly.FromDateTime(r.GetDateTime(10)),
                 r.IsDBNull(11) ? null : r.GetString(11), r.IsDBNull(12) ? null : r.GetString(12), r.GetFieldValue<DateTimeOffset>(13),
-                r.GetFieldValue<DateTimeOffset>(14), r.GetBoolean(15), r.GetString(16), r.GetString(17), r.GetInt32(18)));
+                r.GetFieldValue<DateTimeOffset>(14), r.GetBoolean(15), r.IsDBNull(16) ? null : r.GetString(16), r.IsDBNull(17) ? null : r.GetString(17), r.GetInt32(18)));
         }
         return rows;
     }

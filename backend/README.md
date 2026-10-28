@@ -37,3 +37,12 @@ Decision: small in-house outbox on PostgreSQL (`jobs` table, migration `0017_job
 - States: QUEUED, RUNNING (leased), FAILED (retry waits until `run_after`), SUCCEEDED, DEAD. Failure backoff is `BackoffBase * 2^(attempt-1)` capped at `BackoffMax`; DEAD after `max_attempts`.
 - Lease: heartbeat at lease/3; a RUNNING job with an expired lease is re-queued (DEAD if attempts exhausted) by every worker poll. Completion is fenced by `locked_by`, so a stale worker cannot overwrite the result. Shutdown releases the in-flight job without consuming an attempt.
 - Metrics: `IJobQueue.CountsByStateAsync()` and `System.Diagnostics.Metrics` meter `Proofly.Jobs` (`proofly.jobs.succeeded|failed|dead`).
+
+## Read API conventions (contract reconciliation, migration `0020`)
+
+- One shared page type: `Proofly.Contracts.Common.PageInfoDto` / `PageDto<T>` (omits a null `total`, always writes `nextCursor`). `Paging.Create` builds it; never add per-area copies.
+- `WireJson` writes dictionary keys as-is (they are data); use `Dictionary<string, T>`, not `JsonObject`.
+- Ids: `Proofly.Domain.Ids.TransactionIds` owns the `TRF-`/`DD-`/`CRD-`/`BNK-`/`LED-` + pk scheme; record ids are `<sourceName>:<pk>` / `rejected:<pk>` (see the API README, Identifiers). Do not invent another form.
+- Fields the server cannot know are `null` (nullable in the contract), never a made-up value.
+- Ingestion stores the 1-based file row of every accepted record in `row_number` (`RecordTables.InsertAsync`).
+- The controls orchestration (later issue) must write `account_control_results`, `exception_rule_traces`, `exception_links`, `match_group_exceptions` and the match group `tolerance`/`rationale`/`cardinality`; the read side already prefers them.

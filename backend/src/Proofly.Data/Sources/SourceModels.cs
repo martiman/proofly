@@ -1,5 +1,3 @@
-using System.Text.Json.Nodes;
-
 namespace Proofly.Data.Sources;
 
 /// <summary>Legal-entity scope of the caller. All = every entity; otherwise only Ids. Applied inside every query.</summary>
@@ -24,11 +22,11 @@ public sealed record DeliveryFailureRow(string ReasonCode, string Reason);
 public sealed record DeliveryDetail(DeliverySummary Delivery, IReadOnlyList<DeliveryFailureRow> Failures);
 
 public sealed record SourceRecordRow(
-    string RecordId, string SourceName, string SourceRowId, string DeliveryId, int RowNumber, bool Accepted, JsonObject Fields,
+    string RecordId, string SourceName, string SourceRowId, string DeliveryId, int? RowNumber, bool Accepted, IReadOnlyDictionary<string, string> Fields,
     IReadOnlyList<string>? RejectionReasons, string? ContentFingerprint, IReadOnlyList<string> FindingIds, int Group, long Ordinal);
 
 public sealed record RecordPage(IReadOnlyList<SourceRecordRow> Items, int? Total);
 
 public sealed record RecordQuery(bool? Accepted, string? Search, int Limit, int? AfterGroup, long? AfterOrdinal, bool IncludeTotal);
 
-public sealed record ProcessingStepRow(string Id, DateTimeOffset At, string Stage, string Outcome, string ActorType, string ActorId, string ActorName, string? Message);
+public sealed record ProcessingStepRow(string Id, DateTimeOffset At, string Stage, string Outcome, string ActorType, string? ActorId, string? ActorName, string? Message);

@@ -15,6 +15,12 @@ under "New in the real API vs mock".
 - **Money.** `{ "amount": "-50.00", "currency": "EUR" }`. Amount is a decimal string (regex
   `^-?\d+(\.\d{1,6})?$`), never a JSON number. Aggregates are returned per currency, never summed across
   currencies. Query filters on value (`valueMin`, `valueMax`) are decimal strings and require `currency`.
+- **JSON maps.** Keys of JSON objects used as maps (`bySeverity`, `byStatus`, `byControl`,
+  `permissionsByLegalEntity`, `fields`) are data and are never re-cased: enum keys keep their wire names
+  (`CRITICAL`, `independent_ledger`), entity ids keep their spelling. Property names are camelCase.
+- **Nullable fields.** A field the server cannot know is `null` (or omitted when optional); the server never
+  substitutes a made-up value (`""`, `0`, midnight, the start time, `"system"`). The nullable fields are listed
+  under "Nullable fields" below.
 - **Dates.** `date` = `YYYY-MM-DD` (business/value dates); `date-time` = RFC 3339 with offset.
 - **Run-version scoping.** All control data belongs to a run version `runId`. Run-scoped resources live
   under `/runs/{runId}/...`. Reprocessing creates a new run (`version+1`) and marks the old one
@@ -22,14 +28,18 @@ under "New in the real API vs mock".
   Exceptions, adjustments, match groups and deliveries are addressable by id outside the run path
   because their ids are globally unique and carry `runId` in the body.
 - **Pagination.** Cursor-based: `?limit=25&cursor=...` (max 200). Response is
-  `{ "items": [...], "page": { "nextCursor", "hasMore", "total?" } }`. `total` only with `includeTotal=true`.
+  `{ "items": [...], "page": { "nextCursor", "hasMore", "total?" } }`. `nextCursor` is always present (null on the
+  last page). `total` is omitted, never null, unless `includeTotal=true` (declared on every cursor-paged list:
+  listRuns, listDeliveryRecords, listExceptions, listTransactions, listMatchGroups, listAdjustments).
   Sorting is stable and defined per endpoint (`sort`). Aggregates (totals, per-currency sums, counts by
   severity/status) come from dedicated summary objects computed server-side over the full filtered set,
   never from the current page.
 - **Errors.** RFC 9457 `application/problem+json` with `type`, `title`, `status`, `detail`, `requestId`,
   and `errors[]` (JSON pointer / parameter + message) for 422. Problem types used:
-  `forbidden`, `out-of-scope`, `separation-of-duties` (403); `invalid-state`, `run-superseded`,
-  `stale-signoff`, `idempotency-in-progress`, `duplicate` (409); `validation` (422).
+  `unauthenticated` (401); `forbidden`, `out-of-scope`, `separation-of-duties` (403); `not-found` (404);
+  `invalid-state`, `run-superseded`, `stale-signoff`, `idempotency-in-progress`, `duplicate` (409);
+  `precondition-failed` (412); `validation` (422); `precondition-required` (428); `internal` (500).
+  A problem `type` is `https://proofly.example/problems/<slug>`.
   Statuses: 401 unauthenticated, 403 not permitted / out of scope / separation of duties,
   404 not found or outside scope (do not leak existence), 409 state conflict, 412 stale `If-Match`,
   422 validation (e.g. missing reason), 428 `If-Match` missing.
@@ -70,6 +80,131 @@ under "New in the real API vs mock".
 | VIEWER | read-only: auth.self, run/source/exception/transaction/matching/ledger/safeguarding/signoff/evidence/approval `.view`, audit.view, evidence.export |
 
 `settings.approve` is granted "as configured" and never lets a user approve their own change.
+
+## Identifiers
+
+One scheme everywhere (transactions, matching, ledger, lineage, evidence, source records). Ids are opaque to
+clients; the structure is documented so the same record is addressed the same way from every screen.
+
+| Id | Form | Example | Notes |
+| --- | --- | --- | --- |
+| `transactionId` | `<prefix>-<n>`, `n` = bigint primary key of the canonical record | `TRF-4` | Prefix by record table: `TRF` transfer instruction, `DD` direct debit event, `CRD` card event, `BNK` bank transaction, `LED` ledger entry. Accepted by `getTransaction`, `getTransactionLineage`, `getMatchingWorkbench?transactionId=`, `MatchCandidate.transactionId`, `Transaction.id`, `LedgerEntry.id` (`LED-n`), `proposeManualMatch`. |
+| `recordId` | `<sourceName>:<n>` for an accepted record, `rejected:<n>` for a rejected row | `transfer_instructions:4`, `rejected:12` | `sourceName` is the manifest source name (`transfer_instructions`, `direct_debit_events`, `card_transactions`, `banking_transactions`, `internal_ledger_entries`, `client_account_balances`, `safeguarding_balances`, `card_settlements`); `n` is the same primary key as in the transaction id, so `TRF-4` has `recordId` `transfer_instructions:4`. For `rejected:<n>`, `n` is the rejection row id. Accepted by `getSourceRecord`; emitted in `SourceRecord.recordId`, `Transaction.recordId`, `LedgerEntry.recordId`, `EligibleBalanceLine.recordId`, `EvidenceNode.recordId`. |
+| `deliveryId` | the manifest `delivery_id` | `DEL-TRF-01` | |
+| `exceptionId`, `runId`, `matchGroupId`, `adjustmentId` | server issued, globally unique | `F-019` | |
+| lineage node ids | the transaction id, `DLV-<deliveryId>`, `EXC-<exceptionId>` | | |
+
+`Transaction.sourceRowId` is the source file's own row key (`source_row_id`, `ledger_entry_id`,
+`external_transaction_id`); it is not an API id. `Transaction.deliveryId` plus `SourceRecord.rowNumber` locate
+the row in the file.
+
+## Nullable fields
+
+The contract states these as nullable; the server returns `null` instead of a fallback.
+
+| Field | Null when |
+| --- | --- |
+| `Run.lastEvidenceArrivalAt` | no delivery has arrived for the run |
+| `Run.requiredApprover` | the approval policy has not named the approver (set when the run is submitted for sign-off) |
+| `SourceDelivery.declaredRecordCount` | the manifest declares no count |
+| `SourceDelivery.expectedBy` | no expected-by time is configured for the source |
+| `SourceRecord.rowNumber` | the record was ingested before row tracking (migration `0020`); rows ingested since always carry it |
+| `SourceRecord.extractionTimestamp`, `sourceTimeZone` | not recorded (always null today) |
+| `ExceptionSummary.sourceFile`, `sourceRowId` | the exception is not tied to a file row |
+| `EvidenceNode.sourceRowId` | a control-result node not tied to one row |
+| `RuleTrace.tolerance` | the control recorded none (and the trace is derived) |
+| `Lineage.deliveries[].rowNumber` | row tracking unavailable for the record |
+| `MatchingWorkbench.focusTransactionId` | the run has no match group to focus, or the focused exception has no transaction |
+| `MatchGroup.ruleVersion` | manual match without a rule |
+| `MatchGroup.tolerance`, `rationale` | the control recorded none |
+| `MatchCandidate.timestamp`, `reference` | the canonical record is no longer present |
+| `Account.openingBalance`, `recordedClosingBalance`, `independentClosingBalance`, `difference` | the control could not compute them (e.g. opening balance unsupported or recorded balance missing) |
+| `Actor.id` | SYSTEM actors |
+| `Actor.name` | no display name recorded |
+| `EvidencePack.id` | status `NOT_GENERATED` (no pack exists yet) |
+
+Optional members that are omitted when absent: `ObligationLine.movementType`, `MatchCandidate.score` (null),
+`ControlRoom.summary[].link`, `ProcessingStep.actor`/`message`, `CheckResult.detail`.
+
+## Rules
+
+- **Transaction direction.** `Transaction.direction` is the booking direction on the client account. Card, bank
+  and ledger records carry their own `DEBIT`/`CREDIT` indicator. A transfer instruction (`BANK_TRANSFER`) is
+  always `DEBIT` of the client account and a direct debit event (`DIRECT_DEBIT`) is always `CREDIT`, whatever its
+  event type. `TransactionPage.aggregates` (`debitTotal`, `creditTotal`) use this direction.
+- **Account balances.** `Account.difference` = independent closing balance minus recorded closing balance
+  (positive when the independent figure is higher). The balances come from the independent-ledger control's
+  persisted result (`account_control_results`); while a run has no persisted result the server recomputes the
+  independent balance from POSTED ledger entries (documented fallback, identical difference sign). An account may
+  hold several currencies: `getAccountLedger` takes an optional `currency`; without it the account must have exactly
+  one currency in the run, otherwise 422 on `currency`.
+- **Control record counts.** `ControlAreaSummary.recordCount` per area: `data_completeness` = source rows received
+  by the run's deliveries (accepted plus rejected), `matching` = match groups, `independent_ledger` = ledger
+  entries, `transaction_lifecycle` = transfer, direct debit and card events, `safeguarding` = currency positions.
+  `previousRecordCount` is the same count for the previous business date's run and `changeFromPrevious` the
+  difference (0 when there is no previous run). An area with neither records nor exceptions is omitted from
+  `ControlRoom.controlAreas` rather than reported as PASSED.
+- **Control names.** `exceptions.control` and every `ControlArea` value use the lower snake names
+  `data_completeness`, `matching`, `independent_ledger`, `transaction_lifecycle`, `safeguarding` (enforced by a
+  CHECK constraint).
+- **Approvals.** `Approval.objectId` is the resolution *proposal* id for `EXCEPTION_RESOLUTION` and the id of the
+  object itself for every other object type (adjustment, match group, run, config change).
+- **Match groups.** `cardinality` is `<left>:<right>` with counts `0`, `1` or `N` (more than one). `exceptionIds`
+  are the exceptions explicitly linked to the group (`match_group_exceptions`) plus those derived from its
+  candidates' records. `stats.autoMatchRate` is automatically matched groups / all groups as a decimal string.
+- **Exception links.** `Transaction.exceptionIds` and the account/ledger exception lists combine the exceptions
+  matched by delivery and source row with explicit record links (`exception_links`).
+- **Evidence pack status.** Stored `GENERATING`/`READY`/`FAILED` map to `GENERATING`/`GENERATED`/`FAILED`;
+  `NOT_GENERATED` is reported only while no pack row exists (a queued or dead generation job still reports
+  `GENERATING`/`FAILED` in that window). `sizeBytes` and `contents` are stored with the pack.
+
+## Stored payload shapes
+
+JSON columns the read side interprets. The control orchestration writes them; fixtures must follow them.
+
+**`safeguarding_positions.detail`** (object; every key optional, missing = none):
+
+```json
+{
+  "approvedAdjustments": "25.500000",
+  "qualifications": ["stale balance"],
+  "obligationLines": [{"accountId": "CA-1", "amount": "100.00", "movementType": "CLIENT_FUNDS"}],
+  "balanceLines": [{"sourceRowId": "row-1", "included": true, "reason": "ELIGIBLE", "findingIds": ["F-1"]}]
+}
+```
+
+`approvedAdjustments` is a decimal string (a snapshot; when absent the live sum of APPROVED, unexpired
+adjustments is used). `obligationLines[].movementType` is optional. A `safeguarding_balances` row without a
+`balanceLines` entry is reported with `included: false` and reason `NOT_EVALUATED` (the control has not evaluated it).
+Amount, account, timestamp and evidence of a balance line come from `safeguarding_balances`, not from the detail.
+
+**`safeguarding_adjustments`**: `evidence_refs` (jsonb array, at least one entry, checked by the database) and
+`expires_on` (date; an APPROVED adjustment counts while `expires_on` is null or not before the business date).
+
+**`config_rules`** (`id`, `kind`, `name`, `config_version`, `enabled`, `payload`; disabled rows are not listed):
+
+| `kind` | id/name/version map to | `payload` |
+| --- | --- | --- |
+| `rule` | `RuleConfig.ruleId` = id, `version` = config_version, `description` falls back to `name` | `{"control": "<ControlArea>", "description": "...", "tolerance": "0.01 GBP", "severity": "HIGH", "effectiveFrom": "2026-01-01"}` |
+| `source` | `SourceConfig.sourceName` = name, `schemaVersion` falls back to config_version | `{"schemaVersion": "1.2", "expectedByLocalTime": "08:00", "mandatory": true}` |
+| `approval_policy` | `ApprovalPolicy.name` = name, `version` = config_version | `{"description": "Second person", "requiredRole": "APPROVER"}` |
+| `setting` (id `freshness_policy`) | `Settings.freshnessPolicy` | `{"text": "Evidence must arrive by 09:00 local"}` |
+
+**`config_changes`**: `status` is the contract `ConfigChangeStatus` (`DRAFT`, `PENDING_APPROVAL`, `APPROVED`,
+`ACTIVE`, `REJECTED`, `RETIRED`). `change_kind` is `CONFIG` (targets a `config_rules` row via `config_id`) or
+`ACCESS` (targets a user via `target_user_id`, no `config_id`). `Settings.pendingChanges` counts PENDING_APPROVAL
+changes of either kind; `UserAccess.pendingChangeId` is the pending access change of that user.
+
+**`exception_rule_traces`** (one row per exception, written when the control raises it): `rule_id`,
+`rule_version`, `tolerance`, `expected_effect`, `description` and `calculation` =
+`{"inputs": [{"name": "...", "value": "..."}], "text": "...", "result": "..."}`. `getException` reads it; without a
+row it derives the trace from the exception and ruleset (tolerance null).
+
+**`account_control_results`** (one row per run, account and currency): the independent-ledger control's
+`IndependentBalance` (opening, credits, debits, adjustments, independent, recorded, difference, opening_supported,
+contributions, exclusions, rule_version). `contributions`/`exclusions` are stored for audit and not part of the API.
+
+**`legal_entities.currencies`**: currencies the entity holds client funds in; always contains the base currency.
 
 ## Frontend service function to operationId
 
@@ -156,6 +291,32 @@ Changes to existing shapes (all additive unless stated):
 | `Settings` adds `pendingChanges`; `RuleConfig`/`SourceConfig`/`UserAccess` add `pendingChangeId`; `ApprovalPolicy` adds `requiredRole`, `version`. | Pending configuration changes visible in the settings screen. |
 | `Page<T>` for `listRuns`; `listLegalEntities` stays an array. | Runs grow unbounded. |
 | `ControlRoom`, `ControlAreaSummary`, `Account`, `Money`, `SafeguardingPosition` and the remaining types unchanged (Money amount regex allows up to 6 dp; mock used 2). | Compatibility. |
+
+## Changelog (reconciliation of the read API, migration `0020`)
+
+Changes against the previous contract text (the 0.1 draft as implemented by the first read endpoints). All are
+additive or relax a type to nullable except where marked **breaking for a typed client**.
+
+| # | Change |
+| --- | --- |
+| G1 | `PageInfo.total` is omitted (never null) unless `includeTotal=true`; documented. No schema change. |
+| G2 | JSON map keys are never re-cased (enum keys keep their wire names); documented. No schema change. |
+| G3 | Problem slugs `unauthenticated`, `not-found`, `precondition-failed`, `precondition-required`, `internal` documented in README and in the shared response descriptions. |
+| G4 | `includeTotal` declared on `listRuns`, `listDeliveryRecords`, `listMatchGroups` (and the new paging of `listAdjustments`). |
+| G5 | Identifier scheme documented (transaction ids `TRF-`/`DD-`/`CRD-`/`BNK-`/`LED-` + n; record ids `<sourceName>:<n>`, `rejected:<n>`). `Transaction.recordId`, `LedgerEntry.recordId` and `EligibleBalanceLine.recordId` now use it (was `{deliveryId}/{sourceRowId}` and a bare number); matching `transactionId` now uses the transaction scheme (was `{table}:{id}`). **Breaking for clients that parsed the old forms.** |
+| G6 | Nullable: `Run.lastEvidenceArrivalAt`, `SourceDelivery.expectedBy`, `declaredRecordCount`, `ExceptionSummary.sourceFile`/`sourceRowId`, `SourceRecord.rowNumber`, `EvidenceNode.sourceRowId`, `Actor.id`/`name`, `MatchingWorkbench.focusTransactionId`, `MatchGroup.ruleVersion`/`tolerance`/`rationale`, `MatchCandidate.timestamp`/`reference`, `RuleTrace.tolerance`, `EvidencePack.id`, `Account.openingBalance`/`recordedClosingBalance`/`independentClosingBalance`/`difference`. New optional nullable `SourceRecord.extractionTimestamp`/`sourceTimeZone`. A workbench for an empty run or an ungrouped transaction is 200 with `groups: []` (was 404). |
+| G7 | `SourceRecord.rowNumber` and lineage `deliveries[].rowNumber` come from the new `row_number` column filled at ingestion. |
+| G8 | `MatchGroup.cardinality` added. `MatchCandidate` gains `kind`, `side`, `score`, `selected`. `MatchingWorkbench.stats` added (`autoMatchRate`, `openGroups`, `unmatchedCount`, `unmatchedByCurrency`). |
+| G9 | `EvidencePack.failureReason` added; `sizeBytes`/`contents`/status stored with the pack row. |
+| G10 | `listAdjustments` is cursor paged: response `AdjustmentPage {items, page}` (was `{items}`), parameters `limit`, `cursor`, `includeTotal`. `ObligationLine.movementType` optional. `safeguarding_positions.detail` and adjustment storage documented. |
+| G11 | `getAccountLedger` takes optional `currency` (422 when ambiguous). `Account.difference` is independent minus recorded (the previous implementation returned recorded minus independent: **sign flip**). Balances read from `account_control_results` with a documented recompute fallback. |
+| G12 | `RuleTrace` read from `exception_rule_traces`; derived trace has `tolerance: null` (was the string `not recorded`). |
+| G13 | `ExceptionsSummary.byReason` and `bySeverityCurrency` added. |
+| G14 | `Transaction.direction` rule documented and applied (`BANK_TRANSFER` = DEBIT, `DIRECT_DEBIT` = CREDIT; was null) and used by aggregates. Explicit `exception_links` feed `exceptionIds`. |
+| G15 | `config_rules.payload` shapes documented; `config_changes.status` aligned with `ConfigChangeStatus`; access changes supported (`change_kind`); `UserAccess.pendingChangeId` is now populated. |
+| G16 | `LegalEntity.currencies` comes from `legal_entities.currencies` (always includes the base currency). |
+| G17 | Control names documented and enforced; `approvals.object_id` semantics documented. |
+| G18 | `ControlAreaSummary.recordCount` and omission of empty areas documented. |
 
 ## Lint
 

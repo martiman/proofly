@@ -57,7 +57,7 @@ public sealed class SafeguardingReadRepositoryTests : IClassFixture<Safeguarding
     {
         var v = (await _repo.GetPositionAsync("R-1", Le1, default))!;
         Assert.Equal(["CA-3", "CA-1", "CA-2"], v.Obligations.Select(o => o.AccountId));
-        Assert.Equal("CLIENT_FUNDS", v.Obligations.Single(o => o.AccountId == "CA-3").MovementType);
+        Assert.Null(v.Obligations.Single(o => o.AccountId == "CA-3").MovementType); // the control recorded none
         var r1 = v.Balances.Single(b => b.SourceRowId == "row-1");
         Assert.True(r1.Included);
         Assert.Equal((900.5m, "stmt-1", "ELIGIBLE"), (r1.Balance, r1.EvidenceReference, r1.Reason));
@@ -117,7 +117,7 @@ public sealed class SafeguardingReadRepositoryTests : IClassFixture<Safeguarding
     [Fact]
     public async Task Live_approved_sum_used_in_position_when_snapshot_lacks_it()
     {
-        await _f.Exec("INSERT INTO safeguarding_adjustments (id,run_id,currency,amount,reason,status,proposed_by_user_id) VALUES ('ADJ-L','R-2','EUR',4.5,'live','APPROVED','u-ann')");
+        await _f.Exec("INSERT INTO safeguarding_adjustments (id,run_id,currency,amount,reason,status,proposed_by_user_id,evidence_refs) VALUES ('ADJ-L','R-2','EUR',4.5,'live','APPROVED','u-ann','[\"ev-l\"]')");
         var v = (await _repo.GetPositionAsync("R-2", EntityScope.Everything, default))!;
         Assert.Equal(4.5m, v.Positions.Single().ApprovedAdjustments);
     }

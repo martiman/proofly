@@ -139,6 +139,25 @@ public sealed class IngestionTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Accepted_rows_keep_their_row_number_in_the_file_around_rejected_rows()
+    {
+        // rows: 1 accepted, 2 rejected (no client account), 3 accepted, 4 accepted
+        var file = Encoding.UTF8.GetBytes(string.Join("\n", TrfHeader,
+            TrfRow("001", "100.50", "GBP"), TrfRow("002", "10", "EUR", client: ""), TrfRow("003", "20", "GBP"), TrfRow("004", "5", "JPY")) + "\n");
+        var m = Manifest(SourceNames.TransferInstructions, count: 4, totals: [new(120.5m, "GBP"), new(10m, "EUR"), new(5m, "JPY")]);
+        await Register(m, file);
+
+        var o = await _ingestor.IngestAsync(m.DeliveryId);
+
+        Assert.Equal((3, 1), (o.AcceptedCount, o.RejectedCount));
+        Assert.Equal(1, await _f.Scalar<int>("SELECT row_number FROM transfer_instructions WHERE source_row_id='SRC-T-001'"));
+        Assert.Equal(3, await _f.Scalar<int>("SELECT row_number FROM transfer_instructions WHERE source_row_id='SRC-T-003'"));
+        Assert.Equal(4, await _f.Scalar<int>("SELECT row_number FROM transfer_instructions WHERE source_row_id='SRC-T-004'"));
+        Assert.Equal(2, await _f.Scalar<int>("SELECT row_number FROM delivery_rejections WHERE source_row_id='SRC-T-002'"));
+        Assert.Equal(0, await Count("SELECT count(*) FROM transfer_instructions WHERE row_number IS NULL"));
+    }
+
+    [Fact]
     public async Task Banking_count_mismatch_rejects_the_delivery_and_stores_no_records()   // F-014
     {
         var m = Manifest(SourceNames.BankingTransactions, count: 2);

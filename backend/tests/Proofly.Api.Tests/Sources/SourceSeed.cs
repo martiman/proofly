@@ -31,6 +31,6 @@ internal static class SourceSeed
           ('D2',NULL,'DUPLICATE_DELIVERY','Same content already delivered as D1.',NULL,NULL,NULL);
 
         INSERT INTO exceptions (id, run_id, legal_entity_id, business_date, title, control, reason_code, severity, due_at, delivery_id, source_row_id)
-        VALUES ('F-1','RUN-A','LE-A','2026-03-02','Row issue','completeness','X','LOW','2026-03-04T00:00:00Z','D1','s1');
+        VALUES ('F-1','RUN-A','LE-A','2026-03-02','Row issue','data_completeness','X','LOW','2026-03-04T00:00:00Z','D1','s1');
         """;
 }

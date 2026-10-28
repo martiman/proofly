@@ -49,7 +49,8 @@ public sealed class GovFixture : IAsyncLifetime
             INSERT INTO runs (id, legal_entity_id, business_date, run_version, ruleset_version, state) VALUES
               ('R1','LE1','2026-10-27',1,'v1','REVIEW_REQUIRED'),('R2','LE2','2026-10-27',1,'v1','REVIEW_REQUIRED'),
               ('R3','LE1','2026-10-28',1,'v1','REVIEW_REQUIRED'),('R4','LE1','2026-10-29',1,'v1','REVIEW_REQUIRED'),
-              ('R5','LE1','2026-10-30',1,'v1','REVIEW_REQUIRED');
+              ('R5','LE1','2026-10-30',1,'v1','REVIEW_REQUIRED'),
+              ('R6','LE1','2026-10-31',1,'v1','REVIEW_REQUIRED'),('R7','LE1','2026-11-01',1,'v1','REVIEW_REQUIRED');
             INSERT INTO approvals (id, object_type, object_id, run_id, proposal_version, proposer_user_id, required_role, status, policy_version, proposed_at, evidence_refs) VALUES
               ('A1','EXCEPTION_RESOLUTION','F-1','R1',1,'local-analyst','APPROVER','PENDING','p1','2026-10-27T10:00:00Z','["ev-1"]'),
               ('A2','SAFEGUARDING_ADJUSTMENT','ADJ-1','R1',1,'local-approver','APPROVER','PENDING','p1','2026-10-27T11:00:00Z','[]'),
@@ -63,8 +64,12 @@ public sealed class GovFixture : IAsyncLifetime
               ('POL-1','approval_policy','Resolution approval','5','{"description":"Second person","requiredRole":"APPROVER"}'),
               ('freshness_policy','setting','Freshness','1','{"text":"Evidence must arrive by 09:00 local"}');
             INSERT INTO config_changes (id, config_id, proposed_by_user_id, reason, after, status) VALUES
-              ('CC-1','RULE-1','local-analyst','tighten','{}','PENDING'),('CC-0','SRC-1','local-analyst','old','{}','APPROVED');
-            INSERT INTO evidence_packs (id, run_id, sha256, storage_ref) VALUES ('EP-1','R1',repeat('a',64),'store/ep1');
+              ('CC-1','RULE-1','local-analyst','tighten','{}','PENDING_APPROVAL'),('CC-0','SRC-1','local-analyst','old','{}','APPROVED');
+            INSERT INTO config_changes (id, change_kind, target_user_id, proposed_by_user_id, reason, after) VALUES
+              ('CC-A','ACCESS','u-scoped','local-analyst','grant','{}');
+            INSERT INTO evidence_packs (id, run_id, sha256, storage_ref, size_bytes, contents) VALUES ('EP-1','R1',repeat('a',64),'store/ep1',2048,'["audit.csv","exceptions.csv"]');
+            INSERT INTO evidence_packs (id, run_id, status) VALUES ('EP-2','R6','GENERATING');
+            INSERT INTO evidence_packs (id, run_id, status, failure_reason) VALUES ('EP-3','R7','FAILED','disk full');
             INSERT INTO jobs (type, run_id, state) VALUES ('evidence_pack.generate','R3','RUNNING'),('evidence_pack.generate','R4','DEAD');
             """);
 
@@ -129,8 +134,10 @@ public class GovernanceApiTests(GovFixture f) : IClassFixture<GovFixture>
         Assert.Equal("bank_a", s.GetProperty("sources")[0].GetProperty("sourceName").GetString());
         Assert.Equal("Evidence must arrive by 09:00 local", s.GetProperty("freshnessPolicy").GetString());
         Assert.Equal("APPROVER", s.GetProperty("approvalPolicies")[0].GetProperty("requiredRole").GetString());
-        Assert.Equal(1, s.GetProperty("pendingChanges").GetInt32());
+        Assert.Equal(2, s.GetProperty("pendingChanges").GetInt32()); // CC-1 (rule) and CC-A (access)
         Assert.Contains("u-scoped", Ids(s.GetProperty("users")));
+        Assert.Equal("CC-A", s.GetProperty("users").EnumerateArray().Single(u => u.GetProperty("id").GetString() == "u-scoped").GetProperty("pendingChangeId").GetString());
+        Assert.Equal(["GBP"], s.GetProperty("legalEntity").GetProperty("currencies").EnumerateArray().Select(e => e.GetString()!).ToArray());
         var le2 = await Json(await As(Role.ConfigAdmin).GetAsync("/api/v1/settings?legalEntityId=LE2"));
         Assert.Equal("LE2", le2.GetProperty("legalEntity").GetProperty("id").GetString());
         Assert.DoesNotContain("u-scoped", Ids(le2.GetProperty("users")));
@@ -183,11 +190,19 @@ public class GovernanceApiTests(GovFixture f) : IClassFixture<GovFixture>
         var ready = await Json(await As(Role.Viewer).GetAsync("/api/v1/runs/R1/evidence-pack"));
         Assert.Equal("GENERATED", ready.GetProperty("status").GetString());
         Assert.Equal(new string('a', 64), ready.GetProperty("sha256").GetString());
+        Assert.Equal(2048, ready.GetProperty("sizeBytes").GetInt64());
+        Assert.Equal(["audit.csv", "exceptions.csv"], ready.GetProperty("contents").EnumerateArray().Select(e => e.GetString()!).ToArray());
+        // A stored pack row decides the status; the jobs table is only consulted while no pack row exists.
+        var generating = await Json(await As(Role.Viewer).GetAsync("/api/v1/runs/R6/evidence-pack"));
+        Assert.Equal(("GENERATING", "EP-2"), (generating.GetProperty("status").GetString(), generating.GetProperty("id").GetString()));
+        var failed = await Json(await As(Role.Viewer).GetAsync("/api/v1/runs/R7/evidence-pack"));
+        Assert.Equal(("FAILED", "disk full"), (failed.GetProperty("status").GetString(), failed.GetProperty("failureReason").GetString()));
         Assert.Equal("GENERATING", (await Json(await As(Role.Viewer).GetAsync("/api/v1/runs/R3/evidence-pack"))).GetProperty("status").GetString());
         Assert.Equal("FAILED", (await Json(await As(Role.Viewer).GetAsync("/api/v1/runs/R4/evidence-pack"))).GetProperty("status").GetString());
         var none = await Json(await As(Role.Viewer).GetAsync("/api/v1/runs/R5/evidence-pack"));
         Assert.Equal("NOT_GENERATED", none.GetProperty("status").GetString());
         Assert.Equal(JsonValueKind.Null, none.GetProperty("generatedAt").ValueKind);
+        Assert.Equal(JsonValueKind.Null, none.GetProperty("id").ValueKind); // no pack exists: no id is invented
         Assert.Equal(HttpStatusCode.NotFound, (await As(f.ScopedToken).GetAsync("/api/v1/runs/R2/evidence-pack")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await As(Role.Viewer).GetAsync("/api/v1/runs/nope/evidence-pack")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await As(Role.ConfigAdmin).GetAsync("/api/v1/runs/R1/evidence-pack")).StatusCode);

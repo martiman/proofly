@@ -20,9 +20,6 @@ public static class MatchingModule
     }
 }
 
-/// <summary>Uses the platform PageInfo so a null total is omitted (the contract types total as integer).</summary>
-internal sealed record MatchGroupPageResponse(IReadOnlyList<MatchGroupDto> Items, PageInfo Page);
-
 internal sealed record MatchGroupCursor(string Id);
 
 internal sealed class MatchingEndpoints(IMatchingRepository repo) : IEndpointModule
@@ -52,7 +49,7 @@ internal sealed class MatchingEndpoints(IMatchingRepository repo) : IEndpointMod
         var fetched = await repo.ListGroupsAsync(runId, status, page.Limit, cursor?.Id, ct);
         var total = page.IncludeTotal ? (int)await repo.CountGroupsAsync(runId, status, ct) : (int?)null;
         var result = Paging.Create(fetched, page, g => new MatchGroupCursor(g.Id), total);
-        return Results.Ok(new MatchGroupPageResponse(result.Items.Select(Map).ToList(), result.Page));
+        return Results.Ok(new PageDto<MatchGroupDto>(result.Items.Select(Map).ToList(), result.Page));
     }
 
     private async Task<IResult> GetWorkbench(string runId, HttpContext ctx, CancellationToken ct)
@@ -65,24 +62,28 @@ internal sealed class MatchingEndpoints(IMatchingRepository repo) : IEndpointMod
 
         var (groupId, focus, failure) = await repo.ResolveFocusAsync(runId, tx, ex, ct);
         if (failure == FocusFailure.InvalidTransactionId) { throw ProblemException.Validation("transactionId", "The transaction id is not valid."); }
-        if (groupId is null || focus is null) { throw new ProblemException(ProblemTypes.NotFound); }
-        var group = await repo.GetGroupAsync(runId, groupId, ct) ?? throw new ProblemException(ProblemTypes.NotFound);
+        if (failure == FocusFailure.NotFound) { throw new ProblemException(ProblemTypes.NotFound); }
+        var groups = new List<MatchGroupDto>();
+        if (groupId is not null)
+        {
+            groups.Add(Map(await repo.GetGroupAsync(runId, groupId, ct) ?? throw new ProblemException(ProblemTypes.NotFound)));
+        }
         var unmatched = await repo.ListUnmatchedAsync(runId, MatchingRepository.UnmatchedLimit, ct);
-        return Results.Ok(new MatchingWorkbenchDto(focus, [Map(group)], unmatched.Select(Map).ToList()));
+        var stats = await repo.GetStatsAsync(runId, ct);
+        return Results.Ok(new MatchingWorkbenchDto(focus, groups, unmatched.Select(Map).ToList(), Map(stats)));
     }
+
+    internal static MatchingStatsDto Map(MatchingStats s) => new(
+        s.AutoMatchRate?.ToString("0.0###", CultureInfo.InvariantCulture), (int)s.OpenGroups, (int)s.UnmatchedCount,
+        s.UnmatchedByCurrency.Select(c => new UnmatchedCurrencyDto(c.Currency, (int)c.Count, new MoneyDto(c.Value.ToString(CultureInfo.InvariantCulture), c.Currency))).ToList());
 
     internal static MoneyDto Map(MatchMoney m) => new(m.Amount.ToString(CultureInfo.InvariantCulture), m.Currency);
 
-    internal static MatchCandidateDto Map(MatchCandidateRow c) => new(c.TransactionId, c.Label, Map(c.Amount), c.Timestamp, c.Reference);
+    internal static MatchCandidateDto Map(MatchCandidateRow c) => new(c.TransactionId, c.Label, Map(c.Amount), c.Timestamp, c.Reference, c.Kind, c.Side,
+        c.Score?.ToString("0.0###", CultureInfo.InvariantCulture), c.Selected);
 
-    internal static MatchGroupDto Map(MatchGroupRow g)
-    {
-        var rationale = $"{g.Status} {g.Cardinality} group of {g.Left.Count} left and {g.Right.Count} right record(s) under {g.RuleVersion}"
-            + (g.Difference is { } d ? $"; difference {d.Amount.ToString(CultureInfo.InvariantCulture)} {d.Currency}" : "")
-            + $" (tolerance {g.Tolerance}).";
-        return new MatchGroupDto(g.Id, g.Status, g.Left.Select(Map).ToList(), g.Right.Select(Map).ToList(),
-            g.Difference is null ? null : Map(g.Difference), g.RuleVersion, g.Tolerance, rationale, g.ExceptionIds, g.Manual, g.Approval is null ? null : Map(g.Approval));
-    }
+    internal static MatchGroupDto Map(MatchGroupRow g) => new(g.Id, g.Status, g.Cardinality, g.Left.Select(Map).ToList(), g.Right.Select(Map).ToList(),
+        g.Difference is null ? null : Map(g.Difference), g.RuleVersion, g.Tolerance, g.Rationale, g.ExceptionIds, g.Manual, g.Approval is null ? null : Map(g.Approval));
 
     internal static MatchApprovalDto Map(MatchApprovalRow a) => new(a.Id, a.ObjectType, a.ObjectId, a.RunId, a.ProposalVersion,
         new UserRefDto(a.ProposerId, a.ProposerName), a.ApproverId is null ? null : new UserRefDto(a.ApproverId, a.ApproverName ?? a.ApproverId),

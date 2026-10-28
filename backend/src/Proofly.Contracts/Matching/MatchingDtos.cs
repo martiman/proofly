@@ -2,7 +2,10 @@ using Proofly.Contracts.Common;
 
 namespace Proofly.Contracts.Matching;
 
-public sealed record MatchCandidateDto(string TransactionId, string Label, MoneyDto Amount, DateTimeOffset Timestamp, string Reference);
+/// <summary>Contract schema MatchCandidate. kind, side, score and selected are optional members; timestamp/reference are null when the canonical record is gone.</summary>
+public sealed record MatchCandidateDto(
+    string TransactionId, string Label, MoneyDto Amount, DateTimeOffset? Timestamp, string? Reference,
+    string Kind, string Side, string? Score, bool Selected);
 
 public sealed record MatchApprovalDto(
     string Id, string ObjectType, string ObjectId, string? RunId, int ProposalVersion, UserRefDto Proposer, UserRefDto? Approver,
@@ -10,7 +13,12 @@ public sealed record MatchApprovalDto(
     string PolicyVersion, DateTimeOffset ProposedAt, DateTimeOffset? DecidedAt);
 
 public sealed record MatchGroupDto(
-    string Id, string Status, IReadOnlyList<MatchCandidateDto> Left, IReadOnlyList<MatchCandidateDto> Right, MoneyDto? Difference,
-    string RuleVersion, string Tolerance, string Rationale, IReadOnlyList<string> ExceptionIds, bool Manual, MatchApprovalDto? Approval);
+    string Id, string Status, string Cardinality, IReadOnlyList<MatchCandidateDto> Left, IReadOnlyList<MatchCandidateDto> Right, MoneyDto? Difference,
+    string? RuleVersion, string? Tolerance, string? Rationale, IReadOnlyList<string> ExceptionIds, bool Manual, MatchApprovalDto? Approval);
 
-public sealed record MatchingWorkbenchDto(string FocusTransactionId, IReadOnlyList<MatchGroupDto> Groups, IReadOnlyList<MatchCandidateDto> Unmatched);
+public sealed record UnmatchedCurrencyDto(string Currency, int Count, MoneyDto Value);
+
+public sealed record MatchingStatsDto(string? AutoMatchRate, int OpenGroups, int UnmatchedCount, IReadOnlyList<UnmatchedCurrencyDto> UnmatchedByCurrency);
+
+public sealed record MatchingWorkbenchDto(
+    string? FocusTransactionId, IReadOnlyList<MatchGroupDto> Groups, IReadOnlyList<MatchCandidateDto> Unmatched, MatchingStatsDto Stats);

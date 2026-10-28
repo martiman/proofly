@@ -18,17 +18,18 @@ INSERT INTO transfer_instructions (delivery_id, source_row_id, instruction_id, c
   ('D-M1','row-5','I-5','A-1','LE-M1','TRANSFER',10.25,'GBP','2026-03-02T13:00:00Z','SETTLED','REF-5');
 INSERT INTO bank_transactions (delivery_id, external_transaction_id, external_account_id, booking_timestamp, value_date, amount, currency, debit_credit_indicator, bank_reference, transaction_status) VALUES
   ('D-M1','B-1','X-1','2026-03-02T09:05:00Z','2026-03-02',100.50,'GBP','CREDIT','REF-1','BOOKED'),
-  ('D-M1','B-3','X-1','2026-03-02T11:05:00Z','2026-03-02',49997.5,'JPY','CREDIT',NULL,'BOOKED');
+  ('D-M1','B-3','X-1','2026-03-02T11:05:00Z','2026-03-02',49997.5,'JPY','CREDIT',NULL,'BOOKED'),
+  ('D-M1','B-9','X-1','2026-03-02T15:00:00Z','2026-03-02',5,'GBP','CREDIT','REF-9','BOOKED');
 INSERT INTO ledger_entries (delivery_id, ledger_entry_id, account_id, legal_entity_id, booking_timestamp, value_date, debit_credit_indicator, amount, currency, transaction_reference, entry_type, source_status) VALUES
   ('D-M1','L-4','A-1','LE-M1','2026-03-02T12:30:00Z','2026-03-02','CREDIT',74.99,'EUR','REF-4','POSTING','POSTED');
 INSERT INTO config_rules (id, kind, name, config_version, payload) VALUES ('rule-ref','rule','Reference match','2.1','{"tolerance":"0.01 GBP"}');
-INSERT INTO match_groups (id, run_id, legal_entity_id, status, difference_amount, currency, manual, rule_id, version) VALUES
-  ('G-001','R-M1','LE-M1','MATCHED',0,'GBP',false,'rule-ref',1),
-  ('G-002','R-M1','LE-M1','UNMATCHED',NULL,NULL,false,NULL,1),
-  ('G-003','R-M1','LE-M1','VALUE_MISMATCH',2.500000,'JPY',false,'rule-ref',3),
-  ('G-004','R-M1','LE-M1','PENDING_APPROVAL',0.01,'EUR',true,NULL,1),
-  ('G-005','R-M1','LE-M1','UNMATCHED',NULL,NULL,false,NULL,1),
-  ('G-006','R-M2','LE-M2','UNMATCHED',NULL,NULL,false,NULL,1);
+INSERT INTO match_groups (id, run_id, legal_entity_id, status, difference_amount, currency, manual, rule_id, version, tolerance, rationale, cardinality) VALUES
+  ('G-001','R-M1','LE-M1','MATCHED',0,'GBP',false,'rule-ref',1,'0.01 GBP','Reference REF-1 equal on both sides','1:1'),
+  ('G-002','R-M1','LE-M1','UNMATCHED',NULL,NULL,false,NULL,1,NULL,NULL,NULL),
+  ('G-003','R-M1','LE-M1','VALUE_MISMATCH',2.500000,'JPY',false,'rule-ref',3,'0.01 GBP','Amount differs by 2.5 JPY','1:1'),
+  ('G-004','R-M1','LE-M1','PENDING_APPROVAL',0.01,'EUR',true,NULL,1,NULL,NULL,NULL),
+  ('G-005','R-M1','LE-M1','UNMATCHED',NULL,NULL,false,NULL,1,NULL,NULL,NULL),
+  ('G-006','R-M2','LE-M2','UNMATCHED',NULL,NULL,false,NULL,1,NULL,NULL,NULL);
 INSERT INTO match_candidates (match_group_id, kind, record_table, record_id, amount, currency, score, selected)
 SELECT 'G-001','BANK_TRANSFER','transfer_instructions',id,100.50,'GBP',1,true FROM transfer_instructions WHERE source_row_id='row-1' UNION ALL
 SELECT 'G-001','BANK_EVIDENCE','bank_transactions',id,100.50,'GBP',1,true FROM bank_transactions WHERE external_transaction_id='B-1' UNION ALL
@@ -42,6 +43,7 @@ INSERT INTO exceptions (id, run_id, legal_entity_id, business_date, title, contr
   ('EX-1','R-M1','LE-M1','2026-03-02','Unmatched','matching','UNMATCHED','HIGH',now(),'D-M1','row-2'),
   ('EX-3','R-M1','LE-M1','2026-03-02','Value','matching','VALUE_MISMATCH','MEDIUM',now(),'D-M1','B-3'),
   ('EX-X','R-M1','LE-M1','2026-03-02','Elsewhere','matching','UNMATCHED','LOW',now(),'D-M1','no-such-row');
+INSERT INTO match_group_exceptions (match_group_id, exception_id) VALUES ('G-005','EX-X');
 INSERT INTO approvals (id, object_type, object_id, run_id, proposal_version, proposer_user_id, required_role, status, evidence_refs, policy_version, proposed_at)
   VALUES ('AP-1','MANUAL_MATCH','G-004','R-M1',1,'u-prop','APPROVER','PENDING','["ev-1"]','pol-1','2026-03-02T14:00:00Z');
 """;

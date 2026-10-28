@@ -38,7 +38,8 @@ public sealed class DeliveryIngestor(
 
     private sealed class Analysis
     {
-        public List<ISourceRecord> Accepted { get; } = [];
+        /// <summary>Accepted records with their 1-based row number in the source file (stored in the record table's row_number).</summary>
+        public List<(ISourceRecord Record, int RowNumber)> Accepted { get; } = [];
         public List<RowRejection> RowRejections { get; } = [];
         public List<DeliveryFailure> FileFailures { get; } = [];
         public List<DeliveryFailure> Rejecting { get; } = [];
@@ -136,7 +137,7 @@ public sealed class DeliveryIngestor(
                 var rec = res.Record;
                 var fw = FrameworkRejection(rec, res.RowNumber, d, entities, rowIds, keys);
                 if (fw is not null) { a.RowRejections.Add(fw); Add(a, rec.ControlAmount); continue; }
-                a.Accepted.Add(rec);
+                a.Accepted.Add((rec, res.RowNumber));
                 Add(a, rec.ControlAmount);
             }
         }

@@ -1,0 +1,28 @@
+[Unit]
+Description=Proofly API
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=proofly
+Group=proofly
+WorkingDirectory=/opt/proofly/current/api
+ExecStart=/opt/proofly/current/api/Proofly.Api
+EnvironmentFile=/etc/proofly/proofly.env
+Environment=DOTNET_ENVIRONMENT=Production
+Environment=ASPNETCORE_ENVIRONMENT=Production
+Restart=on-failure
+RestartSec=5
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/proofly/evidence
+# Single-file self-extraction needs a writable cache
+Environment=DOTNET_BUNDLE_EXTRACT_BASE_DIR=/var/lib/proofly/.cache
+StateDirectory=proofly
+
+[Install]
+WantedBy=multi-user.target

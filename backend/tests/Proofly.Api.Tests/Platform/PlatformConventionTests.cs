@@ -363,6 +363,16 @@ public class PlatformConventionTests : IDisposable
     }
 
     [Fact]
+    public void Dictionary_keys_are_data_and_are_written_as_is()
+    {
+        var json = JsonSerializer.Serialize(new Dictionary<string, int> { ["CRITICAL"] = 1, ["LE-1"] = 2, ["independent_ledger"] = 3 }, WireJson.Options);
+        Assert.Equal("""{"CRITICAL":1,"LE-1":2,"independent_ledger":3}""", json);
+        // property names are still camelCase
+        Assert.Equal("""{"nextCursor":null,"hasMore":false}""", JsonSerializer.Serialize(new Proofly.Contracts.Common.PageInfoDto(null, false), WireJson.Options));
+        Assert.Equal("""{"nextCursor":"c","hasMore":true,"total":7}""", JsonSerializer.Serialize(new Proofly.Contracts.Common.PageInfoDto("c", true, 7), WireJson.Options));
+    }
+
+    [Fact]
     public void Json_options_reject_numeric_money_and_unknown_enums()
     {
         Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<Amount>("""{"value":12.5}""", WireJson.Options));

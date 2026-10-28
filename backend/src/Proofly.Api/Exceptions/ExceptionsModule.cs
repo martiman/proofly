@@ -2,6 +2,7 @@ using System.Text.Json;
 using Proofly.Api.Platform;
 using Proofly.Api.Platform.Http;
 using Proofly.Api.Platform.Problems;
+using Proofly.Contracts.Common;
 using Proofly.Contracts.Exceptions;
 using Proofly.Data.Exceptions;
 using Proofly.Domain.Enums;
@@ -77,8 +78,7 @@ internal sealed class ExceptionsEndpoints : IEndpointModule
 
         var result = await repo.ListAsync(new ExceptionListQuery(runId, scope, filter, sort, page.Limit, after, page.IncludeTotal, clock.GetUtcNow()), ct);
         var paged = Paging.Create(result.Rows, page, r => new ExceptionCursor(sort.Normalized, r.SortKeys.ToArray()), result.Total);
-        // PagedResult/PageInfo omit total unless includeTotal was requested (the contract forbids a null total).
-        return Results.Ok(new PagedResult<ExceptionSummaryDto>(paged.Items.Select(ExceptionMapping.ToSummary).ToList(), paged.Page));
+        return Results.Ok(new PageDto<ExceptionSummaryDto>(paged.Items.Select(ExceptionMapping.ToSummary).ToList(), paged.Page));
     }
 
     private static async Task<IResult> SummaryAsync(string runId, HttpContext ctx, IExceptionReadRepository repo, TimeProvider clock, CancellationToken ct)

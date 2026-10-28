@@ -41,7 +41,7 @@ public class TransactionsApiTests(AuthFixture f) : IClassFixture<AuthFixture>, I
         Assert.True(b.GetProperty("page").GetProperty("hasMore").GetBoolean());
         Assert.Equal(10, b.GetProperty("page").GetProperty("total").GetInt32());
         var gbp = b.GetProperty("aggregates").EnumerateArray().Single(a => a.GetProperty("currency").GetString() == "GBP");
-        Assert.Equal("207.00", gbp.GetProperty("debitTotal").GetProperty("amount").GetString());
+        Assert.Equal("307.00", gbp.GetProperty("debitTotal").GetProperty("amount").GetString());
         Assert.Equal("510.50", gbp.GetProperty("creditTotal").GetProperty("amount").GetString());
         Assert.Equal("GBP", gbp.GetProperty("debitTotal").GetProperty("currency").GetString());
     }
@@ -85,7 +85,9 @@ public class TransactionsApiTests(AuthFixture f) : IClassFixture<AuthFixture>, I
         var t = await Body(res);
         Assert.Equal("MATCHED", t.GetProperty("matchStatus").GetString());
         Assert.Equal("100.00", t.GetProperty("amount").GetProperty("amount").GetString());
-        Assert.Equal(JsonValueKind.Null, t.GetProperty("direction").ValueKind);
+        Assert.Equal("DEBIT", t.GetProperty("direction").GetString()); // transfer instruction = DEBIT of the client account
+        Assert.Matches(@"^transfer_instructions:\d+$", t.GetProperty("recordId").GetString());
+        Assert.Equal(1, t.GetProperty("deliveryId").GetString() == "D1" ? 1 : 0);
 
         var lineage = await Ok($"/api/v1/runs/R1/transactions/{id}/lineage");
         Assert.Contains(lineage.GetProperty("nodes").EnumerateArray(), n => n.GetProperty("kind").GetString() == "BANK_TRANSACTION");
@@ -103,7 +105,7 @@ public class TransactionsApiTests(AuthFixture f) : IClassFixture<AuthFixture>, I
         Assert.Equal(2, accounts.GetProperty("items").GetArrayLength());
         Assert.True(accounts.GetProperty("page").GetProperty("hasMore").GetBoolean());
         var eur = accounts.GetProperty("aggregates").EnumerateArray().Single(a => a.GetProperty("currency").GetString() == "EUR");
-        Assert.Equal("10.00", eur.GetProperty("totalDifference").GetProperty("amount").GetString());
+        Assert.Equal("-10.00", eur.GetProperty("totalDifference").GetProperty("amount").GetString());
         Assert.Equal(0, (await Ok("/api/v1/runs/R1/accounts?state=PASSED")).GetProperty("items").GetArrayLength());
 
         var ledger = await Ok("/api/v1/runs/R1/accounts/ACC-2/ledger");
@@ -114,7 +116,7 @@ public class TransactionsApiTests(AuthFixture f) : IClassFixture<AuthFixture>, I
         Assert.Equal("100.00", bridge["Opening balance"]);
         Assert.Equal("20.00", bridge["Credits"]);
         Assert.Equal("120.00", bridge["Independent closing balance"]);
-        Assert.Equal("10.00", bridge["Difference"]);
+        Assert.Equal("-10.00", bridge["Difference"]); // independent - recorded
         Assert.Single(ledger.GetProperty("entries").EnumerateArray());
 
         var acc1 = await Ok("/api/v1/runs/R1/accounts/ACC-1/ledger?limit=2");
@@ -123,6 +125,29 @@ public class TransactionsApiTests(AuthFixture f) : IClassFixture<AuthFixture>, I
         Assert.Equal(1, next.GetProperty("entries").GetArrayLength());
         Assert.Equal("X-1", next.GetProperty("exceptions")[0].GetProperty("id").GetString());
         Assert.Equal(HttpStatusCode.NotFound, (await Viewer.GetAsync("/api/v1/runs/R1/accounts/NOPE/ledger")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Ledger_of_an_account_in_several_currencies_needs_the_currency()
+    {
+        await using (var c = f.Db.CreateCommand("""
+            INSERT INTO source_deliveries (id, run_id, legal_entity_id, source_name, business_date, schema_version, file_name, fingerprint_sha256, state)
+              VALUES ('D5', 'R1', 'LE-A', 'mixed', '2026-10-27', '1', 'e.csv', repeat('e', 64), 'RECEIVED') ON CONFLICT DO NOTHING;
+            INSERT INTO account_balances (delivery_id, account_id, legal_entity_id, balance_date, balance_type, opening_balance_amount, balance_amount, currency)
+            VALUES ('D1', 'ACC-MULTI', 'LE-A', '2026-10-27', 'DAILY_ROLLFORWARD', 0, 1, 'GBP'), ('D5', 'ACC-MULTI', 'LE-A', '2026-10-27', 'DAILY_ROLLFORWARD', 0, 2, 'JPY')
+            ON CONFLICT DO NOTHING
+            """))
+        {
+            await c.ExecuteNonQueryAsync();
+        }
+        var ambiguous = await Viewer.GetAsync("/api/v1/runs/R1/accounts/ACC-MULTI/ledger");
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, ambiguous.StatusCode);
+        Assert.Contains("currency", await ambiguous.Content.ReadAsStringAsync());
+        var jpy = await Ok("/api/v1/runs/R1/accounts/ACC-MULTI/ledger?currency=JPY");
+        Assert.Equal("JPY", jpy.GetProperty("account").GetProperty("currency").GetString());
+        Assert.Equal(HttpStatusCode.NotFound, (await Viewer.GetAsync("/api/v1/runs/R1/accounts/ACC-MULTI/ledger?currency=EUR")).StatusCode);
+        // a single-currency account needs no currency
+        Assert.Equal("GBP", (await Ok("/api/v1/runs/R1/accounts/ACC-1/ledger")).GetProperty("account").GetProperty("currency").GetString());
     }
 
     [Fact]

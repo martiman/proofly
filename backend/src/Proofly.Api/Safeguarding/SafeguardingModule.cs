@@ -45,8 +45,11 @@ internal sealed class SafeguardingEndpoints(ISafeguardingReadRepository repo) : 
         var run = await repo.GetRunAsync(runId, ScopeOf(caller), ct) ?? throw new ProblemException(ProblemTypes.NotFound);
         caller.Require(Permission.SafeguardingView, run.LegalEntityId);
         var status = ctx.Request.Query.TryGetValue("status", out var s) && s.Count > 0 && s[0] is { Length: > 0 } v ? v : null;
-        var rows = await repo.ListAdjustmentsAsync(runId, status, ScopeOf(caller), ct) ?? throw new ProblemException(ProblemTypes.NotFound);
-        return Results.Ok(new SafeguardingAdjustmentListDto(rows.Select(r => Map(r, caller, run.LegalEntityId)).ToList()));
+        var page = PageRequest.From(ctx);
+        var result = await repo.ListAdjustmentsPageAsync(runId, status, page.Limit, page.Decode<AdjustmentCursor>(), page.IncludeTotal, ScopeOf(caller), ct)
+            ?? throw new ProblemException(ProblemTypes.NotFound);
+        var paged = Paging.Create(result.HasMore ? result.Items.Append(result.Items[^1]).ToList() : result.Items, page, a => new AdjustmentCursor(a.CreatedAt, a.Id), result.Total);
+        return Results.Ok(new PageDto<SafeguardingAdjustmentDto>(paged.Items.Select(r => Map(r, caller, run.LegalEntityId)).ToList(), paged.Page));
     }
 
     private static string D(decimal v) => v.ToString(CultureInfo.InvariantCulture);
@@ -81,7 +84,7 @@ internal sealed class SafeguardingEndpoints(ISafeguardingReadRepository repo) : 
 
     internal static SafeguardingAdjustmentDto Map(AdjustmentRow a, Caller caller, string legalEntityId) => new(
         a.Id, a.RunId, a.Currency, M(a.Amount, a.Currency), a.Status, new UserRefDto(a.Owner.Id, a.Owner.Name), a.Reason,
-        a.Approval?.EvidenceRefs ?? [], a.ExpiresOn,
+        a.EvidenceRefs, a.ExpiresOn,
         a.Approval is null ? null : new ApprovalDto(a.Approval.Id, a.Approval.ObjectType, a.Approval.ObjectId, a.Approval.RunId, a.Approval.ProposalVersion,
             new UserRefDto(a.Approval.Proposer.Id, a.Approval.Proposer.Name),
             a.Approval.Approver is null ? null : new UserRefDto(a.Approval.Approver.Id, a.Approval.Approver.Name),

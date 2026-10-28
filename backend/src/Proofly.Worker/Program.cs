@@ -1,7 +1,9 @@
 using Proofly.Data;
 using Proofly.Worker;
+using Proofly.Worker.Observability;
 
 var builder = Host.CreateApplicationBuilder(args);
+builder.AddObservability();
 builder.Services.AddModules(builder.Configuration);
 using var host = builder.Build();
 

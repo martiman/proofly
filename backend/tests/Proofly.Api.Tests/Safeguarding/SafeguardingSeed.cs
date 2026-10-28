@@ -35,11 +35,11 @@ INSERT INTO exceptions (id,run_id,legal_entity_id,business_date,title,control,re
  ('EX-2','R-1','LE-1','2026-10-27','Shortfall','safeguarding','SHORTFALL','HIGH',99.75,'GBP',now()),
  ('EX-1','R-1','LE-1','2026-10-27','Stale','safeguarding','STALE','HIGH',50,'GBP',now()),
  ('EX-X','R-1','LE-1','2026-10-27','Other','matching','X','LOW',1,'GBP',now());
-INSERT INTO safeguarding_adjustments (id,run_id,currency,amount,reason,status,proposed_by_user_id,expires_at,created_at) VALUES
- ('ADJ-1','R-1','GBP',25.5,'Timing difference','APPROVED','u-ann','2026-11-30T00:00:00Z','2026-10-27T08:00:00Z'),
- ('ADJ-2','R-1','EUR',-10,'Correction','PROPOSED','u-ann',NULL,'2026-10-27T09:00:00Z'),
- ('ADJ-3','R-1','JPY',1000,'Rejected one','REJECTED','u-bob',NULL,'2026-10-27T10:00:00Z'),
- ('ADJ-X','R-2','EUR',1,'Other entity','PROPOSED','u-bob',NULL,'2026-10-27T11:00:00Z');
+INSERT INTO safeguarding_adjustments (id,run_id,currency,amount,reason,status,proposed_by_user_id,evidence_refs,expires_on,created_at) VALUES
+ ('ADJ-1','R-1','GBP',25.5,'Timing difference','APPROVED','u-ann','["ev-1","ev-2"]','2026-11-30','2026-10-27T08:00:00Z'),
+ ('ADJ-2','R-1','EUR',-10,'Correction','PROPOSED','u-ann','["ev-3"]',NULL,'2026-10-27T09:00:00Z'),
+ ('ADJ-3','R-1','JPY',1000,'Rejected one','REJECTED','u-bob','["ev-9"]',NULL,'2026-10-27T10:00:00Z'),
+ ('ADJ-X','R-2','EUR',1,'Other entity','PROPOSED','u-bob','["ev-9"]',NULL,'2026-10-27T11:00:00Z');
 INSERT INTO approvals (id,object_type,object_id,run_id,proposal_version,proposer_user_id,approver_user_id,required_role,status,decision,rationale,evidence_refs,policy_version,decided_at) VALUES
  ('AP-1','SAFEGUARDING_ADJUSTMENT','ADJ-1','R-1',1,'u-ann','u-bob','APPROVER','APPROVED','APPROVE','ok','["ev-1","ev-2"]','pol-1',now()),
  ('AP-2','SAFEGUARDING_ADJUSTMENT','ADJ-2','R-1',1,'u-ann',NULL,'APPROVER','PENDING',NULL,NULL,'["ev-3"]','pol-1',NULL);

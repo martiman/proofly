@@ -26,7 +26,7 @@ public sealed class RunReadRepository(NpgsqlDataSource dataSource, TimeProvider 
 
     private const string RunSelect = """
         SELECT r.id, r.legal_entity_id, r.business_date, r.run_version, r.ruleset_version, r.state, r.sign_off_state,
-               r.started_at, COALESCE(r.last_evidence_arrival_at, r.started_at), r.version,
+               r.started_at, r.last_evidence_arrival_at, r.version,
                (SELECT s.id FROM runs s WHERE s.supersedes_run_id = r.id ORDER BY s.run_version LIMIT 1),
                r.supersedes_run_id, so.prepared_by_user_id, pu.name, so.signed_by_user_id, su.name, so.signed_at
         FROM runs r
@@ -46,9 +46,7 @@ public sealed class RunReadRepository(NpgsqlDataSource dataSource, TimeProvider 
     public async Task<IReadOnlyList<LegalEntityRow>> ListLegalEntitiesAsync(EntityScope scope, CancellationToken ct = default)
     {
         await using var cmd = dataSource.CreateCommand("""
-            SELECT le.id, le.name,
-                   ARRAY(SELECT c FROM (SELECT sp.currency::text AS c FROM safeguarding_positions sp WHERE sp.legal_entity_id = le.id
-                                        UNION SELECT le.base_currency::text) x ORDER BY c)
+            SELECT le.id, le.name, ARRAY(SELECT c FROM unnest(le.currencies) AS c ORDER BY c)
             FROM legal_entities le WHERE (@all OR le.id = ANY(@ids)) ORDER BY le.id
             """);
         Scope(cmd, scope);
@@ -117,7 +115,7 @@ public sealed class RunReadRepository(NpgsqlDataSource dataSource, TimeProvider 
         while (await r.ReadAsync(ct))
         {
             list.Add(new RunRow(r.GetString(0), r.GetString(1), DateOnly.FromDateTime(r.GetDateTime(2)), r.GetInt32(3), r.GetString(4), r.GetString(5), r.GetString(6),
-                r.GetFieldValue<DateTimeOffset>(7), r.GetFieldValue<DateTimeOffset>(8), r.GetInt32(9),
+                r.GetFieldValue<DateTimeOffset>(7), r.IsDBNull(8) ? null : r.GetFieldValue<DateTimeOffset>(8), r.GetInt32(9),
                 r.IsDBNull(10) ? null : r.GetString(10), r.IsDBNull(11) ? null : r.GetString(11),
                 r.IsDBNull(12) ? null : new UserRefRow(r.GetString(12), r.GetString(13)),
                 null, // required approver is a role until a decision names the user; the schema holds no named approver before sign-off
@@ -173,9 +171,9 @@ public sealed class RunReadRepository(NpgsqlDataSource dataSource, TimeProvider 
         }
 
         await using var cmd = dataSource.CreateCommand("""
-            SELECT d.id, d.source_name, d.file_name, d.business_date, d.schema_version, COALESCE(d.declared_record_count, 0),
+            SELECT d.id, d.source_name, d.file_name, d.business_date, d.schema_version, d.declared_record_count,
                    COALESCE(d.total_row_count, d.accepted_record_count + d.rejected_record_count),
-                   COALESCE(d.expected_by, d.received_at, d.created_at), d.received_at, d.supersedes_delivery_id,
+                   d.expected_by, d.received_at, d.supersedes_delivery_id,
                    (SELECT s.id FROM source_deliveries s WHERE s.supersedes_delivery_id = d.id ORDER BY s.id LIMIT 1),
                    d.state, d.accepted_record_count, d.rejected_record_count
             FROM source_deliveries d WHERE d.run_id = @r ORDER BY d.source_name, d.business_date, d.id
@@ -186,8 +184,8 @@ public sealed class RunReadRepository(NpgsqlDataSource dataSource, TimeProvider 
         while (await r.ReadAsync(ct))
         {
             var id = r.GetString(0);
-            list.Add(new DeliveryRow(id, r.GetString(1), r.GetString(2), DateOnly.FromDateTime(r.GetDateTime(3)), r.GetString(4), r.GetInt32(5), r.GetInt32(6),
-                totals.GetValueOrDefault(id) ?? [], r.GetFieldValue<DateTimeOffset>(7), r.IsDBNull(8) ? null : r.GetFieldValue<DateTimeOffset>(8),
+            list.Add(new DeliveryRow(id, r.GetString(1), r.GetString(2), DateOnly.FromDateTime(r.GetDateTime(3)), r.GetString(4), r.IsDBNull(5) ? null : r.GetInt32(5), r.GetInt32(6),
+                totals.GetValueOrDefault(id) ?? [], r.IsDBNull(7) ? null : r.GetFieldValue<DateTimeOffset>(7), r.IsDBNull(8) ? null : r.GetFieldValue<DateTimeOffset>(8),
                 r.IsDBNull(9) ? null : r.GetString(9), r.IsDBNull(10) ? null : r.GetString(10), r.GetString(11), r.GetInt32(12), r.GetInt32(13),
                 findings.GetValueOrDefault(id) ?? []));
         }
@@ -301,7 +299,7 @@ public sealed class RunReadRepository(NpgsqlDataSource dataSource, TimeProvider 
         var adjustments = new Dictionary<string, decimal>();
         await using (var c = dataSource.CreateCommand("""
             SELECT currency::text, sum(amount) FROM safeguarding_adjustments
-            WHERE run_id = @r AND status = 'APPROVED' AND (expires_at IS NULL OR expires_at::date >= @bd) GROUP BY currency
+            WHERE run_id = @r AND status = 'APPROVED' AND (expires_on IS NULL OR expires_on >= @bd) GROUP BY currency
             """))
         {
             c.Parameters.AddWithValue("r", run.Id);

@@ -19,11 +19,11 @@ internal static class SourceSeed
         INSERT INTO delivery_control_totals (delivery_id, currency, declared_amount, actual_amount) VALUES
           ('D1','GBP',150.50,150.50), ('D1','JPY',3000,3000), ('D1','EUR',20.123456,NULL), ('D3','EUR',9.99,9.99);
 
-        INSERT INTO transfer_instructions (delivery_id, source_row_id, instruction_id, client_account_id, legal_entity_id, transaction_type, amount, currency, instruction_timestamp, source_status)
-        VALUES ('D1','s1','i1','c1','LE-A','PAYMENT',100.00,'GBP','2026-03-02T10:00:00Z','SETTLED'),
-               ('D1','s2','i2','c1','LE-A','PAYMENT',50.50,'GBP','2026-03-02T11:00:00Z','SETTLED'),
-               ('D1','s3','i3','c2','LE-A','PAYMENT',3000,'JPY','2026-03-02T12:00:00Z','SETTLED'),
-               ('D3','b1','j1','c9','LE-B','PAYMENT',9.99,'EUR','2026-03-02T12:00:00Z','SETTLED');
+        INSERT INTO transfer_instructions (delivery_id, row_number, source_row_id, instruction_id, client_account_id, legal_entity_id, transaction_type, amount, currency, instruction_timestamp, source_status)
+        VALUES ('D1',1,'s1','i1','c1','LE-A','PAYMENT',100.00,'GBP','2026-03-02T10:00:00Z','SETTLED'),
+               ('D1',2,'s2','i2','c1','LE-A','PAYMENT',50.50,'GBP','2026-03-02T11:00:00Z','SETTLED'),
+               ('D1',3,'s3','i3','c2','LE-A','PAYMENT',3000,'JPY','2026-03-02T12:00:00Z','SETTLED'),
+               ('D3',1,'b1','j1','c9','LE-B','PAYMENT',9.99,'EUR','2026-03-02T12:00:00Z','SETTLED');
 
         INSERT INTO delivery_rejections (delivery_id, source_row_id, reason_code, reason, row_number, field, raw_excerpt) VALUES
           ('D1','s4','INVALID_VALUE','amount is not a decimal',4,'amount','s4,i4,c1,LE-A,PAYMENT,abc,GBP'),
@@ -31,6 +31,6 @@ internal static class SourceSeed
           ('D2',NULL,'DUPLICATE_DELIVERY','Same content already delivered as D1.',NULL,NULL,NULL);
 
         INSERT INTO exceptions (id, run_id, legal_entity_id, business_date, title, control, reason_code, severity, due_at, delivery_id, source_row_id)
-        VALUES ('F-1','RUN-A','LE-A','2026-03-02','Row issue','completeness','X','LOW','2026-03-04T00:00:00Z','D1','s1');
+        VALUES ('F-1','RUN-A','LE-A','2026-03-02','Row issue','data_completeness','X','LOW','2026-03-04T00:00:00Z','D1','s1');
         """;
 }

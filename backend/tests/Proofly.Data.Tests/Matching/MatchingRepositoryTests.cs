@@ -40,7 +40,12 @@ public class MatchingRepositoryTests(SchemaFixture f) : IClassFixture<SchemaFixt
         Assert.Equal("rule-ref@2.1", g1.RuleVersion);
         Assert.Equal("0.01 GBP", g1.Tolerance);
         Assert.Equal("1:1", g1.Cardinality);
-        Assert.Equal("transfer_instructions:" + g1.Left[0].TransactionId.Split(':')[1], g1.Left[0].TransactionId);
+        Assert.Matches(@"^TRF-\d+$", g1.Left[0].TransactionId);
+        Assert.Matches(@"^BNK-\d+$", g1.Right[0].TransactionId);
+        Assert.Equal(("LEFT", "RIGHT"), (g1.Left[0].Side, g1.Right[0].Side)); // derived from kind: the seed stores no side
+        Assert.Equal(1m, g1.Left[0].Score);
+        Assert.True(g1.Left[0].Selected);
+        Assert.Equal("Reference REF-1 equal on both sides", g1.Rationale);
         Assert.Equal("REF-1", g1.Left[0].Reference);
         Assert.Equal("payments row-1", g1.Left[0].Label);
         Assert.Equal(new MatchMoney(100.50m, "GBP"), g1.Left[0].Amount);
@@ -50,8 +55,9 @@ public class MatchingRepositoryTests(SchemaFixture f) : IClassFixture<SchemaFixt
 
         var g2 = groups[1];
         Assert.Null(g2.Difference);
-        Assert.Equal("unspecified", g2.RuleVersion);
-        Assert.Equal("0", g2.Tolerance);
+        Assert.Null(g2.RuleVersion);
+        Assert.Null(g2.Tolerance);
+        Assert.Null(g2.Rationale);
         Assert.Equal("1:0", g2.Cardinality);
         Assert.Equal(["EX-1"], g2.ExceptionIds);
         Assert.Equal("I-2", g2.Left[0].Reference); // external_reference null falls back to instruction id
@@ -64,7 +70,7 @@ public class MatchingRepositoryTests(SchemaFixture f) : IClassFixture<SchemaFixt
 
         var g4 = groups[3];
         Assert.True(g4.Manual);
-        Assert.Equal("manual", g4.RuleVersion);
+        Assert.Null(g4.RuleVersion); // manual match, no rule: nothing invented
         Assert.Equal("L-4", g4.Right[0].Label.Split(' ')[1]);
         Assert.Equal("AP-1", g4.Approval!.Id);
         Assert.Equal("Pat Proposer", g4.Approval.ProposerName);
@@ -101,8 +107,8 @@ public class MatchingRepositoryTests(SchemaFixture f) : IClassFixture<SchemaFixt
         var (g, focus, fail) = await Repo.ResolveFocusAsync("R-M1", null, null, default);
         Assert.Equal(FocusFailure.None, fail);
         Assert.Equal("G-002", g); // G-001 is matched
-        Assert.StartsWith("transfer_instructions:", focus);
-        Assert.Equal(FocusFailure.NotFound, (await Repo.ResolveFocusAsync("R-EMPTY", null, null, default)).Failure);
+        Assert.StartsWith("TRF-", focus);
+        Assert.Equal((null, null, FocusFailure.None), await Repo.ResolveFocusAsync("R-EMPTY", null, null, default)); // an empty run is not an error
     }
 
     [Fact]
@@ -116,11 +122,19 @@ public class MatchingRepositoryTests(SchemaFixture f) : IClassFixture<SchemaFixt
         var byEx = await Repo.ResolveFocusAsync("R-M1", null, "EX-3", default);
         Assert.Equal(("G-003", bank, FocusFailure.None), byEx);
 
-        Assert.Equal(FocusFailure.NotFound, (await Repo.ResolveFocusAsync("R-M1", null, "EX-X", default)).Failure);
+        // EX-X exists but sits on no candidate (only on a group through match_group_exceptions): group resolved, first candidate focused.
+        var byGroupLink = await Repo.ResolveFocusAsync("R-M1", null, "EX-X", default);
+        Assert.Equal(("G-005", FocusFailure.None), (byGroupLink.GroupId, byGroupLink.Failure));
         Assert.Equal(FocusFailure.NotFound, (await Repo.ResolveFocusAsync("R-M1", null, "EX-nope", default)).Failure);
-        Assert.Equal(FocusFailure.NotFound, (await Repo.ResolveFocusAsync("R-M2", bank, null, default)).Failure);
+        Assert.Equal(FocusFailure.NotFound, (await Repo.ResolveFocusAsync("R-M2", bank, null, default)).Failure); // record is not in that run
+        // A transaction that exists in the run but is in no group: no group, the transaction stays the focus.
+        await using var q = f.DataSource.CreateCommand("SELECT id FROM bank_transactions WHERE external_transaction_id = 'B-9'");
+        var b9 = "BNK-" + (long)(await q.ExecuteScalarAsync())!;
+        Assert.Equal((null, b9, FocusFailure.None), await Repo.ResolveFocusAsync("R-M1", b9, null, default));
+        Assert.Equal(FocusFailure.NotFound, (await Repo.ResolveFocusAsync("R-M1", "BNK-999999", null, default)).Failure);
         Assert.Equal(FocusFailure.InvalidTransactionId, (await Repo.ResolveFocusAsync("R-M1", "garbage", null, default)).Failure);
         Assert.Equal(FocusFailure.InvalidTransactionId, (await Repo.ResolveFocusAsync("R-M1", "users:1", null, default)).Failure);
+        Assert.Equal(FocusFailure.InvalidTransactionId, (await Repo.ResolveFocusAsync("R-M1", "XYZ-1", null, default)).Failure);
     }
 
     [Fact]

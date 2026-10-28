@@ -42,10 +42,17 @@ public sealed record ExceptionListResult(IReadOnlyList<ExceptionRow> Rows, int? 
 
 public sealed record CurrencyAggregate(string Currency, int Count, decimal TotalValue, decimal AbsoluteValue);
 
+public sealed record ReasonCount(string ReasonCode, int Count);
+public sealed record SeverityCurrencyAggregate(string Severity, string Currency, int Count, decimal AbsoluteValue);
+
 public sealed record ExceptionsSummaryData(
     int Total, int Blocking, int Unassigned, int Overdue, int WithoutValue,
     IReadOnlyDictionary<string, int> BySeverity, IReadOnlyDictionary<string, int> ByStatus, IReadOnlyDictionary<string, int> ByControl,
-    IReadOnlyList<CurrencyAggregate> ByCurrency, DateTimeOffset ComputedAt);
+    IReadOnlyList<CurrencyAggregate> ByCurrency, IReadOnlyList<ReasonCount> ByReason, IReadOnlyList<SeverityCurrencyAggregate> BySeverityCurrency,
+    DateTimeOffset ComputedAt);
+
+/// <summary>Row of exception_rule_traces. CalculationJson is {"inputs":[{"name","value"}],"text":"...","result":"..."}.</summary>
+public sealed record RuleTraceRow(string RuleId, string RuleVersion, string? Tolerance, string? ExpectedEffect, string? Description, string CalculationJson);
 
 public sealed record EvidenceRefRow(long Id, string Kind, string Ref);
 public sealed record TimelineRow(long Id, string Kind, string ActorType, string? ActorId, string? ActorName, string Summary, DateTimeOffset At);
@@ -59,4 +66,4 @@ public sealed record ApprovalRow(
 public sealed record ExceptionDetailData(
     ExceptionRow Row, string RunState, string RulesetVersion, string? DeliverySource,
     IReadOnlyList<EvidenceRefRow> Evidence, IReadOnlyList<TimelineRow> Timeline, IReadOnlyList<ApprovalRow> Approvals,
-    string? ConfiguredApprovalPolicyVersion);
+    string? ConfiguredApprovalPolicyVersion, RuleTraceRow? Trace);

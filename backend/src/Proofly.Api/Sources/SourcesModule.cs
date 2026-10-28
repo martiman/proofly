@@ -65,7 +65,7 @@ internal sealed partial class SourceEndpoints(ISourceReadRepository repo) : IEnd
             var result = await repo.ListRecordsAsync(deliveryId, new RecordQuery(accepted, search, page.Limit, cursor?.G, cursor?.O, page.IncludeTotal), ScopeOf(caller), ct)
                 ?? throw new ProblemException(ProblemTypes.NotFound);
             var paged = Paging.Create(result.Items, page, r => new RecordCursor(r.Group, r.Ordinal), result.Total);
-            return Results.Ok(new PagedResult<SourceRecordDto>(paged.Items.Select(ToDto).ToList(), paged.Page));
+            return Results.Ok(new PageDto<SourceRecordDto>(paged.Items.Select(ToDto).ToList(), paged.Page));
         });
 
         app.MapGet("/api/v1/source-records/{recordId}", async (string recordId, HttpContext ctx, CancellationToken ct) =>
@@ -101,10 +101,8 @@ internal sealed partial class SourceEndpoints(ISourceReadRepository repo) : IEnd
     private static MoneyDto M(MoneyAmount m) => new(m.Amount.ToString(System.Globalization.CultureInfo.InvariantCulture), m.Currency);
 
     private static SourceDeliveryDto ToDto(DeliverySummary d) => new(d.Id, d.SourceName, d.FileName, d.BusinessDate, d.SchemaVersion,
-        d.DeclaredRecordCount ?? 0, d.TotalRowCount ?? d.AcceptedRecords + d.RejectedRecords, d.DeclaredTotals.Select(M).ToList(),
-        // expected_by is nullable in the schema but required by the contract; fall back to the start of the business date (UTC).
-        d.ExpectedBy ?? new DateTimeOffset(d.BusinessDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero),
-        d.ReceivedAt, d.CorrectionOfDeliveryId, d.SupersededByDeliveryId, d.State, d.AcceptedRecords, d.RejectedRecords, d.Qualifications, d.FindingIds);
+        d.DeclaredRecordCount, d.TotalRowCount ?? d.AcceptedRecords + d.RejectedRecords, d.DeclaredTotals.Select(M).ToList(),
+        d.ExpectedBy, d.ReceivedAt, d.CorrectionOfDeliveryId, d.SupersededByDeliveryId, d.State, d.AcceptedRecords, d.RejectedRecords, d.Qualifications, d.FindingIds);
 
     private static SourceRecordDto ToDto(SourceRecordRow r) => new(r.RecordId, r.SourceName, r.SourceRowId, r.DeliveryId, r.RowNumber, r.Accepted,
         r.Fields, r.RejectionReasons, r.ContentFingerprint, r.FindingIds);

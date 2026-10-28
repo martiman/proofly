@@ -6,7 +6,7 @@ using Proofly.Domain.Enums;
 
 namespace Proofly.Api.Platform.Json;
 
-/// <summary>Wire format: camelCase properties, decimals as strings (never JSON numbers), enums as contract names.</summary>
+/// <summary>Wire format: camelCase properties (dictionary keys untouched), decimals as strings (never JSON numbers), enums as contract names.</summary>
 public static class WireJson
 {
     public static JsonSerializerOptions Options { get; } = Configure(new JsonSerializerOptions());
@@ -14,7 +14,7 @@ public static class WireJson
     public static JsonSerializerOptions Configure(JsonSerializerOptions o)
     {
         o.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
-        o.DictionaryKeyPolicy = JsonNamingPolicy.CamelCase;
+        // Dictionary keys are written as-is: they are data (enum wire names, entity ids, permission names), never property names.
         o.NumberHandling = JsonNumberHandling.Strict;
         o.Converters.Add(new DecimalStringConverter());
         o.Converters.Add(new WireEnumConverterFactory());

@@ -6,37 +6,37 @@ namespace Proofly.Data.Transactions;
 /// </summary>
 internal static class TransactionSql
 {
-    /// <summary>CTE chain ending in <c>tx</c>: one row per normalised transaction of the run, enriched with lifecycle, match group and exceptions.</summary>
+    /// <summary>CTE chain ending in <c>tx</c>: one row per normalised transaction of the run, enriched with lifecycle, match group and exceptions (derived by delivery/row plus explicit exception_links).</summary>
     public const string TxCte = """
         src AS (
           SELECT 'TRF-' || t.id AS id, 'BANK_TRANSFER' AS kind, 'transfer_instructions' AS source, 'transfer_instructions' AS rt, t.id AS rid,
                  t.delivery_id, t.source_row_id, COALESCE(t.external_reference, t.instruction_id) AS reference, t.client_account_id AS account_id,
-                 t.instruction_timestamp AS ts, t.amount, t.currency::text AS currency, NULL::text AS direction, t.source_status,
-                 t.instruction_id AS key_a, t.external_reference AS key_b
+                 t.instruction_timestamp AS ts, t.amount, t.currency::text AS currency, 'DEBIT'::text AS direction, t.source_status,
+                 t.instruction_id AS key_a, t.external_reference AS key_b, t.row_number AS rn
             FROM transfer_instructions t
           UNION ALL
           SELECT 'DD-' || t.id, 'DIRECT_DEBIT', 'direct_debit_events', 'direct_debit_events', t.id,
                  t.delivery_id, t.source_row_id, t.instruction_id, t.client_account_id,
-                 t.event_timestamp, t.amount, t.currency::text, NULL::text, t.source_status,
-                 t.instruction_id, NULL::text
+                 t.event_timestamp, t.amount, t.currency::text, 'CREDIT'::text, t.source_status,
+                 t.instruction_id, NULL::text, t.row_number
             FROM direct_debit_events t
           UNION ALL
           SELECT 'CRD-' || t.id, 'CARD', 'card_transactions', 'card_events', t.id,
                  t.delivery_id, t.source_row_id, t.card_transaction_id, t.client_account_id,
                  t.event_timestamp, t.amount, t.currency::text, t.debit_credit_indicator, t.source_status,
-                 t.card_transaction_id, NULL::text
+                 t.card_transaction_id, NULL::text, t.row_number
             FROM card_events t
           UNION ALL
           SELECT 'BNK-' || t.id, 'BANK_EVIDENCE', 'banking_transactions', 'bank_transactions', t.id,
                  t.delivery_id, t.external_transaction_id, COALESCE(t.bank_reference, t.external_transaction_id), t.external_account_id,
                  t.booking_timestamp, t.amount, t.currency::text, t.debit_credit_indicator, t.transaction_status,
-                 t.bank_reference, NULL::text
+                 t.bank_reference, NULL::text, t.row_number
             FROM bank_transactions t
           UNION ALL
           SELECT 'LED-' || t.id, 'LEDGER_ENTRY', 'internal_ledger_entries', 'ledger_entries', t.id,
                  t.delivery_id, t.ledger_entry_id, COALESCE(t.transaction_reference, t.ledger_entry_id), t.account_id,
                  t.booking_timestamp, t.amount, t.currency::text, t.debit_credit_indicator, t.source_status,
-                 t.transaction_reference, NULL::text
+                 t.transaction_reference, NULL::text, t.row_number
             FROM ledger_entries t
         ),
         src_run AS (
@@ -56,17 +56,20 @@ internal static class TransactionSql
                WHERE mc.record_table = s.rt AND mc.record_id = s.rid AND g.run_id = @run
                ORDER BY mc.selected DESC, g.id LIMIT 1) m ON true
             LEFT JOIN LATERAL (
-              SELECT array_agg(e.id ORDER BY e.id) AS ids,
-                     bool_and(e.status IN ('ACCEPTED_DIFFERENCE', 'FALSE_POSITIVE')) AS acc
-                FROM exceptions e
-               WHERE e.run_id = @run AND e.delivery_id = s.delivery_id AND e.source_row_id = s.source_row_id) ex ON true
+              SELECT array_agg(x.id ORDER BY x.id) AS ids,
+                     bool_and(x.status IN ('ACCEPTED_DIFFERENCE', 'FALSE_POSITIVE')) AS acc
+                FROM (SELECT e.id, e.status FROM exceptions e
+                       WHERE e.run_id = @run AND e.delivery_id = s.delivery_id AND e.source_row_id = s.source_row_id
+                      UNION
+                      SELECT e.id, e.status FROM exceptions e JOIN exception_links l ON l.exception_id = e.id
+                       WHERE e.run_id = @run AND l.record_table = s.rt AND l.record_id = s.rid) x) ex ON true
         )
         """;
 
     public const string TxColumns =
-        "id, kind, source, source_row_id, delivery_id, reference, account_id, ts, amount, currency, direction, source_status, lifecycle, match_status, match_group_id, exception_ids, accepted, key_a, key_b, fingerprint";
+        "id, kind, source, source_row_id, delivery_id, reference, account_id, ts, amount, currency, direction, source_status, lifecycle, match_status, match_group_id, exception_ids, accepted, key_a, key_b, fingerprint, rn, rid";
 
-    /// <summary>CTE chain ending in <c>acc</c> (per account and currency): balances, independent recalculation from posted ledger entries, exceptions, state. Needs TxCte first.</summary>
+    /// <summary>CTE chain ending in <c>acc</c> (per account and currency): balances from the control's persisted result (fallback: independent recalculation from posted ledger entries while the run has none), exceptions, state. Needs TxCte first.</summary>
     public const string AccCte = """
         rr AS (SELECT id, legal_entity_id, business_date FROM runs WHERE id = @run),
         bal AS (
@@ -89,17 +92,23 @@ internal static class TransactionSql
            GROUP BY le.account_id, le.currency
         ),
         acc_base AS (
-          SELECT b.account_id, b.currency, b.opening, b.recorded, COALESCE(m.credits, 0) AS credits, COALESCE(m.debits, 0) AS debits,
-                 b.opening + COALESCE(m.credits, 0) - COALESCE(m.debits, 0) AS independent
+          -- The independent-ledger control's persisted result (account_control_results) is authoritative ...
+          SELECT c.account_id, c.currency::text AS currency, c.opening, c.recorded, c.credits, c.debits, c.adjustments, c.independent, c.difference
+            FROM account_control_results c WHERE c.run_id = @run
+          UNION ALL
+          -- ... the recomputation from POSTED ledger entries applies only while the run has no persisted control result.
+          SELECT b.account_id, b.currency, b.opening, b.recorded, COALESCE(m.credits, 0), COALESCE(m.debits, 0), 0::numeric,
+                 b.opening + COALESCE(m.credits, 0) - COALESCE(m.debits, 0),
+                 b.opening + COALESCE(m.credits, 0) - COALESCE(m.debits, 0) - b.recorded
             FROM bal b LEFT JOIN mov m ON m.account_id = b.account_id AND m.currency = b.currency
+           WHERE NOT EXISTS (SELECT 1 FROM account_control_results x WHERE x.run_id = @run)
         ),
         acc_ex AS (
           SELECT a.account_id, a.currency, e.id, e.status, e.blocking
             FROM acc_base a
             JOIN exceptions e ON e.run_id = @run
              AND (e.source_row_id = a.account_id
-                  OR EXISTS (SELECT 1 FROM tx t WHERE t.account_id = a.account_id AND t.currency = a.currency
-                                AND t.delivery_id = e.delivery_id AND t.source_row_id = e.source_row_id))
+                  OR EXISTS (SELECT 1 FROM tx t WHERE t.account_id = a.account_id AND t.currency = a.currency AND e.id = ANY(t.exception_ids)))
         ),
         acc_exs AS (
           SELECT account_id, currency, array_agg(DISTINCT id) AS ids,
@@ -110,7 +119,7 @@ internal static class TransactionSql
         acc AS (
           SELECT a.*, rr.legal_entity_id, COALESCE(x.ids, ARRAY[]::text[]) AS exception_ids,
                  CASE WHEN COALESCE(x.open_blocking, false) THEN 'FAILED'
-                      WHEN a.recorded <> a.independent OR COALESCE(x.open_any, false) THEN 'REVIEW_REQUIRED'
+                      WHEN a.difference IS DISTINCT FROM 0 OR COALESCE(x.open_any, false) THEN 'REVIEW_REQUIRED'
                       ELSE 'PASSED' END AS state
             FROM acc_base a CROSS JOIN rr
             LEFT JOIN acc_exs x ON x.account_id = a.account_id AND x.currency = a.currency

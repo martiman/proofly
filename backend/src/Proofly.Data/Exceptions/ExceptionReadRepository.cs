@@ -196,7 +196,23 @@ public sealed class ExceptionReadRepository(NpgsqlDataSource db) : IExceptionRea
         {
             while (await r.ReadAsync(ct)) { byCurrency.Add(new CurrencyAggregate(r.GetString(0), (int)r.GetInt64(1), r.GetDecimal(2), r.GetDecimal(3))); }
         }
-        return new ExceptionsSummaryData(total, blocking, unassigned, overdue, noValue, bySeverity, byStatus, byControl, byCurrency, now);
+
+        var byReason = new List<ReasonCount>();
+        await using (var c = Cmd("SELECT e.reason_code, count(*)", "GROUP BY e.reason_code ORDER BY count(*) DESC, e.reason_code"))
+        await using (var r = await c.ExecuteReaderAsync(ct))
+        {
+            while (await r.ReadAsync(ct)) { byReason.Add(new ReasonCount(r.GetString(0), (int)r.GetInt64(1))); }
+        }
+
+        var bySeverityCurrency = new List<SeverityCurrencyAggregate>();
+        await using (var c = Cmd("SELECT e.severity, e.value_currency, count(*), sum(abs(e.value_amount))",
+            "AND e.value_currency IS NOT NULL GROUP BY e.severity, e.value_currency " +
+            "ORDER BY CASE e.severity WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2 ELSE 3 END, e.value_currency"))
+        await using (var r = await c.ExecuteReaderAsync(ct))
+        {
+            while (await r.ReadAsync(ct)) { bySeverityCurrency.Add(new SeverityCurrencyAggregate(r.GetString(0), r.GetString(1).Trim(), (int)r.GetInt64(2), r.GetDecimal(3))); }
+        }
+        return new ExceptionsSummaryData(total, blocking, unassigned, overdue, noValue, bySeverity, byStatus, byControl, byCurrency, byReason, bySeverityCurrency, now);
     }
 
     public async Task<ExceptionDetailData?> GetDetailAsync(string exceptionId, IReadOnlyCollection<string>? entityScope, DateTimeOffset now, CancellationToken ct = default)
@@ -277,7 +293,19 @@ public sealed class ExceptionReadRepository(NpgsqlDataSource db) : IExceptionRea
         {
             policy = await cmd.ExecuteScalarAsync(ct) as string;
         }
-        return new ExceptionDetailData(row, runState, ruleset, deliverySource, evidence, timeline, approvals, policy);
+
+        RuleTraceRow? trace = null;
+        await using (var cmd = db.CreateCommand("SELECT rule_id, rule_version, tolerance, expected_effect, description, calculation::text FROM exception_rule_traces WHERE exception_id = @id"))
+        {
+            cmd.Parameters.AddWithValue("id", exceptionId);
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            if (await r.ReadAsync(ct))
+            {
+                trace = new RuleTraceRow(r.GetString(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.IsDBNull(3) ? null : r.GetString(3),
+                    r.IsDBNull(4) ? null : r.GetString(4), r.GetString(5));
+            }
+        }
+        return new ExceptionDetailData(row, runState, ruleset, deliverySource, evidence, timeline, approvals, policy, trace);
     }
 
     public async Task<string?> FindSavedViewFiltersAsync(string savedViewId, string userId, CancellationToken ct = default)

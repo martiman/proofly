@@ -50,6 +50,15 @@ public class MatchingApiTests(MatchingFixture f) : IClassFixture<MatchingFixture
         Assert.Equal("JPY", g3.GetProperty("difference").GetProperty("currency").GetString());
         Assert.Equal("rule-ref@2.1", g3.GetProperty("ruleVersion").GetString());
         Assert.Equal("0.01 GBP", g3.GetProperty("tolerance").GetString());
+        Assert.Equal("1:1", g3.GetProperty("cardinality").GetString());
+        Assert.Equal("Amount differs by 2.5 JPY", g3.GetProperty("rationale").GetString());
+        Assert.Equal("RIGHT", g3.GetProperty("right")[0].GetProperty("side").GetString());
+        Assert.Equal("0.9", g3.GetProperty("left")[0].GetProperty("score").GetString());
+        // No rule and nothing recorded: null, never an invented value.
+        Assert.Equal(JsonValueKind.Null, items[1].GetProperty("ruleVersion").ValueKind);
+        Assert.Equal(JsonValueKind.Null, items[1].GetProperty("tolerance").ValueKind);
+        Assert.Equal(JsonValueKind.Null, items[1].GetProperty("rationale").ValueKind);
+        Assert.Equal(["EX-X"], items[4].GetProperty("exceptionIds").EnumerateArray().Select(e => e.GetString()!).ToArray()); // explicit match_group_exceptions link
         Assert.Equal("49997.500000", g3.GetProperty("right")[0].GetProperty("amount").GetProperty("amount").GetString());
         Assert.Equal(["EX-3"], g3.GetProperty("exceptionIds").EnumerateArray().Select(e => e.GetString()!).ToArray());
         Assert.Equal(JsonValueKind.Null, items[1].GetProperty("difference").ValueKind);
@@ -103,7 +112,12 @@ public class MatchingApiTests(MatchingFixture f) : IClassFixture<MatchingFixture
         var wb = await Json(res);
         var groups = wb.GetProperty("groups");
         Assert.Equal("G-002", groups[0].GetProperty("id").GetString());
-        Assert.StartsWith("transfer_instructions:", wb.GetProperty("focusTransactionId").GetString());
+        Assert.StartsWith("TRF-", wb.GetProperty("focusTransactionId").GetString());
+        var stats = wb.GetProperty("stats");
+        Assert.Equal("0.2", stats.GetProperty("autoMatchRate").GetString());
+        Assert.Equal((4, 2), (stats.GetProperty("openGroups").GetInt32(), stats.GetProperty("unmatchedCount").GetInt32()));
+        Assert.Equal(["EUR", "GBP"], stats.GetProperty("unmatchedByCurrency").EnumerateArray().Select(c => c.GetProperty("currency").GetString()!).ToArray());
+        Assert.Equal("250.000000", stats.GetProperty("unmatchedByCurrency")[0].GetProperty("value").GetProperty("amount").GetString());
         Assert.Equal(["250.000000", "10.250000"], wb.GetProperty("unmatched").EnumerateArray().Select(u => u.GetProperty("amount").GetProperty("amount").GetString()!).ToArray());
     }
 
@@ -122,12 +136,37 @@ public class MatchingApiTests(MatchingFixture f) : IClassFixture<MatchingFixture
     }
 
     [Fact]
+    public async Task Workbench_of_an_empty_run_and_of_an_ungrouped_transaction_is_not_an_error()
+    {
+        var empty = await Json(await Viewer.GetAsync("/api/v1/runs/R-EMPTY/matching/workbench"));
+        Assert.Equal(JsonValueKind.Null, empty.GetProperty("focusTransactionId").ValueKind);
+        Assert.Equal(0, empty.GetProperty("groups").GetArrayLength());
+        Assert.Equal(JsonValueKind.Null, empty.GetProperty("stats").GetProperty("autoMatchRate").ValueKind);
+
+        // B-9 is a bank transaction in no match group: the transaction stays the focus, no group is shown.
+        await using var q = f.Db.CreateCommand("SELECT id FROM bank_transactions WHERE external_transaction_id = 'B-9'");
+        var b9 = "BNK-" + (long)(await q.ExecuteScalarAsync())!;
+        var ungrouped = await Json(await Viewer.GetAsync("/api/v1/runs/R-M1/matching/workbench?transactionId=" + b9));
+        Assert.Equal(b9, ungrouped.GetProperty("focusTransactionId").GetString());
+        Assert.Equal(0, ungrouped.GetProperty("groups").GetArrayLength());
+
+        // An exception with no candidate and no group link: no focus, no group.
+        await using (var ins = f.Db.CreateCommand("INSERT INTO exceptions (id, run_id, legal_entity_id, business_date, title, control, reason_code, severity, due_at) VALUES ('EX-LOOSE','R-M1','LE-M1','2026-03-02','Loose','matching','X','LOW',now()) ON CONFLICT DO NOTHING"))
+        {
+            await ins.ExecuteNonQueryAsync();
+        }
+        var loose = await Json(await Viewer.GetAsync("/api/v1/runs/R-M1/matching/workbench?exceptionId=EX-LOOSE"));
+        Assert.Equal(JsonValueKind.Null, loose.GetProperty("focusTransactionId").ValueKind);
+        Assert.Equal(0, loose.GetProperty("groups").GetArrayLength());
+    }
+
+    [Fact]
     public async Task Workbench_error_cases()
     {
-        Assert.Equal(HttpStatusCode.NotFound, (await Viewer.GetAsync("/api/v1/runs/R-EMPTY/matching/workbench")).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await Viewer.GetAsync("/api/v1/runs/R-M1/matching/workbench?exceptionId=EX-X")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await Viewer.GetAsync("/api/v1/runs/R-M1/matching/workbench?exceptionId=EX-nope")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await Viewer.GetAsync("/api/v1/runs/R-M1/matching/workbench?transactionId=BNK-999999")).StatusCode);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await Viewer.GetAsync("/api/v1/runs/R-M1/matching/workbench?transactionId=garbage")).StatusCode);
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await Viewer.GetAsync("/api/v1/runs/R-M1/matching/workbench?transactionId=card_events:1&exceptionId=EX-1")).StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await Viewer.GetAsync("/api/v1/runs/R-M1/matching/workbench?transactionId=CRD-1&exceptionId=EX-1")).StatusCode);
     }
 
     [Theory]

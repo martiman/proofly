@@ -68,6 +68,7 @@ paths:
         - {name: includeSuperseded, in: query, schema: {type: boolean, default: false}}
         - {$ref: '#/components/parameters/Limit'}
         - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/IncludeTotal'}
       responses:
         '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/RunPage'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
@@ -177,6 +178,7 @@ paths:
         - {$ref: '#/components/parameters/Search'}
         - {$ref: '#/components/parameters/Limit'}
         - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/IncludeTotal'}
       responses:
         '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/SourceRecordPage'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
@@ -236,7 +238,7 @@ paths:
       operationId: getSourceRecord
       summary: Evidence record preview (original fields, location, fingerprint)
       x-required-permission: source.view
-      parameters: [{name: recordId, in: path, required: true, schema: {type: string}}]
+      parameters: [{name: recordId, in: path, required: true, description: "Record id `<sourceName>:<n>` for an accepted record or `rejected:<n>` for a rejected row. See README, section Identifiers.", schema: {type: string, examples: ['transfer_instructions:4', 'rejected:12']}}]
       responses:
         '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/SourceRecord'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
@@ -545,7 +547,7 @@ paths:
       summary: Matching workbench focused on a transaction or an exception
       x-required-permission: matching.view
       parameters:
-        - {name: transactionId, in: query, schema: {type: string}}
+        - {name: transactionId, in: query, description: "Transaction id (TRF-/DD-/CRD-/BNK-/LED- + n)", schema: {type: string}}
         - {name: exceptionId, in: query, schema: {type: string}}
       responses:
         '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/MatchingWorkbench'}}}}
@@ -564,6 +566,7 @@ paths:
         - {name: status, in: query, schema: {$ref: '#/components/schemas/MatchStatus'}}
         - {$ref: '#/components/parameters/Limit'}
         - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/IncludeTotal'}
       responses:
         '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/MatchGroupPage'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
@@ -619,8 +622,10 @@ paths:
       tags: [Accounts]
       operationId: getAccountLedger
       summary: Account ledger view with roll-forward, related transactions and exceptions
+      description: An account may hold balances in several currencies. `currency` selects one; it may be omitted only when the account has exactly one currency in the run (otherwise 422 on `currency`).
       x-required-permission: ledger.view
       parameters:
+        - {name: currency, in: query, schema: {$ref: '#/components/schemas/Currency'}}
         - {$ref: '#/components/parameters/Limit'}
         - {$ref: '#/components/parameters/Cursor'}
       responses:
@@ -647,9 +652,14 @@ paths:
       operationId: listAdjustments
       summary: Safeguarding adjustments of a run
       x-required-permission: safeguarding.view
-      parameters: [{name: status, in: query, schema: {$ref: '#/components/schemas/AdjustmentStatus'}}]
+      description: Oldest first (created time, then id). Cursor paged like every other list.
+      parameters:
+        - {name: status, in: query, schema: {$ref: '#/components/schemas/AdjustmentStatus'}}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/IncludeTotal'}
       responses:
-        '200': {description: "OK", content: {application/json: {schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/SafeguardingAdjustment'}}}}}}}
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/AdjustmentPage'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
@@ -951,7 +961,7 @@ components:
     RunId: {name: runId, in: path, required: true, description: "Run version id; a new id is issued per reprocess.", schema: {type: string}}
     DeliveryId: {name: deliveryId, in: path, required: true, schema: {type: string}}
     ExceptionId: {name: exceptionId, in: path, required: true, schema: {type: string, examples: [F-019]}}
-    TransactionId: {name: transactionId, in: path, required: true, schema: {type: string, examples: [TRF-004]}}
+    TransactionId: {name: transactionId, in: path, required: true, description: "Transaction id: `<prefix>-<n>` with prefix TRF (transfer instruction), DD (direct debit event), CRD (card event), BNK (bank transaction), LED (ledger entry). See README, section Identifiers.", schema: {type: string, examples: [TRF-4]}}
     Limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 25}}
     Cursor: {name: cursor, in: query, description: "Opaque cursor from `page.nextCursor`.", schema: {type: string}}
     IncludeTotal: {name: includeTotal, in: query, description: "Include exact `page.total` (may be slower).", schema: {type: boolean, default: false}}
@@ -964,13 +974,13 @@ components:
       required: true
       content: {application/json: {schema: {type: object, required: [reason], properties: {reason: {$ref: '#/components/schemas/Reason'}}}}}
   responses:
-    Unauthorized: {description: "Missing or invalid credentials", headers: {WWW-Authenticate: {schema: {type: string}}}, content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+    Unauthorized: {description: "Missing or invalid credentials (type: unauthenticated)", headers: {WWW-Authenticate: {schema: {type: string}}}, content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
     Forbidden: {description: 'Permission, legal-entity scope or separation-of-duties violation (type: forbidden | out-of-scope | separation-of-duties)', content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
-    NotFound: {description: "Not found (or outside caller's scope)", content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+    NotFound: {description: "Not found (or outside caller's scope) (type: not-found)", content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
     Conflict: {description: 'State conflict (type: invalid-state | run-superseded | stale-signoff | idempotency-in-progress | duplicate)', content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
-    PreconditionFailed: {description: "If-Match does not match current ETag; re-read and retry", content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
-    PreconditionRequired: {description: "If-Match header missing", content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
-    Unprocessable: {description: "Validation failed (reason missing, bad filter, bad body)", content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+    PreconditionFailed: {description: "If-Match does not match current ETag; re-read and retry (type: precondition-failed)", content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+    PreconditionRequired: {description: "If-Match header missing (type: precondition-required)", content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+    Unprocessable: {description: "Validation failed (reason missing, bad filter, bad body) (type: validation)", content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
   schemas:
     Problem:
       type: object
@@ -1009,11 +1019,11 @@ components:
       properties:
         nextCursor: {type: [string, 'null']}
         hasMore: {type: boolean}
-        total: {type: integer, description: "Present when includeTotal=true"}
+        total: {type: integer, description: "Omitted (never null) unless includeTotal=true"}
     IsoDate: {type: string, format: date}
     Severity: {type: string, enum: [CRITICAL, HIGH, MEDIUM, LOW]}
     ControlArea: {type: string, enum: [data_completeness, matching, independent_ledger, transaction_lifecycle, safeguarding]}
-    ControlState: {type: string, enum: [PASSED, REVIEW_REQUIRED, FAILED, BLOCKED, QUALIFIED]}
+    ControlState: {type: string, enum: [PASSED, REVIEW_REQUIRED, FAILED, BLOCKED, QUALIFIED], description: "An area with neither records nor exceptions in the run is omitted from ControlRoom.controlAreas (not reported as PASSED)."}
     RunState: {type: string, enum: [AWAITING_EVIDENCE, PROCESSING, REVIEW_REQUIRED, READY_FOR_SIGN_OFF, SIGNED_OFF, SUPERSEDED, FAILED]}
     SignOffState: {type: string, enum: [PREPARATION_INCOMPLETE, READY_FOR_REVIEW, RETURNED, APPROVAL_PENDING, SIGNED_OFF, INVALIDATED, SUPERSEDED]}
     ExceptionStatus: {type: string, enum: [OPEN, IN_INVESTIGATION, WAITING_FOR_DATA, PENDING_APPROVAL, RESOLVED, ACCEPTED_DIFFERENCE, FALSE_POSITIVE]}
@@ -1111,7 +1121,7 @@ components:
       properties:
         id: {type: string}
         name: {type: string}
-        currencies: {type: array, items: {$ref: '#/components/schemas/Currency'}}
+        currencies: {type: array, items: {$ref: '#/components/schemas/Currency'}, description: "Currencies the entity holds client funds in (always includes its base currency)."}
     Run:
       type: object
       required: [id, legalEntityId, businessDate, version, rulesetVersion, state, signOffState, startedAt, lastEvidenceArrivalAt]
@@ -1126,9 +1136,9 @@ components:
         state: {$ref: '#/components/schemas/RunState'}
         signOffState: {$ref: '#/components/schemas/SignOffState'}
         startedAt: {type: string, format: date-time}
-        lastEvidenceArrivalAt: {type: string, format: date-time}
+        lastEvidenceArrivalAt: {type: [string, 'null'], format: date-time, description: "Null until the first delivery for the run has arrived."}
         preparer: {oneOf: [{$ref: '#/components/schemas/UserRef'}, {type: 'null'}]}
-        requiredApprover: {oneOf: [{$ref: '#/components/schemas/UserRef'}, {type: 'null'}]}
+        requiredApprover: {oneOf: [{$ref: '#/components/schemas/UserRef'}, {type: 'null'}], description: "Null until the approval policy names the approver (at submission for sign-off)."}
         signedOffBy: {oneOf: [{$ref: '#/components/schemas/UserRef'}, {type: 'null'}]}
         signedOffAt: {type: [string, 'null'], format: date-time}
     UserRef:
@@ -1150,8 +1160,8 @@ components:
         area: {$ref: '#/components/schemas/ControlArea'}
         label: {type: string}
         state: {$ref: '#/components/schemas/ControlState'}
-        recordCount: {type: integer}
-        value: {type: array, items: {$ref: '#/components/schemas/Money'}, description: "One Money per currency"}
+        recordCount: {type: integer, description: "Records the control looked at. data_completeness: source rows received by the run's deliveries (accepted plus rejected); matching: match groups; independent_ledger: ledger entries; transaction_lifecycle: transfer, direct debit and card events; safeguarding: currency positions. previousRecordCount is the same count for the previous business date's run."}
+        value: {type: array, items: {$ref: '#/components/schemas/Money'}, description: "One Money per currency: sum of the area's open exception values"}
         openExceptions: {type: integer}
         previousRecordCount: {type: integer}
         changeFromPrevious: {type: integer}
@@ -1205,10 +1215,10 @@ components:
         fileName: {type: string}
         businessDate: {$ref: '#/components/schemas/IsoDate'}
         schemaVersion: {type: string}
-        declaredRecordCount: {type: integer}
+        declaredRecordCount: {type: [integer, 'null'], description: "Null when the manifest declares no record count."}
         actualRecordCount: {type: integer}
         declaredTotals: {type: array, items: {$ref: '#/components/schemas/Money'}}
-        expectedBy: {type: string, format: date-time}
+        expectedBy: {type: [string, 'null'], format: date-time, description: "Null when no expected-by time is configured for the source."}
         receivedAt: {type: [string, 'null'], format: date-time}
         correctionOfDeliveryId: {type: [string, 'null']}
         supersededByDeliveryId: {type: [string, 'null']}
@@ -1252,15 +1262,17 @@ components:
       type: object
       required: [recordId, sourceName, sourceRowId, deliveryId, rowNumber, accepted, fields, findingIds]
       properties:
-        recordId: {type: string, description: 'New: stable id for GET /source-records/{recordId}'}
+        recordId: {type: string, description: 'Stable id for GET /source-records/{recordId}: `<sourceName>:<n>` (accepted) or `rejected:<n>`'}
         sourceName: {type: string}
         sourceRowId: {type: string}
         deliveryId: {type: string}
-        rowNumber: {type: integer}
+        rowNumber: {type: [integer, 'null'], description: "1-based data row in the source file; null only for records ingested before row tracking."}
         accepted: {type: boolean}
         fields: {type: object, additionalProperties: {type: string}, description: "Original values as received; amounts remain strings"}
         rejectionReasons: {type: array, items: {type: string}}
         contentFingerprint: {type: string}
+        extractionTimestamp: {type: [string, 'null'], format: date-time, description: "Extraction time of the delivery; null when not recorded."}
+        sourceTimeZone: {type: [string, 'null'], description: "Time zone of the source system; null when not recorded."}
         findingIds: {type: array, items: {type: string}}
     SourceRecordPage:
       type: object
@@ -1273,8 +1285,8 @@ components:
       required: [type, id, name]
       properties:
         type: {$ref: '#/components/schemas/ActorType'}
-        id: {type: string}
-        name: {type: string}
+        id: {type: [string, 'null'], description: "User id for USER; null for SYSTEM actors."}
+        name: {type: [string, 'null'], description: "Display name; null when none is recorded."}
     ExceptionSummary:
       type: object
       required: [id, runId, title, control, reasonCode, severity, status, value, legalEntityId, businessDate, owner, dueAt, blocking, sourceFile, sourceRowId, createdAt, etag]
@@ -1294,8 +1306,8 @@ components:
         ageDays: {type: integer}
         dueAt: {type: string, format: date-time}
         blocking: {type: boolean}
-        sourceFile: {type: string}
-        sourceRowId: {type: string}
+        sourceFile: {type: [string, 'null']}
+        sourceRowId: {type: [string, 'null']}
         etag: {type: string, description: "Same value as the ETag header of GET /exceptions/{id}; lets bulk commands avoid a read per item."}
     ExceptionPage:
       type: object
@@ -1326,6 +1338,26 @@ components:
               count: {type: integer}
               totalValue: {$ref: '#/components/schemas/Money'}
               absoluteValue: {$ref: '#/components/schemas/Money'}
+        byReason:
+          type: array
+          description: Exception count per reason code, highest count first (then reason code).
+          items:
+            type: object
+            required: [reasonCode, count]
+            properties:
+              reasonCode: {type: string}
+              count: {type: integer}
+        bySeverityCurrency:
+          type: array
+          description: Count and absolute value per severity and currency (never summed across currencies).
+          items:
+            type: object
+            required: [severity, currency, count, absoluteValue]
+            properties:
+              severity: {$ref: '#/components/schemas/Severity'}
+              currency: {$ref: '#/components/schemas/Currency'}
+              count: {type: integer}
+              absoluteValue: {$ref: '#/components/schemas/Money'}
         withoutValue: {type: integer, description: "Exceptions without a monetary value"}
         computedAt: {type: string, format: date-time}
     SavedViewInput:
@@ -1353,7 +1385,7 @@ components:
         kind: {type: string, enum: [INSTRUCTION, LEDGER_ENTRY, BANK_TRANSACTION, LIFECYCLE_EVENT, BALANCE, CONTROL_RESULT, DELIVERY]}
         label: {type: string}
         source: {type: string}
-        sourceRowId: {type: string}
+        sourceRowId: {type: [string, 'null'], description: "Source row id of the evidence; null for a control result that is not tied to one row."}
         recordId: {type: [string, 'null'], description: "Link to GET /source-records/{recordId} for preview"}
         amount: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
     EvidenceEdge:
@@ -1379,7 +1411,7 @@ components:
             properties:
               deliveryId: {type: string}
               fingerprint: {type: string}
-              rowNumber: {type: [integer, 'null']}
+              rowNumber: {type: [integer, 'null'], description: "Row in that delivery of the subject record (or of the first related record when the subject is not in this delivery); null when row tracking is unavailable."}
               schemaVersion: {type: string}
               mappingVersion: {type: string}
     RuleTrace:
@@ -1390,7 +1422,7 @@ components:
         ruleId: {type: string}
         ruleVersion: {type: string}
         inputs: {type: array, items: {type: object, required: [name, value], properties: {name: {type: string}, value: {type: string}}}}
-        tolerance: {type: string}
+        tolerance: {type: [string, 'null'], description: "Null when the control recorded no tolerance."}
         calculation: {type: string}
         result: {type: string}
     TimelineEvent:
@@ -1495,7 +1527,7 @@ components:
         accountId: {type: [string, 'null']}
         timestamp: {type: string, format: date-time}
         amount: {$ref: '#/components/schemas/Money'}
-        direction: {type: [string, 'null'], enum: [DEBIT, CREDIT, null]}
+        direction: {type: [string, 'null'], enum: [DEBIT, CREDIT, null], description: "Booking direction on the client account. Card, bank and ledger records carry their own indicator. Transfer instructions (BANK_TRANSFER) are always DEBIT of the client account and direct debit events (DIRECT_DEBIT) are always CREDIT, whatever the event type. Aggregates use this direction."}
         sourceStatus: {type: string}
         lifecycle: {type: array, items: {type: string}}
         matchStatus: {$ref: '#/components/schemas/MatchStatus'}
@@ -1526,20 +1558,25 @@ components:
         transactionId: {type: string}
         label: {type: string}
         amount: {$ref: '#/components/schemas/Money'}
-        timestamp: {type: string, format: date-time}
-        reference: {type: string}
+        timestamp: {type: [string, 'null'], format: date-time, description: "Null when the canonical record is no longer present."}
+        reference: {type: [string, 'null'], description: "Null when the canonical record is no longer present."}
+        kind: {$ref: '#/components/schemas/TransactionKind'}
+        side: {type: string, enum: [LEFT, RIGHT], description: "LEFT = operational record (transfer, direct debit, card); RIGHT = evidence (bank, ledger)."}
+        score: {type: [string, 'null'], pattern: '^[01](\.\d{1,4})?$', description: "Match score 0..1 as a decimal string; null when not scored."}
+        selected: {type: boolean, description: "True when the candidate is part of the matched set."}
     MatchGroup:
       type: object
       required: [id, status, left, right, difference, ruleVersion, tolerance, rationale, exceptionIds]
       properties:
         id: {type: string}
         status: {$ref: '#/components/schemas/MatchStatus'}
+        cardinality: {type: string, pattern: '^(0|1|N):(0|1|N)$', description: "Left:right record counts, N meaning more than one, e.g. 1:1, 1:N, N:1, N:N."}
         left: {type: array, items: {$ref: '#/components/schemas/MatchCandidate'}}
         right: {type: array, items: {$ref: '#/components/schemas/MatchCandidate'}}
         difference: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
-        ruleVersion: {type: string}
-        tolerance: {type: string}
-        rationale: {type: string}
+        ruleVersion: {type: [string, 'null'], description: "`<ruleId>@<configVersion>`; null for a manual match without a rule."}
+        tolerance: {type: [string, 'null'], description: "Tolerance applied, as recorded by the control; null when none was recorded."}
+        rationale: {type: [string, 'null'], description: "Why the group was formed, as recorded; null when none was recorded."}
         exceptionIds: {type: array, items: {type: string}}
         manual: {type: boolean, description: "True when created by a user"}
         approval: {oneOf: [{$ref: '#/components/schemas/Approval'}, {type: 'null'}]}
@@ -1551,11 +1588,27 @@ components:
         page: {$ref: '#/components/schemas/PageInfo'}
     MatchingWorkbench:
       type: object
-      required: [focusTransactionId, groups, unmatched]
+      required: [focusTransactionId, groups, unmatched, stats]
       properties:
-        focusTransactionId: {type: string}
+        focusTransactionId: {type: [string, 'null'], description: "The transaction the workbench is centred on; null when the run has no group to focus. A transaction (or exception) that exists but is in no group yields focus = that transaction (null for an exception without a transaction) and groups = []."}
         groups: {type: array, items: {$ref: '#/components/schemas/MatchGroup'}}
         unmatched: {type: array, items: {$ref: '#/components/schemas/MatchCandidate'}}
+        stats:
+          type: object
+          required: [autoMatchRate, openGroups, unmatchedCount, unmatchedByCurrency]
+          properties:
+            autoMatchRate: {type: [string, 'null'], pattern: '^[01](\.\d{1,4})?$', description: "Automatically matched groups / all groups (decimal string 0..1); null when the run has no groups."}
+            openGroups: {type: integer, description: "Groups whose status is not MATCHED."}
+            unmatchedCount: {type: integer}
+            unmatchedByCurrency:
+              type: array
+              items:
+                type: object
+                required: [currency, count, value]
+                properties:
+                  currency: {$ref: '#/components/schemas/Currency'}
+                  count: {type: integer}
+                  value: {$ref: '#/components/schemas/Money'}
     Account:
       type: object
       required: [id, runId, currency, legalEntityId, openingBalance, recordedClosingBalance, independentClosingBalance, difference, state, exceptionIds]
@@ -1564,10 +1617,10 @@ components:
         runId: {type: string}
         currency: {$ref: '#/components/schemas/Currency'}
         legalEntityId: {type: string}
-        openingBalance: {$ref: '#/components/schemas/Money'}
-        recordedClosingBalance: {$ref: '#/components/schemas/Money'}
-        independentClosingBalance: {$ref: '#/components/schemas/Money'}
-        difference: {$ref: '#/components/schemas/Money'}
+        openingBalance: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}], description: "Null when the control could not establish a supported opening balance."}
+        recordedClosingBalance: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}], description: "Null when no recorded closing balance was delivered."}
+        independentClosingBalance: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}], description: "From the independent-ledger control; null when it could not compute it."}
+        difference: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}], description: "Independent minus recorded closing balance; null when either is unknown."}
         state: {$ref: '#/components/schemas/ControlState'}
         exceptionIds: {type: array, items: {type: string}}
     AccountPage:
@@ -1625,12 +1678,12 @@ components:
         exceptionIds: {type: array, items: {type: string}}
     ObligationLine:
       type: object
-      required: [accountId, currency, amount, movementType]
+      required: [accountId, currency, amount]
       properties:
         accountId: {type: string}
         currency: {$ref: '#/components/schemas/Currency'}
         amount: {$ref: '#/components/schemas/Money'}
-        movementType: {type: string}
+        movementType: {type: string, description: "Movement classification when the control recorded one; omitted otherwise."}
     EligibleBalanceLine:
       type: object
       required: [sourceRowId, externalAccountId, balanceTimestamp, balance, evidenceReference, included, reason, findingIds]
@@ -1675,6 +1728,12 @@ components:
         expiresOn: {type: [string, 'null'], format: date}
         approval: {oneOf: [{$ref: '#/components/schemas/Approval'}, {type: 'null'}]}
         history: {type: array, items: {$ref: '#/components/schemas/TimelineEvent'}}
+    AdjustmentPage:
+      type: object
+      required: [items, page]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/SafeguardingAdjustment'}}
+        page: {$ref: '#/components/schemas/PageInfo'}
     SafeguardingPosition:
       type: object
       required: [runId, businessDate, legalEntityId, evidenceReadiness, approvalState, positions, obligations, eligibleBalances, adjustments, changeAnalysis]
@@ -1743,13 +1802,14 @@ components:
       type: object
       required: [id, runId, generatedAt, status, contents]
       properties:
-        id: {type: string}
+        id: {type: [string, 'null'], description: "Null while NOT_GENERATED (no pack exists yet)."}
         runId: {type: string}
         generatedAt: {type: [string, 'null'], format: date-time}
         status: {type: string, enum: [NOT_GENERATED, GENERATING, GENERATED, FAILED]}
         contents: {type: array, items: {type: string}}
         sha256: {type: [string, 'null']}
         sizeBytes: {type: [integer, 'null']}
+        failureReason: {type: [string, 'null'], description: "Why generation failed; present only for FAILED."}
     RuleConfig:
       type: object
       required: [ruleId, control, version, description, tolerance, severity, effectiveFrom]
@@ -1801,7 +1861,7 @@ components:
         approvalPolicies: {type: array, items: {$ref: '#/components/schemas/ApprovalPolicy'}}
         pendingChanges: {type: integer, description: "Count of changes awaiting approval"}
     ConfigTargetKind: {type: string, enum: [RULE, SOURCE, USER_ACCESS, APPROVAL_POLICY]}
-    ConfigChangeStatus: {type: string, enum: [DRAFT, PENDING_APPROVAL, APPROVED, ACTIVE, REJECTED, RETIRED]}
+    ConfigChangeStatus: {type: string, enum: [DRAFT, PENDING_APPROVAL, APPROVED, ACTIVE, REJECTED, RETIRED], description: "Stored 1:1 in config_changes.status."}
     ConfigChangeInput:
       type: object
       required: [targetKind, targetId, after, effectiveFrom, reason]

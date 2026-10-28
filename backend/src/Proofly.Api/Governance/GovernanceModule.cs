@@ -44,7 +44,7 @@ internal sealed class GovernanceEndpoints : IEndpointModule
                     S("search"), page.Limit, cursor, Scope(caller)), ct);
             }
             catch (ArgumentException ex) when (ex.ParamName == "cursor") { throw ProblemException.Validation("cursor", "The cursor is not valid."); }
-            return Results.Ok(new AuditEventPageDto(res.Items.Select(Map).ToList(), new GovernancePageInfoDto(res.NextCursor, res.HasMore)));
+            return Results.Ok(new PageDto<AuditEventDto>(res.Items.Select(Map).ToList(), new PageInfoDto(res.NextCursor, res.HasMore)));
         });
 
         g.MapGet("/settings", async (HttpContext ctx, ISettingsRepository repo, CancellationToken ct) =>
@@ -58,7 +58,7 @@ internal sealed class GovernanceEndpoints : IEndpointModule
                 new LegalEntityDto(snap.LegalEntity.Id, snap.LegalEntity.Name, snap.LegalEntity.Currencies),
                 snap.Rules.Select(r => new RuleConfigDto(r.RuleId, r.Control, r.Version, r.Description, r.Tolerance, r.Severity, r.EffectiveFrom, r.PendingChangeId)).ToList(),
                 snap.Sources.Select(x => new SourceConfigDto(x.SourceName, x.SchemaVersion, x.ExpectedByLocalTime, x.Mandatory, x.PendingChangeId)).ToList(),
-                snap.Users.Select(u => new UserAccessDto(u.Id, u.Name, u.Email, u.Roles, u.LegalEntityIds, null)).ToList(),
+                snap.Users.Select(u => new UserAccessDto(u.Id, u.Name, u.Email, u.Roles, u.LegalEntityIds, u.PendingChangeId)).ToList(),
                 snap.FreshnessPolicy,
                 snap.ApprovalPolicies.Select(p => new ApprovalPolicyDto(p.Name, p.Description, p.RequiredRole, p.Version)).ToList(),
                 snap.PendingChanges));
@@ -75,19 +75,19 @@ internal sealed class GovernanceEndpoints : IEndpointModule
             var more = rows.HasMore;
             var items = rows.Items.Select(Map).ToList();
             var next = more ? Cursors.Encode(new ApprovalCursor(rows.Items[^1].ProposedAt, rows.Items[^1].Id)) : null;
-            return Results.Ok(new ApprovalPageDto(items, new GovernancePageInfoDto(next, more)));
+            return Results.Ok(new PageDto<ApprovalDto>(items, new PageInfoDto(next, more)));
         });
 
         g.MapGet("/runs/{runId}/evidence-pack", async (string runId, HttpContext ctx, IEvidencePackRepository repo, CancellationToken ct) =>
         {
             var caller = ctx.GetCaller();
             var p = await repo.GetForRunAsync(runId, Scope(caller), ct) ?? throw new ProblemException(ProblemTypes.NotFound);
-            return Results.Ok(new EvidencePackDto(p.Id, p.RunId, p.GeneratedAt, p.Status, p.Contents, p.Sha256, p.SizeBytes));
+            return Results.Ok(new EvidencePackDto(p.Id, p.RunId, p.GeneratedAt, p.Status, p.Contents, p.Sha256, p.SizeBytes, p.FailureReason));
         });
     }
 
     private static AuditEventDto Map(AuditEventRecord e) => new(e.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), e.At,
-        new ActorDto(WireNames.ToUpperSnake(e.ActorType), e.ActorId ?? "system", e.ActorName), e.Type, e.RunId, e.SubjectKind, e.SubjectId,
+        new ActorDto(WireNames.ToUpperSnake(e.ActorType), e.ActorId, string.IsNullOrEmpty(e.ActorName) ? null : e.ActorName), e.Type, e.RunId, e.SubjectKind, e.SubjectId,
         e.Summary, e.Reason, e.RuleVersion, e.RequestId, e.Hash, e.PreviousHash);
 
     private static ApprovalDto Map(ApprovalRow a) => new(a.Id, a.ObjectType, a.ObjectId, a.RunId, a.ProposalVersion,

@@ -6,7 +6,8 @@ public sealed record SafeguardingCurrencyPositionDto(
     string Currency, MoneyDto Obligation, MoneyDto EligibleBalance, MoneyDto ApprovedAdjustments, MoneyDto Result,
     string State, IReadOnlyList<string> Qualifications, MoneyDto? PreviousResult, IReadOnlyList<string> ExceptionIds);
 
-public sealed record ObligationLineDto(string AccountId, string Currency, MoneyDto Amount, string MovementType);
+public sealed record ObligationLineDto(string AccountId, string Currency, MoneyDto Amount,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? MovementType);
 
 public sealed record EligibleBalanceLineDto(
     string SourceRowId, string? RecordId, string ExternalAccountId, DateTimeOffset BalanceTimestamp, MoneyDto Balance,
@@ -31,4 +32,3 @@ public sealed record SafeguardingPositionDto(
     IReadOnlyList<EligibleBalanceLineDto> EligibleBalances, IReadOnlyList<SafeguardingAdjustmentDto> Adjustments,
     IReadOnlyList<ChangeDriverDto> ChangeAnalysis);
 
-public sealed record SafeguardingAdjustmentListDto(IReadOnlyList<SafeguardingAdjustmentDto> Items);

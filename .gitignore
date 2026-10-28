@@ -4,3 +4,4 @@ backend/**/obj/
 
 # local deployment secrets
 deploy/local/.env
+artifacts/

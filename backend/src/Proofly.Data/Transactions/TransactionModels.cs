@@ -11,7 +11,7 @@ public sealed record TransactionFilter(
 public sealed record TransactionCursor(DateTimeOffset Ts, string Id);
 
 public sealed record TransactionRow(
-    string Id, string RunId, string Kind, string Source, string SourceRowId, string? RecordId, string DeliveryId, string Reference,
+    string Id, string RunId, string Kind, string Source, string SourceRowId, string? RecordId, string DeliveryId, int? RowNumber, string Reference,
     string? AccountId, DateTimeOffset Timestamp, decimal Amount, string Currency, string? Direction, string SourceStatus,
     IReadOnlyList<string> Lifecycle, string MatchStatus, string? MatchGroupId, IReadOnlyList<string> ExceptionIds, bool Accepted);
 
@@ -21,18 +21,16 @@ public sealed record TransactionPageResult(IReadOnlyList<TransactionRow> Rows, b
 
 public sealed record LineageNode(string Id, string Kind, string Label, string Source, string SourceRowId, string? RecordId, decimal? Amount, string? Currency);
 public sealed record LineageEdge(string From, string To, string Relation);
-public sealed record LineageDelivery(string DeliveryId, string Fingerprint, string SchemaVersion);
+public sealed record LineageDelivery(string DeliveryId, string Fingerprint, string SchemaVersion, int? RowNumber);
 public sealed record TransactionLineage(string TransactionId, IReadOnlyList<LineageNode> Nodes, IReadOnlyList<LineageEdge> Edges, IReadOnlyList<LineageDelivery> Deliveries);
 
 public sealed record AccountFilter(string? Currency = null, string? State = null, string? Search = null);
 public sealed record AccountCursor(string AccountId, string Currency);
 
+/// <summary>Opening, Recorded, Independent and Difference are null when the control could not compute them. Difference = Independent - Recorded.</summary>
 public sealed record AccountRow(
-    string AccountId, string Currency, string LegalEntityId, decimal Opening, decimal Recorded, decimal Independent,
-    decimal Credits, decimal Debits, string State, IReadOnlyList<string> ExceptionIds)
-{
-    public decimal Difference => Recorded - Independent;
-}
+    string AccountId, string Currency, string LegalEntityId, decimal? Opening, decimal? Recorded, decimal? Independent,
+    decimal Credits, decimal Debits, decimal Adjustments, decimal? Difference, string State, IReadOnlyList<string> ExceptionIds);
 
 public sealed record AccountAggregate(string Currency, int Accounts, decimal TotalDifference);
 public sealed record AccountPageResult(IReadOnlyList<AccountRow> Rows, bool HasMore, IReadOnlyList<AccountAggregate> Aggregates);
@@ -47,4 +45,4 @@ public sealed record LedgerEntryPage(IReadOnlyList<LedgerEntryRow> Rows, bool Ha
 public sealed record AccountExceptionRow(
     string Id, string RunId, string Title, string Control, string ReasonCode, string Severity, string Status, decimal? ValueAmount,
     string? ValueCurrency, string LegalEntityId, DateOnly BusinessDate, string? OwnerId, string? OwnerName, DateTimeOffset CreatedAt,
-    DateTimeOffset DueAt, bool Blocking, string SourceFile, string SourceRowId, int Version);
+    DateTimeOffset DueAt, bool Blocking, string? SourceFile, string? SourceRowId, int Version);

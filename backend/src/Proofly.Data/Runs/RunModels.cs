@@ -14,7 +14,7 @@ public sealed record UserRefRow(string Id, string Name);
 
 public sealed record RunRow(
     string Id, string LegalEntityId, DateOnly BusinessDate, int Version, string RulesetVersion, string State, string SignOffState,
-    DateTimeOffset StartedAt, DateTimeOffset LastEvidenceArrivalAt, long RowVersion, string? SupersededByRunId, string? SupersedesRunId,
+    DateTimeOffset StartedAt, DateTimeOffset? LastEvidenceArrivalAt, long RowVersion, string? SupersededByRunId, string? SupersedesRunId,
     UserRefRow? Preparer, UserRefRow? RequiredApprover, UserRefRow? SignedOffBy, DateTimeOffset? SignedOffAt);
 
 public sealed record RunListFilter(string? LegalEntityId, DateOnly? BusinessDate, bool IncludeSuperseded);
@@ -32,8 +32,8 @@ public sealed record ControlAreaRow(
 public sealed record DailySummaryRow(string Text, string? LinkKind, string? LinkId);
 
 public sealed record DeliveryRow(
-    string Id, string SourceName, string FileName, DateOnly BusinessDate, string SchemaVersion, int DeclaredRecordCount, int ActualRecordCount,
-    IReadOnlyList<MoneyRow> DeclaredTotals, DateTimeOffset ExpectedBy, DateTimeOffset? ReceivedAt, string? CorrectionOfDeliveryId,
+    string Id, string SourceName, string FileName, DateOnly BusinessDate, string SchemaVersion, int? DeclaredRecordCount, int ActualRecordCount,
+    IReadOnlyList<MoneyRow> DeclaredTotals, DateTimeOffset? ExpectedBy, DateTimeOffset? ReceivedAt, string? CorrectionOfDeliveryId,
     string? SupersededByDeliveryId, string State, int AcceptedRecords, int RejectedRecords, IReadOnlyList<string> FindingIds);
 
 public sealed record AttentionRow(

@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
@@ -36,11 +35,8 @@ public static class AuthModule
         {
             var result = HttpCallerAccessor.ResultOf(ctx) ?? throw new Platform.Problems.ProblemException(Platform.Problems.ProblemTypes.Unauthenticated);
             var c = result.Caller;
-            var byEntity = new JsonObject();
-            foreach (var (le, perms) in c.PermissionsByLegalEntity.OrderBy(k => k.Key, StringComparer.Ordinal))
-            {
-                byEntity[le] = new JsonArray(perms.Order(StringComparer.Ordinal).Select(p => (JsonNode)JsonValue.Create(p)!).ToArray());
-            }
+            var byEntity = new SortedDictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+            foreach (var (le, perms) in c.PermissionsByLegalEntity) { byEntity[le] = perms.Order(StringComparer.Ordinal).ToList(); }
             return Results.Ok(new MeResponse(result.User.Id, result.User.Name, result.User.Email,
                 c.Roles.ToList(), c.LegalEntityIds.ToList(), c.Permissions.Order(StringComparer.Ordinal).ToList(), byEntity));
         });
@@ -50,7 +46,7 @@ public static class AuthModule
 
 /// <summary>Wire form of the contract's <c>Me</c> schema.</summary>
 public sealed record MeResponse(string Id, string Name, string Email, IReadOnlyList<string> Roles, IReadOnlyList<string> LegalEntityIds,
-    IReadOnlyList<string> Permissions, JsonObject PermissionsByLegalEntity);
+    IReadOnlyList<string> Permissions, IReadOnlyDictionary<string, IReadOnlyList<string>> PermissionsByLegalEntity);
 
 internal sealed class AuthStartupFilter : IStartupFilter
 {

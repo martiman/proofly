@@ -154,7 +154,7 @@ public sealed class SourceReadRepository(NpgsqlDataSource db) : ISourceReadRepos
         FROM (
           SELECT 0 AS grp, a.id AS ord, a.rowid AS source_row_id, a.rn AS rn, a.j::text AS fields, NULL::text[] AS reasons,
                  encode(sha256(convert_to(a.j::text, 'UTF8')), 'hex') AS fp
-          FROM (SELECT t.id, {rowIdExpr} AS rowid, row_number() OVER (ORDER BY t.id) AS rn, to_jsonb(t) - 'id' - 'delivery_id' AS j
+          FROM (SELECT t.id, {rowIdExpr} AS rowid, t.row_number::bigint AS rn, to_jsonb(t) - 'id' - 'delivery_id' - 'row_number' AS j
                 FROM {table} t WHERE t.delivery_id = @d) a
           UNION ALL
           SELECT 1, r.id, COALESCE(r.source_row_id, ''), r.row_number::bigint,
@@ -244,14 +244,17 @@ public sealed class SourceReadRepository(NpgsqlDataSource db) : ISourceReadRepos
         while (await r.ReadAsync(ct))
         {
             var grp = r.GetInt32(0); var ord = r.GetInt64(1);
-            var fields = new JsonObject();
-            foreach (var p in JsonDocument.Parse(r.GetString(4)).RootElement.EnumerateObject())
+            var fields = new Dictionary<string, string>(StringComparer.Ordinal);
+            using (var doc = JsonDocument.Parse(r.GetString(4)))
             {
-                // Values as received: amounts keep their exact decimal text, never a float.
-                if (p.Value.ValueKind != JsonValueKind.Null) { fields[p.Name] = p.Value.ValueKind == JsonValueKind.String ? p.Value.GetString() : p.Value.GetRawText(); }
+                foreach (var p in doc.RootElement.EnumerateObject())
+                {
+                    // Values as received: amounts keep their exact decimal text, never a float.
+                    if (p.Value.ValueKind != JsonValueKind.Null) { fields[p.Name] = p.Value.ValueKind == JsonValueKind.String ? p.Value.GetString()! : p.Value.GetRawText(); }
+                }
             }
             list.Add(new SourceRecordRow(grp == 0 ? $"{d.SourceName}:{ord}" : $"{RejectedPrefix}:{ord}", d.SourceName, r.GetString(2), d.Id,
-                (int)r.GetInt64(3), grp == 0, fields, r.IsDBNull(5) ? null : r.GetFieldValue<string[]>(5),
+                r.IsDBNull(3) ? null : (int)r.GetInt64(3), grp == 0, fields, r.IsDBNull(5) ? null : r.GetFieldValue<string[]>(5),
                 r.IsDBNull(6) ? null : r.GetString(6), r.GetFieldValue<string[]>(7), grp, ord));
         }
         return list;
@@ -278,7 +281,7 @@ public sealed class SourceReadRepository(NpgsqlDataSource db) : ISourceReadRepos
             var mapped = MapStage(type, after);
             if (mapped is null) { continue; }
             steps.Add(new ProcessingStepRow(r.GetInt64(0).ToString(CultureInfo.InvariantCulture), r.GetFieldValue<DateTimeOffset>(1), mapped.Value.Stage, mapped.Value.Outcome,
-                r.GetString(3), S(4) ?? "system", S(5) ?? S(4) ?? "system", S(6) ?? S(7)));
+                r.GetString(3), S(4), S(5), S(6) ?? S(7)));
         }
         return steps;
     }

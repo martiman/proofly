@@ -59,21 +59,22 @@ internal static class RecordTables
 
     public static bool Supports(Type recordType) => Maps.ContainsKey(recordType);
 
-    public static async Task InsertAsync(NpgsqlTransaction tx, string deliveryId, IReadOnlyList<ISourceRecord> records, CancellationToken ct)
+    public static async Task InsertAsync(NpgsqlTransaction tx, string deliveryId, IReadOnlyList<(ISourceRecord Record, int RowNumber)> records, CancellationToken ct)
     {
-        foreach (var group in records.GroupBy(r => r.GetType()))
+        foreach (var group in records.GroupBy(r => r.Record.GetType()))
         {
             var map = Maps[group.Key];
-            var cols = "delivery_id, " + string.Join(", ", map.Columns);
-            var ps = string.Join(", ", Enumerable.Range(1, map.Columns.Length + 1).Select(i => "$" + i));
+            var cols = "delivery_id, row_number, " + string.Join(", ", map.Columns);
+            var ps = string.Join(", ", Enumerable.Range(1, map.Columns.Length + 2).Select(i => "$" + i));
             var sql = $"INSERT INTO {map.Table} ({cols}) VALUES ({ps})";
             foreach (var chunk in group.Chunk(500))
             {
                 await using var batch = new NpgsqlBatch(tx.Connection, tx);
-                foreach (var rec in chunk)
+                foreach (var (rec, rowNumber) in chunk)
                 {
                     var cmd = new NpgsqlBatchCommand(sql);
                     cmd.Parameters.Add(new NpgsqlParameter { Value = deliveryId });
+                    cmd.Parameters.Add(new NpgsqlParameter { Value = rowNumber });
                     foreach (var v in map.Values(rec)) cmd.Parameters.Add(new NpgsqlParameter { Value = v ?? DBNull.Value });
                     batch.BatchCommands.Add(cmd);
                 }

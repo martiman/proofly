@@ -17,7 +17,7 @@ public sealed record PositionRow(
     string Currency, decimal Obligation, decimal Eligible, decimal ApprovedAdjustments, decimal Result, string State,
     IReadOnlyList<string> Qualifications, IReadOnlyList<string> ExceptionIds);
 
-public sealed record ObligationLineRow(string AccountId, string Currency, decimal Amount, string MovementType);
+public sealed record ObligationLineRow(string AccountId, string Currency, decimal Amount, string? MovementType);
 
 public sealed record BalanceLineRow(
     string SourceRowId, string? RecordId, string ExternalAccountId, DateTimeOffset BalanceTimestamp, decimal Balance, string Currency,
@@ -32,11 +32,17 @@ public sealed record ApprovalRow(
     string RequiredRole, string Status, string? Decision, string? Rationale, IReadOnlyList<string> EvidenceRefs,
     string PolicyVersion, DateTimeOffset ProposedAt, DateTimeOffset? DecidedAt);
 
-public sealed record HistoryRow(string Id, DateTimeOffset At, string ActorType, string ActorId, string ActorName, string EventType, string Text);
+public sealed record HistoryRow(string Id, DateTimeOffset At, string ActorType, string? ActorId, string? ActorName, string EventType, string Text);
 
 public sealed record AdjustmentRow(
     string Id, string RunId, string Currency, decimal Amount, string Status, UserRefRow Owner, string Reason,
-    DateOnly? ExpiresOn, int Version, ApprovalRow? Approval, IReadOnlyList<HistoryRow> History);
+    IReadOnlyList<string> EvidenceRefs, DateOnly? ExpiresOn, int Version, ApprovalRow? Approval, IReadOnlyList<HistoryRow> History,
+    DateTimeOffset CreatedAt);
+
+/// <summary>Keyset state for adjustments: oldest first, (created_at, id) ascending.</summary>
+public sealed record AdjustmentCursor(DateTimeOffset At, string Id);
+
+public sealed record AdjustmentPageRows(IReadOnlyList<AdjustmentRow> Items, bool HasMore, int? Total);
 
 public sealed record SafeguardingView(
     SafeguardingRun Run, string EvidenceReadiness, IReadOnlyList<PositionRow> Positions, IReadOnlyList<ObligationLineRow> Obligations,

@@ -26,7 +26,7 @@ public class RunReadRepositoryTests : IClassFixture<SchemaFixture>, IAsyncLifeti
     public Task DisposeAsync() => Task.CompletedTask;
 
     private const string Seed = """
-        INSERT INTO legal_entities (id, name, base_currency) VALUES ('LE-1','Alpha Ltd','GBP'), ('LE-2','Beta GmbH','EUR'), ('LE-3','Empty KK','JPY');
+        INSERT INTO legal_entities (id, name, base_currency, currencies) VALUES ('LE-1','Alpha Ltd','GBP','{JPY}'), ('LE-2','Beta GmbH','EUR','{}'), ('LE-3','Empty KK','JPY','{}');
         INSERT INTO users (id, name, email) VALUES ('u1','Una','u1@x.test'), ('u2','Vic','u2@x.test');
         INSERT INTO runs (id, legal_entity_id, business_date, run_version, ruleset_version, state, sign_off_state, started_at, last_evidence_arrival_at) VALUES
           ('R-1','LE-1','2026-10-26',1,'rs1','SUPERSEDED','SUPERSEDED','2026-10-26T08:00Z','2026-10-26T07:00Z');
@@ -52,10 +52,10 @@ public class RunReadRepositoryTests : IClassFixture<SchemaFixture>, IAsyncLifeti
           ('R-3','LE-1','GBP',1000,900,-80,'SHORTFALL','{"qualifications":["stale balance"]}'),
           ('R-3','LE-1','JPY',50000,50000,0,'COVERED','{}'),
           ('R-2','LE-1','GBP',1000,950,-50,'SHORTFALL','{}');
-        INSERT INTO safeguarding_adjustments (id, run_id, currency, amount, reason, status, proposed_by_user_id, expires_at) VALUES
-          ('ADJ-1','R-3','GBP',20,'timing','APPROVED','u1',NULL),
-          ('ADJ-2','R-3','GBP',5,'expired','APPROVED','u1','2026-10-01T00:00Z'),
-          ('ADJ-3','R-3','GBP',99,'unapproved','PROPOSED','u1',NULL);
+        INSERT INTO safeguarding_adjustments (id, run_id, currency, amount, reason, status, proposed_by_user_id, evidence_refs, expires_on) VALUES
+          ('ADJ-1','R-3','GBP',20,'timing','APPROVED','u1','["ev"]',NULL),
+          ('ADJ-2','R-3','GBP',5,'expired','APPROVED','u1','["ev"]','2026-10-01'),
+          ('ADJ-3','R-3','GBP',99,'unapproved','PROPOSED','u1','["ev"]',NULL);
 
         INSERT INTO exceptions (id, run_id, legal_entity_id, business_date, title, control, reason_code, severity, status, value_amount, value_currency, owner_user_id, due_at, blocking, source_file, source_row_id, delivery_id, created_at) VALUES
           ('E-1','R-3','LE-1','2026-10-27','Shortfall','safeguarding','SHORTFALL','HIGH','OPEN',80,'GBP','u1','2026-10-28T00:00Z',true,NULL,NULL,NULL,'2026-10-26T10:00Z'),
@@ -126,7 +126,7 @@ public class RunReadRepositoryTests : IClassFixture<SchemaFixture>, IAsyncLifeti
         Assert.Equal("Una", r2.Preparer!.Name);
         Assert.Equal("u2", r2.SignedOffBy!.Id);
         Assert.NotNull(r2.SignedOffAt);
-        Assert.Equal(r2.StartedAt, r2.LastEvidenceArrivalAt); // no evidence timestamp recorded: falls back to start
+        Assert.Null(r2.LastEvidenceArrivalAt); // no evidence timestamp recorded: null, not the start time
         var r3 = (await Repo.GetRunAsync(EntityScope.Everything, "R-3"))!;
         Assert.Null(r3.SignedOffBy);
         Assert.Equal(1, r3.RowVersion);

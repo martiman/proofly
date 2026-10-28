@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using Proofly.Contracts.Common;
 
 namespace Proofly.Contracts.Exceptions;
@@ -7,19 +6,23 @@ namespace Proofly.Contracts.Exceptions;
 public record ExceptionSummaryDto(
     string Id, string RunId, string Title, string Control, string ReasonCode, string Severity, string Status, MoneyDto? Value,
     string LegalEntityId, string BusinessDate, UserRefDto? Owner, DateTimeOffset CreatedAt, int AgeDays, DateTimeOffset DueAt,
-    bool Blocking, string SourceFile, string SourceRowId, string Etag);
+    bool Blocking, string? SourceFile, string? SourceRowId, string Etag);
+
+public sealed record ReasonCountDto(string ReasonCode, int Count);
+public sealed record SeverityCurrencyDto(string Severity, string Currency, int Count, MoneyDto AbsoluteValue);
 
 public sealed record CurrencyAggregateDto(string Currency, int Count, MoneyDto TotalValue, MoneyDto AbsoluteValue);
 
 public sealed record ExceptionsSummaryDto(
     int Total, int Blocking, int Unassigned, int Overdue,
-    JsonObject BySeverity, JsonObject ByStatus, JsonObject ByControl, // JsonObject: the host's camelCase dictionary key policy would lower-case enum keys
-    IReadOnlyList<CurrencyAggregateDto> ByCurrency, int WithoutValue, DateTimeOffset ComputedAt);
+    IReadOnlyDictionary<string, int> BySeverity, IReadOnlyDictionary<string, int> ByStatus, IReadOnlyDictionary<string, int> ByControl,
+    IReadOnlyList<CurrencyAggregateDto> ByCurrency, IReadOnlyList<ReasonCountDto> ByReason, IReadOnlyList<SeverityCurrencyDto> BySeverityCurrency,
+    int WithoutValue, DateTimeOffset ComputedAt);
 
-public sealed record EvidenceNodeDto(string Id, string Kind, string Label, string Source, string SourceRowId, string? RecordId, MoneyDto? Amount);
+public sealed record EvidenceNodeDto(string Id, string Kind, string Label, string Source, string? SourceRowId, string? RecordId, MoneyDto? Amount);
 public sealed record EvidenceEdgeDto(string From, string To, string Relation);
 public sealed record RuleTraceInputDto(string Name, string Value);
-public sealed record RuleTraceDto(string Control, string RuleId, string RuleVersion, IReadOnlyList<RuleTraceInputDto> Inputs, string Tolerance, string Calculation, string Result);
+public sealed record RuleTraceDto(string Control, string RuleId, string RuleVersion, IReadOnlyList<RuleTraceInputDto> Inputs, string? Tolerance, string Calculation, string Result);
 public sealed record TimelineEventDto(string Id, DateTimeOffset At, ActorDto Actor, string Type, string Text);
 
 public sealed record ApprovalDto(
@@ -31,7 +34,7 @@ public sealed record ApprovalDto(
 public sealed record ExceptionDetailDto(
     string Id, string RunId, string Title, string Control, string ReasonCode, string Severity, string Status, MoneyDto? Value,
     string LegalEntityId, string BusinessDate, UserRefDto? Owner, DateTimeOffset CreatedAt, int AgeDays, DateTimeOffset DueAt,
-    bool Blocking, string SourceFile, string SourceRowId, string Etag,
+    bool Blocking, string? SourceFile, string? SourceRowId, string Etag,
     string Description, string ExpectedEffect, string Summary,
     IReadOnlyList<EvidenceNodeDto> EvidenceNodes, IReadOnlyList<EvidenceEdgeDto> EvidenceEdges, RuleTraceDto Trace,
     IReadOnlyList<TimelineEventDto> Timeline, IReadOnlyList<string> States,

@@ -96,15 +96,15 @@ public sealed class SourceReadRepositoryTests : IAsyncLifetime
         var s1 = all[0];
         Assert.True(s1.Accepted);
         Assert.Equal(1, s1.RowNumber);
-        Assert.Equal("100.000000", s1.Fields["amount"]!.GetValue<string>());
-        Assert.Equal("GBP", s1.Fields["currency"]!.GetValue<string>());
+        Assert.Equal("100.000000", s1.Fields["amount"]);
+        Assert.Equal("GBP", s1.Fields["currency"]);
         Assert.DoesNotContain("delivery_id", s1.Fields.Select(k => k.Key));
         Assert.Equal(["F-1"], s1.FindingIds);
         Assert.Equal(64, s1.ContentFingerprint!.Length);
         var rej = all.Where(r => !r.Accepted).ToList();
         Assert.Equal([4, 5], rej.Select(r => r.RowNumber));
         Assert.Equal(["INVALID_VALUE: amount is not a decimal"], rej[0].RejectionReasons);
-        Assert.Contains("abc", rej[0].Fields["raw_row"]!.GetValue<string>());
+        Assert.Contains("abc", rej[0].Fields["raw_row"]);
         Assert.Empty(rej[0].FindingIds);
     }
 

@@ -1,15 +1,9 @@
 using System.Text.Json;
 using Proofly.Api.Platform.Json;
 using Proofly.Api.Platform.Problems;
-using System.Text.Json.Serialization;
+using Proofly.Contracts.Common;
 
 namespace Proofly.Api.Platform.Http;
-
-/// <summary>Response envelope: { items, page: { nextCursor, hasMore, total? } }.</summary>
-/// <summary>page object: nextCursor is always present (null on the last page); total only when includeTotal=true.</summary>
-public sealed record PageInfo(string? NextCursor, bool HasMore, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Total);
-
-public sealed record PagedResult<T>(IReadOnlyList<T> Items, PageInfo Page);
 
 public sealed record PageRequest(int Limit, string? Cursor, bool IncludeTotal)
 {
@@ -65,11 +59,11 @@ public static class Paging
     /// Build a page from a keyset query that fetched up to Limit + 1 rows in the endpoint's stable sort.
     /// <paramref name="cursorState"/> maps the last returned item to the keyset state encoded in nextCursor.
     /// </summary>
-    public static PagedResult<T> Create<T>(IReadOnlyList<T> fetched, PageRequest request, Func<T, object> cursorState, int? total = null)
+    public static PageDto<T> Create<T>(IReadOnlyList<T> fetched, PageRequest request, Func<T, object> cursorState, int? total = null)
     {
         var hasMore = fetched.Count > request.Limit;
         var items = hasMore ? fetched.Take(request.Limit).ToList() : fetched;
         var next = hasMore ? Cursors.Encode(cursorState(items[^1])) : null;
-        return new PagedResult<T>(items, new PageInfo(next, hasMore, request.IncludeTotal ? total : null));
+        return new PageDto<T>(items, new PageInfoDto(next, hasMore, request.IncludeTotal ? total : null));
     }
 }
