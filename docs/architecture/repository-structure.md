@@ -2,7 +2,7 @@
 
 ## Status
 
-This document proposes the future repository layout. The application directories do not exist yet.
+This document proposes the future repository layout. `apps/web/` now exists as a documented placeholder, but no application components are implemented.
 
 ## Objectives
 

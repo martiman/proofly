@@ -51,6 +51,8 @@ See [Product Capabilities](docs/product/capabilities.md) for the proposed capabi
 - [MVP Definition](docs/product/mvp.md)
 - [Product Screens](docs/product/screens/README.md)
 - [Daily Control Cycle](docs/product/workflows/daily-control-cycle.md)
+- [Control Analyst Daily Review](docs/product/workflows/control-analyst-daily-review.md)
+- [Control Processing Flow](docs/product/workflows/control-processing-flow.md)
 - [Domain Glossary](docs/domain/glossary.md)
 - [Architecture Overview](docs/architecture/overview.md)
 - [Deployment Model](docs/architecture/deployment-model.md)
