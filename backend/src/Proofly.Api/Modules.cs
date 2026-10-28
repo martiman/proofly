@@ -1,6 +1,13 @@
 using Proofly.Api.Auth;
+using Proofly.Api.Exceptions;
+using Proofly.Api.Governance;
 using Proofly.Api.Health;
+using Proofly.Api.Matching;
 using Proofly.Api.Platform;
+using Proofly.Api.Runs;
+using Proofly.Api.Safeguarding;
+using Proofly.Api.Sources;
+using Proofly.Api.Transactions;
 using Proofly.Data;
 using Proofly.Data.Audit;
 
@@ -13,8 +20,15 @@ public static class Modules
         .AddAuth(configuration)
         .AddData(configuration)
         .AddAudit()
+        .AddExceptions()
+        .AddGovernance()
         .AddHealth()
-        .AddPlatform(configuration);
+        .AddMatching()
+        .AddPlatform(configuration)
+        .AddRuns()
+        .AddSafeguarding()
+        .AddSources()
+        .AddTransactions();
 
     public static WebApplication MapModules(this WebApplication app)
     {

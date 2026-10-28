@@ -1,0 +1,270 @@
+using System.Text.Json;
+using Npgsql;
+using NpgsqlTypes;
+
+namespace Proofly.Data.Matching;
+
+/// <summary>Read-side access to match_groups / match_candidates. Callers must have checked legal-entity scope via <see cref="GetRunScopeAsync"/>; every query is also bound to the run id.</summary>
+public interface IMatchingRepository
+{
+    Task<RunScope?> GetRunScopeAsync(string runId, CancellationToken ct);
+    /// <summary>Keyset page ordered by group id; fetches up to <paramref name="limit"/> + 1 rows.</summary>
+    Task<IReadOnlyList<MatchGroupRow>> ListGroupsAsync(string runId, string? status, int limit, string? afterId, CancellationToken ct);
+    Task<long> CountGroupsAsync(string runId, string? status, CancellationToken ct);
+    Task<MatchGroupRow?> GetGroupAsync(string runId, string groupId, CancellationToken ct);
+    /// <summary>Resolves the focus (transaction, exception or first open group) to a group id and focus transaction id.</summary>
+    Task<(string? GroupId, string? FocusTransactionId, FocusFailure Failure)> ResolveFocusAsync(string runId, string? transactionId, string? exceptionId, CancellationToken ct);
+    Task<IReadOnlyList<MatchCandidateRow>> ListUnmatchedAsync(string runId, int limit, CancellationToken ct);
+    Task<MatchingStats> GetStatsAsync(string runId, CancellationToken ct);
+}
+
+public sealed class MatchingRepository(NpgsqlDataSource db) : IMatchingRepository
+{
+    public const int UnmatchedLimit = 200;
+
+    /// <summary>Public transaction id for a canonical record: "{table}:{id}".</summary>
+    public static string TransactionId(string table, long id) => $"{table}:{id}";
+
+    public static bool TryParseTransactionId(string value, out string table, out long id)
+    {
+        table = ""; id = 0;
+        var i = value.IndexOf(':', StringComparison.Ordinal);
+        if (i <= 0 || !long.TryParse(value.AsSpan(i + 1), out id)) { return false; }
+        table = value[..i];
+        return Tables.Contains(table);
+    }
+
+    private static readonly HashSet<string> Tables = ["transfer_instructions", "direct_debit_events", "card_events", "ledger_entries", "bank_transactions"];
+
+    // Candidate with its canonical record resolved (timestamp, reference, row key used by exceptions).
+    private const string CandidateSelect = """
+        SELECT c.id AS cid, c.match_group_id, c.kind, c.record_table, c.record_id, c.amount, c.currency, c.score, c.selected,
+               r.delivery_id, r.row_key, r.ts, r.ref,
+               COALESCE(sd.source_name, c.record_table) AS source_name,
+               ARRAY(SELECT e.id FROM exceptions e WHERE e.run_id = g.run_id AND e.delivery_id = r.delivery_id AND e.source_row_id = r.row_key ORDER BY e.id) AS exception_ids
+        FROM match_candidates c
+        JOIN match_groups g ON g.id = c.match_group_id
+        LEFT JOIN LATERAL (
+            SELECT delivery_id, source_row_id AS row_key, instruction_timestamp AS ts, COALESCE(external_reference, instruction_id) AS ref FROM transfer_instructions WHERE c.record_table = 'transfer_instructions' AND id = c.record_id
+            UNION ALL
+            SELECT delivery_id, source_row_id, event_timestamp, instruction_id FROM direct_debit_events WHERE c.record_table = 'direct_debit_events' AND id = c.record_id
+            UNION ALL
+            SELECT delivery_id, source_row_id, event_timestamp, card_transaction_id FROM card_events WHERE c.record_table = 'card_events' AND id = c.record_id
+            UNION ALL
+            SELECT delivery_id, ledger_entry_id, booking_timestamp, COALESCE(transaction_reference, ledger_entry_id) FROM ledger_entries WHERE c.record_table = 'ledger_entries' AND id = c.record_id
+            UNION ALL
+            SELECT delivery_id, external_transaction_id, booking_timestamp, COALESCE(bank_reference, external_transaction_id) FROM bank_transactions WHERE c.record_table = 'bank_transactions' AND id = c.record_id
+        ) r ON true
+        LEFT JOIN source_deliveries sd ON sd.id = r.delivery_id
+        """;
+
+    public async Task<RunScope?> GetRunScopeAsync(string runId, CancellationToken ct)
+    {
+        await using var cmd = db.CreateCommand("SELECT id, legal_entity_id FROM runs WHERE id = @r");
+        cmd.Parameters.AddWithValue("r", runId);
+        await using var rd = await cmd.ExecuteReaderAsync(ct);
+        return await rd.ReadAsync(ct) ? new RunScope(rd.GetString(0), rd.GetString(1)) : null;
+    }
+
+    public async Task<long> CountGroupsAsync(string runId, string? status, CancellationToken ct)
+    {
+        await using var cmd = db.CreateCommand("SELECT count(*) FROM match_groups WHERE run_id = @r AND (@s::text IS NULL OR status = @s)");
+        cmd.Parameters.AddWithValue("r", runId);
+        cmd.Parameters.Add(new NpgsqlParameter("s", NpgsqlDbType.Text) { Value = (object?)status ?? DBNull.Value });
+        return (long)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
+    public async Task<IReadOnlyList<MatchGroupRow>> ListGroupsAsync(string runId, string? status, int limit, string? afterId, CancellationToken ct)
+    {
+        await using var cmd = db.CreateCommand(GroupSelect + """
+             WHERE g.run_id = @r AND (@s::text IS NULL OR g.status = @s) AND (@after::text IS NULL OR g.id > @after)
+             ORDER BY g.id LIMIT @lim
+            """);
+        cmd.Parameters.AddWithValue("r", runId);
+        cmd.Parameters.Add(new NpgsqlParameter("s", NpgsqlDbType.Text) { Value = (object?)status ?? DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("after", NpgsqlDbType.Text) { Value = (object?)afterId ?? DBNull.Value });
+        cmd.Parameters.AddWithValue("lim", limit + 1);
+        return await ReadGroupsAsync(cmd, ct);
+    }
+
+    public async Task<MatchGroupRow?> GetGroupAsync(string runId, string groupId, CancellationToken ct)
+    {
+        await using var cmd = db.CreateCommand(GroupSelect + " WHERE g.run_id = @r AND g.id = @g");
+        cmd.Parameters.AddWithValue("r", runId);
+        cmd.Parameters.AddWithValue("g", groupId);
+        return (await ReadGroupsAsync(cmd, ct)).FirstOrDefault();
+    }
+
+    private const string GroupSelect = """
+        SELECT g.id, g.status, g.manual, g.difference_amount, g.currency, g.rule_id, g.version, cr.config_version,
+               cr.payload->>'tolerance' AS tolerance,
+               a.id, a.object_type, a.object_id, a.run_id, a.proposal_version, a.proposer_user_id, pu.name, a.approver_user_id, au.name,
+               a.required_role, a.status, a.decision, a.rationale, a.evidence_refs::text, a.policy_version, a.proposed_at, a.decided_at
+        FROM match_groups g
+        LEFT JOIN config_rules cr ON cr.id = g.rule_id
+        LEFT JOIN LATERAL (SELECT * FROM approvals x WHERE x.object_type = 'MANUAL_MATCH' AND x.object_id = g.id ORDER BY x.proposed_at DESC, x.id DESC LIMIT 1) a ON true
+        LEFT JOIN users pu ON pu.id = a.proposer_user_id
+        LEFT JOIN users au ON au.id = a.approver_user_id
+        """;
+
+    private async Task<IReadOnlyList<MatchGroupRow>> ReadGroupsAsync(NpgsqlCommand cmd, CancellationToken ct)
+    {
+        var heads = new List<(string Id, string Status, bool Manual, MatchMoney? Diff, string Rule, string Tol, MatchApprovalRow? Approval)>();
+        await using (var rd = await cmd.ExecuteReaderAsync(ct))
+        {
+            while (await rd.ReadAsync(ct))
+            {
+                var id = rd.GetString(0);
+                var manual = rd.GetBoolean(2);
+                MatchMoney? diff = rd.IsDBNull(3) ? null : new MatchMoney(rd.GetDecimal(3), rd.GetString(4).Trim());
+                var rule = rd.IsDBNull(5) ? (manual ? "manual" : "unspecified")
+                    : rd.GetString(5) + "@" + (rd.IsDBNull(7) ? "v" + rd.GetInt32(6) : rd.GetString(7));
+                var tol = rd.IsDBNull(8) ? "0" : rd.GetString(8);
+                MatchApprovalRow? ap = null;
+                if (!rd.IsDBNull(9))
+                {
+                    ap = new MatchApprovalRow(rd.GetString(9), rd.GetString(10), rd.GetString(11), rd.IsDBNull(12) ? null : rd.GetString(12), rd.GetInt32(13),
+                        rd.GetString(14), rd.GetString(15), rd.IsDBNull(16) ? null : rd.GetString(16), rd.IsDBNull(17) ? null : rd.GetString(17),
+                        rd.GetString(18), rd.GetString(19), rd.IsDBNull(20) ? null : rd.GetString(20), rd.IsDBNull(21) ? null : rd.GetString(21),
+                        ParseRefs(rd.GetString(22)), rd.GetString(23), rd.GetFieldValue<DateTimeOffset>(24),
+                        rd.IsDBNull(25) ? null : rd.GetFieldValue<DateTimeOffset>(25));
+                }
+                heads.Add((id, rd.GetString(1), manual, diff, rule, tol, ap));
+            }
+        }
+        if (heads.Count == 0) { return []; }
+
+        var ids = heads.Select(h => h.Id).ToArray();
+        var cands = new Dictionary<string, List<(MatchCandidateRow Row, string[] Exceptions)>>();
+        await using (var cc = db.CreateCommand(CandidateSelect + " WHERE c.match_group_id = ANY(@ids) ORDER BY c.match_group_id, c.id"))
+        {
+            cc.Parameters.AddWithValue("ids", ids);
+            await using var rd = await cc.ExecuteReaderAsync(ct);
+            while (await rd.ReadAsync(ct))
+            {
+                var (gid, row, ex) = ReadCandidate(rd);
+                (cands.TryGetValue(gid, out var l) ? l : cands[gid] = []).Add((row, ex));
+            }
+        }
+
+        return heads.Select(h =>
+        {
+            var list = cands.TryGetValue(h.Id, out var l) ? l : [];
+            var left = list.Where(x => x.Row.Side == "LEFT").Select(x => x.Row).ToList();
+            var right = list.Where(x => x.Row.Side == "RIGHT").Select(x => x.Row).ToList();
+            var ex = list.SelectMany(x => x.Exceptions).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+            return new MatchGroupRow(h.Id, h.Status, h.Manual, h.Diff, h.Rule, h.Tol, $"{Card(left.Count)}:{Card(right.Count)}", left, right, ex, h.Approval);
+        }).ToList();
+    }
+
+    private static string Card(int n) => n <= 1 ? n.ToString() : "N";
+
+    private static IReadOnlyList<string> ParseRefs(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.ValueKind == JsonValueKind.Array
+            ? doc.RootElement.EnumerateArray().Select(e => e.ValueKind == JsonValueKind.String ? e.GetString()! : e.GetRawText()).ToList()
+            : [];
+    }
+
+    private static (string GroupId, MatchCandidateRow Row, string[] Exceptions) ReadCandidate(NpgsqlDataReader rd)
+    {
+        var kind = rd.GetString(2);
+        var table = rd.GetString(3);
+        var recId = rd.GetInt64(4);
+        var rowKey = rd.IsDBNull(10) ? recId.ToString() : rd.GetString(10);
+        var side = kind is "BANK_EVIDENCE" or "LEDGER_ENTRY" ? "RIGHT" : "LEFT";
+        var ts = rd.IsDBNull(11) ? DateTimeOffset.UnixEpoch : rd.GetFieldValue<DateTimeOffset>(11);
+        var reference = rd.IsDBNull(12) ? rowKey : rd.GetString(12);
+        var row = new MatchCandidateRow(TransactionId(table, recId), side, kind, $"{rd.GetString(13)} {rowKey}",
+            new MatchMoney(rd.GetDecimal(5), rd.GetString(6).Trim()), ts, reference, rd.GetBoolean(8), rd.IsDBNull(7) ? null : rd.GetDecimal(7));
+        return (rd.GetString(1), row, rd.GetFieldValue<string[]>(14));
+    }
+
+    public async Task<(string? GroupId, string? FocusTransactionId, FocusFailure Failure)> ResolveFocusAsync(
+        string runId, string? transactionId, string? exceptionId, CancellationToken ct)
+    {
+        if (transactionId is not null)
+        {
+            if (!TryParseTransactionId(transactionId, out var table, out var id)) { return (null, null, FocusFailure.InvalidTransactionId); }
+            await using var cmd = db.CreateCommand("""
+                SELECT c.match_group_id FROM match_candidates c JOIN match_groups g ON g.id = c.match_group_id
+                WHERE g.run_id = @r AND c.record_table = @t AND c.record_id = @i ORDER BY c.match_group_id LIMIT 1
+                """);
+            cmd.Parameters.AddWithValue("r", runId);
+            cmd.Parameters.AddWithValue("t", table);
+            cmd.Parameters.AddWithValue("i", id);
+            return await cmd.ExecuteScalarAsync(ct) is string g ? (g, transactionId, FocusFailure.None) : (null, null, FocusFailure.NotFound);
+        }
+        if (exceptionId is not null)
+        {
+            await using var cmd = db.CreateCommand("""
+                SELECT x.match_group_id, x.record_table, x.record_id FROM (
+                    SELECT c.match_group_id, c.record_table, c.record_id, c.id AS cid, r.delivery_id, r.row_key
+                    FROM match_candidates c JOIN match_groups g ON g.id = c.match_group_id
+                    LEFT JOIN LATERAL (
+                        SELECT delivery_id, source_row_id AS row_key FROM transfer_instructions WHERE c.record_table = 'transfer_instructions' AND id = c.record_id
+                        UNION ALL SELECT delivery_id, source_row_id FROM direct_debit_events WHERE c.record_table = 'direct_debit_events' AND id = c.record_id
+                        UNION ALL SELECT delivery_id, source_row_id FROM card_events WHERE c.record_table = 'card_events' AND id = c.record_id
+                        UNION ALL SELECT delivery_id, ledger_entry_id FROM ledger_entries WHERE c.record_table = 'ledger_entries' AND id = c.record_id
+                        UNION ALL SELECT delivery_id, external_transaction_id FROM bank_transactions WHERE c.record_table = 'bank_transactions' AND id = c.record_id
+                    ) r ON true
+                    WHERE g.run_id = @r) x
+                JOIN exceptions e ON e.id = @e AND e.run_id = @r AND e.delivery_id = x.delivery_id AND e.source_row_id = x.row_key
+                ORDER BY x.match_group_id, x.cid LIMIT 1
+                """);
+            cmd.Parameters.AddWithValue("r", runId);
+            cmd.Parameters.AddWithValue("e", exceptionId);
+            await using var rd = await cmd.ExecuteReaderAsync(ct);
+            return await rd.ReadAsync(ct) ? (rd.GetString(0), TransactionId(rd.GetString(1), rd.GetInt64(2)), FocusFailure.None) : (null, null, FocusFailure.NotFound);
+        }
+        await using (var cmd = db.CreateCommand("""
+            SELECT g.id, c.record_table, c.record_id FROM match_groups g
+            LEFT JOIN LATERAL (SELECT record_table, record_id FROM match_candidates WHERE match_group_id = g.id ORDER BY id LIMIT 1) c ON true
+            WHERE g.run_id = @r AND g.status <> 'MATCHED' ORDER BY g.id LIMIT 1
+            """))
+        {
+            cmd.Parameters.AddWithValue("r", runId);
+            await using var rd = await cmd.ExecuteReaderAsync(ct);
+            if (!await rd.ReadAsync(ct) || rd.IsDBNull(1)) { return (null, null, FocusFailure.NotFound); }
+            return (rd.GetString(0), TransactionId(rd.GetString(1), rd.GetInt64(2)), FocusFailure.None);
+        }
+    }
+
+    public async Task<IReadOnlyList<MatchCandidateRow>> ListUnmatchedAsync(string runId, int limit, CancellationToken ct)
+    {
+        await using var cmd = db.CreateCommand(CandidateSelect + " WHERE g.run_id = @r AND g.status = 'UNMATCHED' ORDER BY c.match_group_id, c.id LIMIT @lim");
+        cmd.Parameters.AddWithValue("r", runId);
+        cmd.Parameters.AddWithValue("lim", limit);
+        var list = new List<MatchCandidateRow>();
+        await using var rd = await cmd.ExecuteReaderAsync(ct);
+        while (await rd.ReadAsync(ct)) { list.Add(ReadCandidate(rd).Row); }
+        return list;
+    }
+
+    public async Task<MatchingStats> GetStatsAsync(string runId, CancellationToken ct)
+    {
+        long total, open, auto;
+        await using (var cmd = db.CreateCommand("""
+            SELECT count(*), count(*) FILTER (WHERE status <> 'MATCHED'), count(*) FILTER (WHERE status = 'MATCHED' AND NOT manual)
+            FROM match_groups WHERE run_id = @r
+            """))
+        {
+            cmd.Parameters.AddWithValue("r", runId);
+            await using var rd = await cmd.ExecuteReaderAsync(ct);
+            await rd.ReadAsync(ct);
+            total = rd.GetInt64(0); open = rd.GetInt64(1); auto = rd.GetInt64(2);
+        }
+        var byCcy = new List<CurrencyUnmatched>();
+        await using (var cmd = db.CreateCommand("""
+            SELECT c.currency, count(*), COALESCE(sum(c.amount), 0) FROM match_candidates c JOIN match_groups g ON g.id = c.match_group_id
+            WHERE g.run_id = @r AND g.status = 'UNMATCHED' GROUP BY c.currency ORDER BY c.currency
+            """))
+        {
+            cmd.Parameters.AddWithValue("r", runId);
+            await using var rd = await cmd.ExecuteReaderAsync(ct);
+            while (await rd.ReadAsync(ct)) { byCcy.Add(new CurrencyUnmatched(rd.GetString(0).Trim(), rd.GetInt64(1), rd.GetDecimal(2))); }
+        }
+        return new MatchingStats(total == 0 ? null : decimal.Round((decimal)auto / total, 4), total, open, byCcy.Sum(c => c.Count), byCcy);
+    }
+}

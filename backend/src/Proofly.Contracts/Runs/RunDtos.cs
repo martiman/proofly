@@ -8,4 +8,4 @@ public sealed record RunDto(
     string? SupersededByRunId, string? SupersedesRunId, UserRefDto? Preparer, UserRefDto? RequiredApprover,
     UserRefDto? SignedOffBy, DateTimeOffset? SignedOffAt);
 
-public sealed record RunPageDto(IReadOnlyList<RunDto> Items, PageInfoDto Page);
+public sealed record RunPageDto(IReadOnlyList<RunDto> Items, RunPageInfoDto Page);

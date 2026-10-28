@@ -47,6 +47,7 @@ public sealed record AuditVerification(long EventsChecked, AuditChainBreak? Firs
 public sealed record AuditQuery(
     string? RunId = null, string? SubjectKind = null, string? SubjectId = null, string? Type = null,
     string? ActorId = null, ActorType? ActorType = null, DateTimeOffset? From = null, DateTimeOffset? To = null,
-    string? Search = null, int Limit = 25, string? Cursor = null);
+    string? Search = null, int Limit = 25, string? Cursor = null,
+    IReadOnlyCollection<string>? RunLegalEntityIds = null);
 
 public sealed record AuditPage(IReadOnlyList<AuditEventRecord> Items, string? NextCursor, bool HasMore);

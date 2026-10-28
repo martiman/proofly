@@ -112,6 +112,12 @@ public sealed class AuditReader(NpgsqlDataSource dataSource) : IAuditReader
         if (q.ActorType is { } at) { where.Add("actor_type = @atype"); cmd.Parameters.AddWithValue("atype", WireNames.ToUpperSnake(at)); }
         if (q.From is { } f) { where.Add("occurred_at >= @from"); cmd.Parameters.Add(new NpgsqlParameter("from", NpgsqlDbType.TimestampTz) { Value = f }); }
         if (q.To is { } t) { where.Add("occurred_at <= @to"); cmd.Parameters.Add(new NpgsqlParameter("to", NpgsqlDbType.TimestampTz) { Value = t }); }
+        if (q.RunLegalEntityIds is { } les)
+        {
+            // Scope: events tied to a run are visible only for runs of the given legal entities; run-less events are global.
+            where.Add("(run_id IS NULL OR run_id IN (SELECT id FROM runs WHERE legal_entity_id = ANY(@les)))");
+            cmd.Parameters.Add(new NpgsqlParameter("les", NpgsqlDbType.Array | NpgsqlDbType.Text) { Value = les.ToArray() });
+        }
         if (!string.IsNullOrWhiteSpace(q.Search))
         {
             var like = "%" + q.Search.Trim().Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
