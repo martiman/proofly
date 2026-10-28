@@ -1,0 +1,14 @@
+:root {
+  --bg: #f5f4f0; --surface: #fff; --surface-sunk: #eeede8;
+  --border: #e2e0d9; --border-strong: #cfccc3;
+  --ink: #14181f; --ink-2: #4a5160; --ink-3: #7b818c;
+  --nav-bg: #14181f; --nav-ink: #c9ccd2; --nav-ink-dim: #7e848f; --nav-active: #232934; --nav-line: #2a303b;
+  --accent: #2340c9; --accent-soft: #e8ecfb;
+  --pass: #0e7a4b; --pass-soft: #e3f2ea;
+  --warn: #a15c07; --warn-soft: #fbefd9;
+  --fail: #b3261e; --fail-soft: #fbe7e4;
+  --neutral-soft: #ecebe6;
+  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --radius: 6px; --radius-sm: 4px; --radius-card: 5px;
+}
