@@ -2,14 +2,19 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Proofly.Connectors.Abstractions;
 using Proofly.Data.Jobs;
+using Proofly.Data.Orchestration;
 
 namespace Proofly.Data.Ingestion;
 
 /// <summary>Job handler for <c>delivery.ingest</c>. Idempotent: a delivery that is already ingested is a no-op.</summary>
-public sealed class IngestDeliveryJob(DeliveryIngestor ingestor) : IJobHandler<IngestDeliveryPayload>
+public sealed class IngestDeliveryJob(DeliveryIngestor ingestor, RunEnqueuer? runs = null) : IJobHandler<IngestDeliveryPayload>
 {
-    public Task HandleAsync(IngestDeliveryPayload payload, JobContext context, CancellationToken ct) =>
-        ingestor.IngestAsync(payload.DeliveryId, ct);
+    public async Task HandleAsync(IngestDeliveryPayload payload, JobContext context, CancellationToken ct)
+    {
+        await ingestor.IngestAsync(payload.DeliveryId, ct);
+        // Idempotent (dedupe key over the input set): enqueues run.process once all mandatory deliveries are ingested.
+        if (runs is not null) await runs.OnDeliveryIngestedAsync(payload.DeliveryId, ct);
+    }
 }
 
 public static class IngestionModule
@@ -30,6 +35,7 @@ public static class IngestionModule
         services.AddSingleton<DeliveryRegistry>();
         services.AddSingleton<DeliveryIngestor>();
         services.AddJobs();
+        services.AddRunOrchestrationData();
         services.AddJobHandler<IngestDeliveryJob, IngestDeliveryPayload>(IngestionJobs.IngestDelivery);
         return services;
     }

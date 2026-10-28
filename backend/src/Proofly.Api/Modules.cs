@@ -1,11 +1,17 @@
 using Proofly.Api.Auth;
+using Proofly.Api.Evidence;
 using Proofly.Api.Exceptions;
+using Proofly.Api.Exceptions.Commands;
 using Proofly.Api.Governance;
+using Proofly.Api.Governance.Commands;
 using Proofly.Api.Health;
 using Proofly.Api.Matching;
+using Proofly.Api.Matching.Commands;
 using Proofly.Api.Platform;
 using Proofly.Api.Runs;
+using Proofly.Api.Runs.Commands;
 using Proofly.Api.Safeguarding;
+using Proofly.Api.Safeguarding.Commands;
 using Proofly.Api.Sources;
 using Proofly.Api.Transactions;
 using Proofly.Data;
@@ -20,13 +26,19 @@ public static class Modules
         .AddAuth(configuration)
         .AddData(configuration)
         .AddAudit()
+        .AddEvidence(configuration)
+        .AddExceptionCommands()
         .AddExceptions()
         .AddGovernance()
+        .AddGovernanceCommands()
         .AddHealth()
         .AddMatching()
+        .AddMatchingCommands()
         .AddPlatform(configuration)
+        .AddRunCommands()
         .AddRuns()
         .AddSafeguarding()
+        .AddSafeguardingCommands()
         .AddSources()
         .AddTransactions();
 

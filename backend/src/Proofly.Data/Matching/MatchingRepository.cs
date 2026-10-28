@@ -57,10 +57,10 @@ public sealed class MatchingRepository(NpgsqlDataSource db) : IMatchingRepositor
 
     public async Task<RunScope?> GetRunScopeAsync(string runId, CancellationToken ct)
     {
-        await using var cmd = db.CreateCommand("SELECT id, legal_entity_id FROM runs WHERE id = @r");
+        await using var cmd = db.CreateCommand("SELECT id, legal_entity_id, state FROM runs WHERE id = @r");
         cmd.Parameters.AddWithValue("r", runId);
         await using var rd = await cmd.ExecuteReaderAsync(ct);
-        return await rd.ReadAsync(ct) ? new RunScope(rd.GetString(0), rd.GetString(1)) : null;
+        return await rd.ReadAsync(ct) ? new RunScope(rd.GetString(0), rd.GetString(1), rd.GetString(2)) : null;
     }
 
     public async Task<long> CountGroupsAsync(string runId, string? status, CancellationToken ct)
@@ -106,7 +106,7 @@ public sealed class MatchingRepository(NpgsqlDataSource db) : IMatchingRepositor
 
     private async Task<IReadOnlyList<MatchGroupRow>> ReadGroupsAsync(NpgsqlCommand cmd, CancellationToken ct)
     {
-        var heads = new List<(string Id, string Status, bool Manual, MatchMoney? Diff, string? Rule, string? Tol, string? Rationale, string? Cardinality, MatchApprovalRow? Approval)>();
+        var heads = new List<(int Version, string Id, string Status, bool Manual, MatchMoney? Diff, string? Rule, string? Tol, string? Rationale, string? Cardinality, MatchApprovalRow? Approval)>();
         await using (var rd = await cmd.ExecuteReaderAsync(ct))
         {
             while (await rd.ReadAsync(ct))
@@ -125,7 +125,7 @@ public sealed class MatchingRepository(NpgsqlDataSource db) : IMatchingRepositor
                         ParseRefs(rd.GetString(24)), rd.GetString(25), rd.GetFieldValue<DateTimeOffset>(26),
                         rd.IsDBNull(27) ? null : rd.GetFieldValue<DateTimeOffset>(27));
                 }
-                heads.Add((id, rd.GetString(1), manual, diff, rule, rd.IsDBNull(8) ? null : rd.GetString(8), rd.IsDBNull(9) ? null : rd.GetString(9),
+                heads.Add((rd.GetInt32(6), id, rd.GetString(1), manual, diff, rule, rd.IsDBNull(8) ? null : rd.GetString(8), rd.IsDBNull(9) ? null : rd.GetString(9),
                     rd.IsDBNull(10) ? null : rd.GetString(10), ap));
             }
         }
@@ -160,7 +160,7 @@ public sealed class MatchingRepository(NpgsqlDataSource db) : IMatchingRepositor
             var right = list.Where(x => x.Row.Side == "RIGHT").Select(x => x.Row).ToList();
             var ex = list.SelectMany(x => x.Exceptions).Concat(linked.GetValueOrDefault(h.Id) ?? []).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
             return new MatchGroupRow(h.Id, h.Status, h.Manual, h.Diff, h.Rule, h.Tol, h.Rationale, h.Cardinality ?? $"{Card(left.Count)}:{Card(right.Count)}",
-                left, right, ex, h.Approval);
+                left, right, ex, h.Approval, h.Version);
         }).ToList();
     }
 

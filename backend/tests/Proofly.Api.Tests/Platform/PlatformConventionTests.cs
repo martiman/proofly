@@ -437,7 +437,7 @@ public class PlatformConventionTests : IDisposable
     public void Embedded_contract_loads_and_resolves_refs()
     {
         var contract = OpenApiContract.LoadEmbedded();
-        Assert.Equal(54, contract.Operations.Count);
+        Assert.Equal(55, contract.Operations.Count);
         var getRun = contract.Match("GET", "/api/v1/runs/R-1");
         Assert.Equal("getRun", getRun!.OperationId);
         Assert.Equal("run.view", getRun.RequiredPermission);
@@ -458,9 +458,10 @@ public class PlatformConventionTests : IDisposable
     [Fact]
     public async Task Real_contract_operation_is_gated_before_the_endpoint_exists()
     {
-        // GET /runs/{id}/compare (compareRuns) is in the contract; no endpoint is registered yet, so routing yields 404 as a problem.
-        var res = await Auth("run.view").GetAsync("/api/v1/runs/R-1/compare?against=R-0");
-        Assert.Equal(HttpStatusCode.NotFound, res.StatusCode);
+        // POST /runs/{id}/reprocess (requestRunReprocess) is a real contract operation: the platform refuses a caller without
+        // run.reprocess with a problem response before the endpoint (which would need a database) is reached.
+        var res = await Auth("run.view").PostAsync("/api/v1/runs/R-1/reprocess", new StringContent("{}", System.Text.Encoding.UTF8, "application/json"));
+        Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);
         Assert.Equal("application/problem+json", res.Content.Headers.ContentType?.MediaType);
     }
 }

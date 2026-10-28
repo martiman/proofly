@@ -1,6 +1,6 @@
 namespace Proofly.Data.Matching;
 
-public sealed record RunScope(string RunId, string LegalEntityId);
+public sealed record RunScope(string RunId, string LegalEntityId, string State = "");
 
 public sealed record MatchMoney(decimal Amount, string Currency);
 
@@ -18,7 +18,7 @@ public sealed record MatchApprovalRow(
 public sealed record MatchGroupRow(
     string Id, string Status, bool Manual, MatchMoney? Difference, string? RuleVersion, string? Tolerance, string? Rationale, string Cardinality,
     IReadOnlyList<MatchCandidateRow> Left, IReadOnlyList<MatchCandidateRow> Right,
-    IReadOnlyList<string> ExceptionIds, MatchApprovalRow? Approval);
+    IReadOnlyList<string> ExceptionIds, MatchApprovalRow? Approval, int Version = 0);
 
 public sealed record CurrencyUnmatched(string Currency, long Count, decimal Value);
 

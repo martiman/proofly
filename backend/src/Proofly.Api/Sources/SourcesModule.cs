@@ -15,6 +15,7 @@ public static class SourcesModule
     {
         services.AddSourceReads();
         services.AddSingleton<IEndpointModule, SourceEndpoints>();
+        Commands.SourceCommandsModule.AddSourceCommands(services);
         return services;
     }
 
@@ -87,7 +88,7 @@ internal sealed partial class SourceEndpoints(ISourceReadRepository repo) : IEnd
         ? EntityScope.Everything : new EntityScope(false, c.LegalEntityIds.ToArray());
 
     /// <summary>Entity-less deliveries are only visible to all-entity callers; otherwise 404 out-of-scope, 403 without the permission.</summary>
-    private static void Require(Caller caller, DeliverySummary d)
+    internal static void Require(Caller caller, DeliverySummary d)
     {
         if (d.LegalEntityId is null)
         {
@@ -110,7 +111,7 @@ internal sealed partial class SourceEndpoints(ISourceReadRepository repo) : IEnd
     [GeneratedRegex(@"delivered as (\S+?)\.?$")]
     private static partial Regex DuplicateOf();
 
-    private static SourceDeliveryDetailDto ToDetailDto(DeliveryDetail detail, Caller caller)
+    internal static SourceDeliveryDetailDto ToDetailDto(DeliveryDetail detail, Caller caller)
     {
         var d = detail.Delivery;
         var b = ToDto(d);
@@ -119,8 +120,8 @@ internal sealed partial class SourceEndpoints(ISourceReadRepository repo) : IEnd
         var failure = (string code) => detail.Failures.FirstOrDefault(f => f.ReasonCode == code);
         var duplicate = failure("DUPLICATE_DELIVERY");
         var actions = new List<string>();
-        if (Can(Permission.SourceRetry) && duplicate is null && (d.State == "REJECTED" || (d.State == "RECEIVED" && !d.Ingested))) { actions.Add("RETRY_INGESTION"); }
-        if (Can(Permission.SourceSupersede) && d.State is "RECEIVED" or "QUALIFIED" && d.SupersededByDeliveryId is null) { actions.Add("MARK_SUPERSEDED"); }
+        if (Can(Permission.SourceRetry) && DeliveryRules.CanRetryIngestion(d.State, d.Ingested, duplicate is not null)) { actions.Add("RETRY_INGESTION"); }
+        if (Can(Permission.SourceSupersede) && DeliveryRules.CanSupersede(d.State, d.SupersededByDeliveryId is not null)) { actions.Add("MARK_SUPERSEDED"); }
         return new SourceDeliveryDetailDto(b.DeliveryId, b.SourceName, b.FileName, b.BusinessDate, b.SchemaVersion, b.DeclaredRecordCount, b.ActualRecordCount,
             b.DeclaredTotals, b.ExpectedBy, b.ReceivedAt, b.CorrectionOfDeliveryId, b.SupersededByDeliveryId, b.State, b.AcceptedRecords, b.RejectedRecords,
             b.Qualifications, b.FindingIds,

@@ -210,6 +210,7 @@ internal sealed class PlatformFactory : WebApplicationFactory<Program>
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        builder.UseSetting("Platform:IdempotencyStore", "InMemory"); // the default schema of proofly_test is not migrated
         builder.UseSetting("ConnectionStrings:Proofly", "Host=localhost;Port=55432;Username=proofly;Database=proofly_test");
         builder.ConfigureServices(s =>
         {

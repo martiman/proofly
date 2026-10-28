@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Options;
 using Proofly.Api.Platform.Contract;
 using Proofly.Api.Platform.Idempotency;
+using Proofly.Data.Idempotency;
 using Proofly.Api.Platform.Problems;
 using Proofly.Domain.Enums;
 

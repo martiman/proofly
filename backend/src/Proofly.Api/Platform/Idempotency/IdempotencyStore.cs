@@ -1,29 +1,8 @@
+using Proofly.Data.Idempotency;
+
 namespace Proofly.Api.Platform.Idempotency;
 
-/// <summary>A stored successful response, replayed verbatim for the same key and request.</summary>
-public sealed record StoredResponse(int StatusCode, string? ContentType, IReadOnlyDictionary<string, string> Headers, byte[] Body, string? RequestId);
-
-public enum IdempotencyOutcome { Started, Replay, Mismatch, InProgress }
-
-public sealed record IdempotencyBegin(IdempotencyOutcome Outcome, StoredResponse? Response = null);
-
-/// <summary>
-/// Storage seam for Idempotency-Key records. The in-memory implementation is for tests and single-node dev;
-/// a PostgreSQL implementation (atomic insert of scope+key, 24 h expiry) replaces it once the schema lands.
-/// Implementations must make <see cref="BeginAsync"/> atomic: exactly one concurrent caller gets Started.
-/// </summary>
-public interface IIdempotencyStore
-{
-    /// <summary>Claims (scope, key) for a request, or reports a replay / mismatching reuse / request in flight.</summary>
-    Task<IdempotencyBegin> BeginAsync(string scope, string key, string requestHash, TimeSpan ttl, CancellationToken ct);
-
-    /// <summary>Stores the response of a claimed request so later identical requests replay it.</summary>
-    Task CompleteAsync(string scope, string key, StoredResponse response, CancellationToken ct);
-
-    /// <summary>Releases a claim without storing (failed or non-replayable response) so the client can retry with the same key.</summary>
-    Task ReleaseAsync(string scope, string key, CancellationToken ct);
-}
-
+/// <summary>In-memory store for tests and single-node dev without a database. Production uses <see cref="PostgresIdempotencyStore"/>.</summary>
 public sealed class InMemoryIdempotencyStore(TimeProvider time) : IIdempotencyStore
 {
     private sealed class Entry(string hash, DateTimeOffset expires)

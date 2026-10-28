@@ -37,7 +37,7 @@ under "New in the real API vs mock".
 - **Errors.** RFC 9457 `application/problem+json` with `type`, `title`, `status`, `detail`, `requestId`,
   and `errors[]` (JSON pointer / parameter + message) for 422. Problem types used:
   `unauthenticated` (401); `forbidden`, `out-of-scope`, `separation-of-duties` (403); `not-found` (404);
-  `invalid-state`, `run-superseded`, `stale-signoff`, `idempotency-in-progress`, `duplicate` (409);
+  `invalid-state`, `record-already-used`, `run-superseded`, `stale-signoff`, `idempotency-in-progress`, `duplicate` (409);
   `precondition-failed` (412); `validation` (422); `precondition-required` (428); `internal` (500).
   A problem `type` is `https://proofly.example/problems/<slug>`.
   Statuses: 401 unauthenticated, 403 not permitted / out of scope / separation of duties,
@@ -194,6 +194,18 @@ Amount, account, timestamp and evidence of a balance line come from `safeguardin
 `ACTIVE`, `REJECTED`, `RETIRED`). `change_kind` is `CONFIG` (targets a `config_rules` row via `config_id`) or
 `ACCESS` (targets a user via `target_user_id`, no `config_id`). `Settings.pendingChanges` counts PENDING_APPROVAL
 changes of either kind; `UserAccess.pendingChangeId` is the pending access change of that user.
+
+**Configuration changes (#45)**: `proposeConfigChange` stores `config_changes` (`target_kind`, `target_id`, `effective_from`, `before`/`after` = the
+mutable keys of the payload table above, `base_version` = `config_rules.version` at proposal) plus an `approvals` row (`CONFIG_CHANGE` ->
+`CONFIG_ADMIN`, `ACCESS_CHANGE` -> `SECURITY_ADMIN`). `after` is validated per kind and unknown keys are rejected: `RULE` needs
+`control, description, tolerance ("<non-negative decimal> <CCY>"), severity, effectiveFrom`; `SOURCE` needs `schemaVersion, expectedByLocalTime (HH:mm),
+mandatory`; `APPROVAL_POLICY` needs `description` (+ optional `requiredRole`); `USER_ACCESS` needs `roles` and `legalEntityIds` (applied as their cross
+product to `user_roles`). Read-only echoes of the GET shape (`ruleId`, `version`, `pendingChangeId`, ...) are tolerated and not stored. Approval
+(different user, `settings.approve`; `access.manage` for access changes) sets the change `ACTIVE`, writes the target, bumps `config_rules.config_version`
+to the new ruleset version and inserts a `ruleset_versions` row (`v<n>`, `activated_at`, `effective_from = max(requested, today)`, snapshot of all
+enabled `config_rules`); the previous ACTIVE change of the target becomes `RETIRED`. Orchestration must set `runs.ruleset_version` at run start from
+`IRulesetResolver.ResolveAsync(now, tx)` (latest ruleset with `activated_at <= now` and `effective_from <= UTC date`); a change therefore applies to
+the next run only and never to a run that already started.
 
 **`exception_rule_traces`** (one row per exception, written when the control raises it): `rule_id`,
 `rule_version`, `tolerance`, `expected_effect`, `description` and `calculation` =

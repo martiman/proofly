@@ -5,6 +5,8 @@ using Proofly.Api.Platform.Contract;
 using Proofly.Api.Platform.Http;
 using Proofly.Api.Platform.Idempotency;
 using Proofly.Api.Platform.Json;
+using Proofly.Data.Idempotency;
+using Npgsql;
 
 namespace Proofly.Api.Platform;
 
@@ -34,7 +36,15 @@ public static class PlatformModule
         services.AddOptions<PlatformOptions>().Bind(configuration.GetSection(PlatformOptions.Section));
         services.Configure<JsonOptions>(o => WireJson.Configure(o.SerializerOptions));
         services.TryAddSingleton(TimeProvider.System);
-        services.TryAddSingleton<IIdempotencyStore, InMemoryIdempotencyStore>();
+        // PostgreSQL store by default when a connection string is configured; Platform:IdempotencyStore=InMemory opts out (tests without a migrated schema).
+        var useDb = !string.IsNullOrWhiteSpace(configuration.GetConnectionString("Proofly"))
+                    && !string.Equals(configuration["Platform:IdempotencyStore"], "InMemory", StringComparison.OrdinalIgnoreCase);
+        if (useDb)
+        {
+            services.TryAddSingleton<IIdempotencyStore>(sp => new PostgresIdempotencyStore(sp.GetRequiredService<NpgsqlDataSource>(), sp.GetRequiredService<TimeProvider>(),
+                TimeSpan.TryParse(configuration["Platform:IdempotencyLease"], out var lease) ? lease : null));
+        }
+        else { services.TryAddSingleton<IIdempotencyStore, InMemoryIdempotencyStore>(); }
         services.TryAddSingleton<ICallerAccessor, AnonymousCallerAccessor>();
         services.AddSingleton(sp => OpenApiContract.LoadEmbedded(sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PlatformOptions>>().Value.AdditionalContractYaml));
 

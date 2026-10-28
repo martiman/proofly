@@ -1,5 +1,6 @@
 using System.Globalization;
 using Npgsql;
+using Proofly.Api.Matching.Commands;
 using Proofly.Api.Platform;
 using Proofly.Api.Platform.Http;
 using Proofly.Api.Platform.Problems;
@@ -32,6 +33,21 @@ internal sealed class MatchingEndpoints(IMatchingRepository repo) : IEndpointMod
         app.MapGet("/api/v1/runs/{runId}/match-groups", ListGroups);
     }
 
+    internal static MatchGroupDto Map(MatchGroupRow g, HttpContext ctx, RunScope scope)
+    {
+        var caller = ctx.GetCaller();
+        bool Can(Permission p) => caller.Can(p, scope.LegalEntityId);
+        var locked = ManualMatchActions.RunLocked(scope.State);
+        var dto = Map(g);
+        var canDecide = ManualMatchActions.CanDecide(g.Status, g.Approval, caller.UserId, locked, Can);
+        return dto with
+        {
+            Etag = g.Version > 0 ? ETags.ForVersion(g.Version) : null,
+            AllowedActions = ManualMatchActions.Compute(g.Status, g.Approval, caller.UserId, locked, Can),
+            Approval = dto.Approval is null ? null : dto.Approval with { CanDecide = canDecide },
+        };
+    }
+
     private async Task<RunScope> Authorize(string runId, HttpContext ctx, CancellationToken ct)
     {
         var scope = await repo.GetRunScopeAsync(runId, ct) ?? throw new ProblemException(ProblemTypes.NotFound);
@@ -41,7 +57,7 @@ internal sealed class MatchingEndpoints(IMatchingRepository repo) : IEndpointMod
 
     private async Task<IResult> ListGroups(string runId, HttpContext ctx, CancellationToken ct)
     {
-        await Authorize(runId, ctx, ct);
+        var scope = await Authorize(runId, ctx, ct);
         string? status = ctx.Request.Query.TryGetValue("status", out var s) && s.Count > 0 ? s[0] : null;
         if (status is not null && !Statuses.Contains(status)) { throw ProblemException.Validation("status", "Unknown match status."); }
         var page = PageRequest.From(ctx);
@@ -49,12 +65,12 @@ internal sealed class MatchingEndpoints(IMatchingRepository repo) : IEndpointMod
         var fetched = await repo.ListGroupsAsync(runId, status, page.Limit, cursor?.Id, ct);
         var total = page.IncludeTotal ? (int)await repo.CountGroupsAsync(runId, status, ct) : (int?)null;
         var result = Paging.Create(fetched, page, g => new MatchGroupCursor(g.Id), total);
-        return Results.Ok(new PageDto<MatchGroupDto>(result.Items.Select(Map).ToList(), result.Page));
+        return Results.Ok(new PageDto<MatchGroupDto>(result.Items.Select(g => Map(g, ctx, scope)).ToList(), result.Page));
     }
 
     private async Task<IResult> GetWorkbench(string runId, HttpContext ctx, CancellationToken ct)
     {
-        await Authorize(runId, ctx, ct);
+        var scope = await Authorize(runId, ctx, ct);
         var q = ctx.Request.Query;
         var tx = q.TryGetValue("transactionId", out var t) && t.Count > 0 && t[0] is { Length: > 0 } ts ? ts : null;
         var ex = q.TryGetValue("exceptionId", out var e) && e.Count > 0 && e[0] is { Length: > 0 } es ? es : null;
@@ -66,7 +82,7 @@ internal sealed class MatchingEndpoints(IMatchingRepository repo) : IEndpointMod
         var groups = new List<MatchGroupDto>();
         if (groupId is not null)
         {
-            groups.Add(Map(await repo.GetGroupAsync(runId, groupId, ct) ?? throw new ProblemException(ProblemTypes.NotFound)));
+            groups.Add(Map(await repo.GetGroupAsync(runId, groupId, ct) ?? throw new ProblemException(ProblemTypes.NotFound), ctx, scope));
         }
         var unmatched = await repo.ListUnmatchedAsync(runId, MatchingRepository.UnmatchedLimit, ct);
         var stats = await repo.GetStatsAsync(runId, ct);

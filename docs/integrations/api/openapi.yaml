@@ -592,12 +592,40 @@ paths:
                 reason: {$ref: '#/components/schemas/Reason'}
                 evidenceRefs: {type: array, items: {type: string}}
       responses:
-        '201': {description: "Proposed; status PENDING_APPROVAL when material", content: {application/json: {schema: {$ref: '#/components/schemas/MatchGroup'}}}}
+        '201': {description: "Proposed as a new group in status PENDING_APPROVAL (ADR 0005: every manual match needs approval)", headers: {ETag: {$ref: '#/components/headers/ETag'}}, content: {application/json: {schema: {$ref: '#/components/schemas/MatchGroup'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
         '422': {$ref: '#/components/responses/Unprocessable'}
+  /runs/{runId}/match-groups/{groupId}/decision:
+    parameters:
+      - {$ref: '#/components/parameters/RunId'}
+      - {name: groupId, in: path, required: true, schema: {type: string}}
+    post:
+      tags: [Matching]
+      operationId: decideManualMatch
+      summary: Approve or reject a proposed manual match
+      description: |
+        Separation of duties: the proposer cannot decide (403 `separation-of-duties`). `If-Match` is the ETag of the match group
+        (`MatchGroup.etag`). Approve turns the group into a MATCHED group with rule `manual`, removes the matched records from the groups they came from and
+        clears the linked matching exceptions; reject discards the proposal and leaves the records in their previous groups. Returns the approval.
+        A stale `proposalVersion` returns 409.
+      x-required-permission: exception.approve
+      x-audit-event: MANUAL_MATCH_DECIDED
+      parameters: [{$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/DecisionInput'}}}
+      responses:
+        '200': {description: "Decided", headers: {ETag: {$ref: '#/components/headers/ETag'}}, content: {application/json: {schema: {$ref: '#/components/schemas/Approval'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '412': {$ref: '#/components/responses/PreconditionFailed'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
   /runs/{runId}/accounts:
     parameters: [{$ref: '#/components/parameters/RunId'}]
     get:
@@ -1053,6 +1081,7 @@ components:
         - RESOLUTION_DECIDED
         - EXCEPTION_REOPENED
         - MANUAL_MATCH_PROPOSED
+        - MANUAL_MATCH_DECIDED
         - ADJUSTMENT_PROPOSED
         - ADJUSTMENT_DECIDED
         - SIGN_OFF_SUBMITTED
@@ -1580,6 +1609,11 @@ components:
         exceptionIds: {type: array, items: {type: string}}
         manual: {type: boolean, description: "True when created by a user"}
         approval: {oneOf: [{$ref: '#/components/schemas/Approval'}, {type: 'null'}]}
+        etag: {type: string, description: "ETag of the group; send in `If-Match` on decideManualMatch."}
+        allowedActions:
+          type: array
+          description: Server-computed from state, permission, scope and separation of duties.
+          items: {type: string, enum: [PROPOSE_MANUAL_MATCH, APPROVE_MANUAL_MATCH, REJECT_MANUAL_MATCH]}
     MatchGroupPage:
       type: object
       required: [items, page]
