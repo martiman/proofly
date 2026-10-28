@@ -5,3 +5,6 @@ backend/**/obj/
 # local deployment secrets
 deploy/local/.env
 artifacts/
+
+# local dev backend (scripts/dev-backend.sh): logs, pid, tokens
+.dev/

@@ -14,14 +14,19 @@ using Proofly.Data.Orchestration;
 using Proofly.Domain.Enums;
 using Proofly.Domain.Records;
 
+// Dev seed (web app against the real API, #54/#55): dotnet run --project backend/tools/Proofly.Benchmarks -- --seed-dev --scale 0.02 --database proofly_web --evidence-dir .dev/evidence
+//   generates the synthetic deliveries, ingests them through the real registry/ingestor and runs run.process once (no reprocess, no API stage,
+//   no report). The database is migrated and kept; it is only dropped with --recreate. If it already holds a run it is left alone.
 // Usage: dotnet run -c Release --project backend/tools/Proofly.Benchmarks -- --scale 0.1 --out results-0.1.json [--keep] [--skip-api]
 var argv = args.ToList();
 string Opt(string name, string def) { var i = argv.IndexOf(name); return i >= 0 && i + 1 < argv.Count ? argv[i + 1] : def; }
 var scale = double.Parse(Opt("--scale", "1.0"), CultureInfo.InvariantCulture);
 var outFile = Opt("--out", $"bench-{scale.ToString(CultureInfo.InvariantCulture)}.json");
-var db = Opt("--db", "proofly_bench");
-var keep = argv.Contains("--keep");
-var skipApi = argv.Contains("--skip-api");
+var seedDev = argv.Contains("--seed-dev");
+var db = Opt("--database", Opt("--db", seedDev ? "proofly_web" : "proofly_bench"));
+var recreate = argv.Contains("--recreate");
+var keep = argv.Contains("--keep") || seedDev;
+var skipApi = argv.Contains("--skip-api") || seedDev;
 var productionCsv = argv.Contains("--connectors-csv"); // use Proofly.Connectors.Csv instead of the benchmark's own minimal adapters
 var apiOnly = argv.Contains("--api-only"); // reuse an existing populated database (from a --keep run) and only run stage 5/6
 var distinctRefs = argv.Contains("--distinct-refs");
@@ -32,7 +37,8 @@ var cs = $"{Server};Database={db};Maximum Pool Size=40;Pooling=true";
 var work = Path.Combine(Path.GetTempPath(), "proofly-bench", scale.ToString(CultureInfo.InvariantCulture));
 if (Directory.Exists(work)) Directory.Delete(work, true);
 var dataDir = Path.Combine(work, "deliveries");
-var evidenceDir = Path.Combine(work, "evidence");
+var evidenceDir = Opt("--evidence-dir", Path.Combine(work, "evidence"));
+if (seedDev) evidenceDir = Path.GetFullPath(evidenceDir);
 
 using var metrics = new Metrics();
 var report = new Dictionary<string, object?> { ["scale"] = scale, ["machine"] = Environment.MachineName, ["dotnet"] = Environment.Version.ToString(), ["cores"] = Environment.ProcessorCount };
@@ -40,14 +46,25 @@ var report = new Dictionary<string, object?> { ["scale"] = scale, ["machine"] = 
 // ---- database: drop and create the dedicated benchmark database, apply all migrations.
 if (!apiOnly) await using (var admin = NpgsqlDataSource.Create($"{Server};Database=postgres"))
 {
-    await using var c1 = admin.CreateCommand($"DROP DATABASE IF EXISTS {db} WITH (FORCE)"); await c1.ExecuteNonQueryAsync();
-    await using var c2 = admin.CreateCommand($"CREATE DATABASE {db}"); await c2.ExecuteNonQueryAsync();
+    await using var exists = admin.CreateCommand($"SELECT 1 FROM pg_database WHERE datname = '{db}'");
+    var present = await exists.ExecuteScalarAsync() is not null;
+    if (!seedDev || recreate)
+    {
+        await using var c1 = admin.CreateCommand($"DROP DATABASE IF EXISTS {db} WITH (FORCE)"); await c1.ExecuteNonQueryAsync();
+        present = false;
+    }
+    if (!present) { await using var c2 = admin.CreateCommand($"CREATE DATABASE {db}"); await c2.ExecuteNonQueryAsync(); }
 }
 await using var ds = NpgsqlDataSource.Create(cs);
 await new MigrationRunner(ds).RunAsync(); // also applies migrations added after a kept database was created
-if (!apiOnly) await Exec("INSERT INTO legal_entities (id, name, base_currency, currencies) VALUES ('LE-BENCH','Bench Ltd','GBP','{EUR,JPY}'); INSERT INTO users (id, name, email) VALUES ('u-bench','Bench','bench@x.test') ON CONFLICT DO NOTHING");
 async Task Exec(string sql) { await using var c = ds.CreateCommand(sql); await c.ExecuteNonQueryAsync(); }
 async Task<T> Scalar<T>(string sql) { await using var c = ds.CreateCommand(sql); return (T)(await c.ExecuteScalarAsync())!; }
+if (seedDev && await Scalar<long>("SELECT count(*) FROM runs") > 0)
+{
+    Console.WriteLine($"seed-dev: database {db} already holds runs; nothing to do (use --recreate to start over).");
+    return 0;
+}
+if (!apiOnly) await Exec($"INSERT INTO legal_entities (id, name, base_currency, currencies) VALUES ('LE-BENCH','{(seedDev ? "Proofly Demo Ltd" : "Bench Ltd")}','GBP','{{EUR,JPY}}') ON CONFLICT DO NOTHING; INSERT INTO users (id, name, email) VALUES ('u-bench','Bench','bench@x.test') ON CONFLICT DO NOTHING");
 Task<long> DbSize() => Scalar<long>($"SELECT pg_database_size('{db}')");
 
 GenerationSummary summary = null!;
@@ -109,6 +126,13 @@ Console.WriteLine($"  {outcome.Status} {outcome.RunId} state={outcome.State} exc
 foreach (var (phase, ms) in metrics.Phases("3 run.process")) Console.WriteLine($"    phase {phase}: {ms / 1000:F2}s");
 report["process"] = new { outcome, phases = metrics.Phases("3 run.process").ToDictionary(p => p.Phase, p => p.Ms / 1000) };
 await Counts("after process");
+
+if (seedDev)
+{
+    outcome2 = outcome;
+    Console.WriteLine($"seed-dev: database {db} ready, run {outcome.RunId} ({outcome.State}), evidence in {evidenceDir}");
+    return 0;
+}
 
 // ---- 4. reprocess with unchanged evidence
 var rowVersion = await Scalar<int>($"SELECT version FROM runs WHERE id='{outcome.RunId}'");
