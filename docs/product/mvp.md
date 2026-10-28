@@ -18,6 +18,22 @@ For a selected legal entity, set of accounts and business date, the MVP should:
 6. create actionable exceptions for every material break; and
 7. produce a reviewable evidence pack.
 
+The end-to-end operating workflow is defined in [Daily Control Cycle](workflows/daily-control-cycle.md).
+
+## oMVP product sections
+
+The first product uses seven primary sections:
+
+1. Daily Control Room;
+2. Exceptions;
+3. Transactions;
+4. Safeguarding;
+5. Sign-off;
+6. Sources; and
+7. Configuration and Access.
+
+Matching, account-ledger and evidence views open contextually from these sections rather than appearing as separate primary navigation items. See [Product Screens](screens/README.md).
+
 ## Target operating envelope
 
 The MVP should be tested with representative volumes within:
@@ -117,6 +133,8 @@ Each input should have a documented schema, source owner, business-date rule and
 - failures are observable and recoverable without silent data loss; and
 - representative maximum-volume processing completes within the agreed T+1 deadline.
 
+Detailed acceptance scenarios and unresolved numeric targets are maintained in the [oMVP Acceptance Plan](../testing/omvp-acceptance-plan.md).
+
 ## Roles for the MVP
 
 - **Control analyst** - reviews results, investigates and resolves assigned exceptions.
@@ -150,6 +168,7 @@ The MVP is accepted only when all of the following are demonstrated:
 - autonomous correction of source records;
 - real-time transaction monitoring;
 - unrestricted user-defined scripting in production;
+- AI-assisted controls, agent workflows and MCP access;
 - unsupported cross-currency or cross-entity netting;
 - predictive risk scoring; and
 - broad customisation beyond the selected pilot flows and control rules.

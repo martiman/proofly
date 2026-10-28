@@ -100,6 +100,8 @@ Failed controls should create durable exceptions with severity, value, reason, o
 
 An authenticated API should expose run status, control results, evidence lineage and exception operations. The user interface should provide daily oversight, investigation and sign-off workflows without bypassing authorisation rules.
 
+The proposed user experience is documented in [Product Screens](../product/screens/README.md).
+
 ### 10. Audit log and evidence export
 
 The audit capability should record security-relevant and control-relevant actions. Evidence export should assemble the inputs, configuration versions, calculations, exceptions and approvals needed to review a business date.
@@ -160,6 +162,15 @@ These are architectural requirements, not claims about the current repository.
 The MVP should favour a modular application with clear internal boundaries and independently testable processing stages. This keeps operational complexity proportionate while preserving a path to separate high-load or high-risk components later.
 
 The first deployment should use a relational store for canonical records, results and workflow; durable object storage for source evidence and exports; and an asynchronous job mechanism for business-date processing. Specific products should be selected only after the target environment, security constraints and operational ownership are known.
+
+Proofly should include backend services, but they do not need to run as a central multi-tenant SaaS. Development and evaluation can run the complete stack on one machine. Production should initially run the same web, API, worker and data-service boundaries inside customer-controlled infrastructure.
+
+See [Deployment Model](deployment-model.md) and [Repository Structure](repository-structure.md).
+
+The current architectural decisions are recorded in:
+
+- [ADR 0001: Customer-hosted Backend](decisions/0001-customer-hosted-backend.md); and
+- [ADR 0002: Deterministic oMVP](decisions/0002-deterministic-omvp.md).
 
 ## Open decisions
 

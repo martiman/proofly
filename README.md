@@ -49,7 +49,24 @@ See [Product Capabilities](docs/product/capabilities.md) for the proposed capabi
 - [Product Vision](docs/product/vision.md)
 - [Product Capabilities](docs/product/capabilities.md)
 - [MVP Definition](docs/product/mvp.md)
+- [Product Screens](docs/product/screens/README.md)
+- [Daily Control Cycle](docs/product/workflows/daily-control-cycle.md)
+- [Domain Glossary](docs/domain/glossary.md)
 - [Architecture Overview](docs/architecture/overview.md)
+- [Deployment Model](docs/architecture/deployment-model.md)
+- [Repository Structure](docs/architecture/repository-structure.md)
+- [Input Data Contracts](docs/integrations/input-contracts.md)
+- [Roles and Approvals](docs/security/roles-and-approvals.md)
+- [Data Handling](docs/security/data-handling.md)
+- [oMVP Acceptance Plan](docs/testing/omvp-acceptance-plan.md)
+
+## Control specifications
+
+- [Data Completeness](docs/controls/data-completeness.md)
+- [Independent Ledger](docs/controls/independent-ledger.md)
+- [Matching and Reconciliation](docs/controls/matching.md)
+- [Transaction Lifecycle](docs/controls/transaction-lifecycle.md)
+- [Safeguarding Coverage](docs/controls/safeguarding.md)
 
 ## Principles
 

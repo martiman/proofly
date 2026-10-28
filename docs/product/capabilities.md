@@ -76,8 +76,6 @@ Proposed functions:
 - unmatched, partially matched and conflicting populations; and
 - controlled rematching after late or corrected evidence arrives.
 
-Any probabilistic assistance introduced later should remain reviewable and must not replace the underlying evidence or deterministic audit trail.
-
 ## 4. Transaction lifecycle verification
 
 **Status: Proposed**
