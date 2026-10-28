@@ -18,7 +18,7 @@ namespace Proofly.Data.Ingestion;
 ///
 /// Framework row checks (after the adapter): unknown or mismatching legal entity, amount precision above 6 decimals,
 /// repeated source_row_id / natural key (DUPLICATE_RECORD, first occurrence kept).
-/// Delivery checks: declared record count equals ALL data rows (accepted + rejected); declared EUR/CZK totals equal
+/// Delivery checks: declared record count equals ALL data rows (accepted + rejected); declared per-currency totals equal
 /// the sum of every row's control amount by currency (rejected rows included when their amount was readable).
 ///
 /// Outcome: file-level failure (evidence, schema, unreadable) = REJECTED. Count mismatch and value mismatch follow
@@ -33,7 +33,7 @@ public sealed class DeliveryIngestor(
     private const int ExcerptMax = 500;
 
     private sealed record Row(string Id, string Source, DateOnly Date, string SchemaVersion, string FileName, string Fingerprint,
-        SourceFormat Format, string? LegalEntityId, string? RunId, int? DeclaredCount, decimal? DeclaredEur, decimal? DeclaredCzk,
+        SourceFormat Format, string? LegalEntityId, string? RunId, int? DeclaredCount, IReadOnlyDictionary<string, decimal> Declared,
         string? Supersedes, string State, DateTimeOffset? IngestedAt);
 
     private sealed class Analysis
@@ -63,17 +63,25 @@ public sealed class DeliveryIngestor(
     {
         await using var c = dataSource.CreateCommand("""
             SELECT id, source_name, business_date, schema_version, file_name, fingerprint_sha256, source_format, legal_entity_id, run_id,
-                   declared_record_count, declared_total_eur, declared_total_czk, supersedes_delivery_id, state, ingested_at
+                   declared_record_count, supersedes_delivery_id, state, ingested_at
             FROM source_deliveries WHERE id=@id
             """);
         c.Parameters.AddWithValue("id", id);
+        var declared = new Dictionary<string, decimal>(StringComparer.Ordinal);
+        await using (var dc = dataSource.CreateCommand(
+            "SELECT currency, declared_amount FROM delivery_control_totals WHERE delivery_id=@id AND declared_amount IS NOT NULL"))
+        {
+            dc.Parameters.AddWithValue("id", id);
+            await using var dr = await dc.ExecuteReaderAsync(ct);
+            while (await dr.ReadAsync(ct)) declared[dr.GetString(0).Trim()] = dr.GetDecimal(1);
+        }
         await using var r = await c.ExecuteReaderAsync(ct);
         if (!await r.ReadAsync(ct)) return null;
         string? S(int i) => r.IsDBNull(i) ? null : r.GetString(i);
         return new Row(r.GetString(0), r.GetString(1), r.GetFieldValue<DateOnly>(2), r.GetString(3), r.GetString(4), r.GetString(5).Trim(),
             WireEnum.TryParse<SourceFormat>(r.GetString(6), out var f) ? f : SourceFormat.Csv, S(7), S(8),
-            r.IsDBNull(9) ? null : r.GetInt32(9), r.IsDBNull(10) ? null : r.GetDecimal(10), r.IsDBNull(11) ? null : r.GetDecimal(11),
-            S(12), r.GetString(13), r.IsDBNull(14) ? null : r.GetFieldValue<DateTimeOffset>(14));
+            r.IsDBNull(9) ? null : r.GetInt32(9), declared,
+            S(10), r.GetString(11), r.IsDBNull(12) ? null : r.GetFieldValue<DateTimeOffset>(12));
     }
 
     private async Task<Analysis> AnalyseAsync(Row d, CancellationToken ct)
@@ -143,13 +151,20 @@ public sealed class DeliveryIngestor(
         void Classify(MismatchOutcome o, DeliveryFailure f) => (o == MismatchOutcome.Reject ? a.Rejecting : a.Qualifying).Add(f);
         if (d.DeclaredCount is { } n && n != a.TotalRows)
             Classify(policy.CountMismatch, new(ReasonCodes.ControlCountMismatch, $"Manifest declares {n} records but file contains {a.TotalRows}."));
-        foreach (var (cur, declared) in new[] { ("EUR", d.DeclaredEur), ("CZK", d.DeclaredCzk) })
+        // No declared totals at all = the manifest carries no control totals: nothing to compare. Otherwise every currency
+        // declared OR measured is compared; a measured currency without a declared total is a mismatch (declared 0).
+        if (d.Declared.Count > 0)
         {
-            if (declared is not { } dec) continue;
-            var actual = a.Totals.GetValueOrDefault(cur);
-            if (actual != dec)
-                Classify(policy.ValueMismatch, new(ReasonCodes.ControlValueMismatch,
-                    $"Manifest declares {Fmt(dec)} {cur} but the file sums to {Fmt(actual)} {cur}."));
+            foreach (var cur in d.Declared.Keys.Union(a.Totals.Keys).OrderBy(c => c, StringComparer.Ordinal))
+            {
+                var dec = d.Declared.GetValueOrDefault(cur);
+                var actual = a.Totals.GetValueOrDefault(cur);
+                if (actual != dec)
+                    Classify(policy.ValueMismatch, new(ReasonCodes.ControlValueMismatch,
+                        d.Declared.ContainsKey(cur)
+                            ? $"Manifest declares {Fmt(dec)} {cur} but the file sums to {Fmt(actual)} {cur}."
+                            : $"Manifest declares no {cur} total but the file sums to {Fmt(actual)} {cur}."));
+            }
         }
         return a;
     }
@@ -234,17 +249,26 @@ public sealed class DeliveryIngestor(
 
         await using (var up = new NpgsqlCommand("""
             UPDATE source_deliveries SET state=@s, accepted_record_count=@a, rejected_record_count=@r, total_row_count=@t,
-              actual_total_eur=@eur, actual_total_czk=@czk, ingested_at=now() WHERE id=@id
+              ingested_at=now() WHERE id=@id
             """, conn, tx))
         {
             up.Parameters.AddWithValue("s", DeliveryStates.Wire(state));
             up.Parameters.AddWithValue("a", accepted);
             up.Parameters.AddWithValue("r", a.RowRejections.Count);
             up.Parameters.AddWithValue("t", a.TotalRows);
-            up.Parameters.AddWithValue("eur", a.Totals.TryGetValue("EUR", out var e) ? e : DBNull.Value);
-            up.Parameters.AddWithValue("czk", a.Totals.TryGetValue("CZK", out var z) ? z : DBNull.Value);
             up.Parameters.AddWithValue("id", d.Id);
             await up.ExecuteNonQueryAsync(ct);
+        }
+        foreach (var (cur, amount) in a.Totals)
+        {
+            await using var tc = new NpgsqlCommand("""
+                INSERT INTO delivery_control_totals (delivery_id, currency, actual_amount) VALUES (@d, @c, @a)
+                ON CONFLICT (delivery_id, currency) DO UPDATE SET actual_amount = EXCLUDED.actual_amount
+                """, conn, tx);
+            tc.Parameters.AddWithValue("d", d.Id);
+            tc.Parameters.AddWithValue("c", cur);
+            tc.Parameters.AddWithValue("a", amount);
+            await tc.ExecuteNonQueryAsync(ct);
         }
 
         if (supersededTarget is not null)
@@ -263,7 +287,7 @@ public sealed class DeliveryIngestor(
             AfterJson: JsonSerializer.Serialize(new
             {
                 state = DeliveryStates.Wire(state), acceptedRecords = accepted, rejectedRecords = a.RowRejections.Count, totalRows = a.TotalRows,
-                actualTotalEur = Fmt(a.Totals.GetValueOrDefault("EUR")), actualTotalCzk = Fmt(a.Totals.GetValueOrDefault("CZK")),
+                actualTotals = a.Totals.OrderBy(t => t.Key, StringComparer.Ordinal).Select(t => new { currency = t.Key, amount = Fmt(t.Value) }),
                 failures = failures.Select(f => f.ReasonCode),
             })), ct);
 

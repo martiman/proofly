@@ -100,9 +100,9 @@ public sealed class DeliveryRegistry(
         var state = failures.Count > 0 ? DeliveryState.Rejected : DeliveryState.Received;
         await using (var ins = new NpgsqlCommand("""
             INSERT INTO source_deliveries (id, run_id, legal_entity_id, source_name, business_date, schema_version, file_name, fingerprint_sha256,
-              declared_record_count, declared_total_eur, declared_total_czk, expected_by, received_at, state, supersedes_delivery_id,
+              declared_record_count, expected_by, received_at, state, supersedes_delivery_id,
               source_format, sequence_number, rejected_record_count)
-            VALUES (@id, @run, @le, @src, @date, @sv, @fn, @fp, @cnt, @eur, @czk, @exp, @rec, @state, @sup, @fmt, @seq, 0)
+            VALUES (@id, @run, @le, @src, @date, @sv, @fn, @fp, @cnt, @exp, @rec, @state, @sup, @fmt, @seq, 0)
             """, conn, tx))
         {
             var p = ins.Parameters;
@@ -115,8 +115,6 @@ public sealed class DeliveryRegistry(
             p.AddWithValue("fn", m.FileName);
             p.AddWithValue("fp", r.FingerprintSha256);
             p.AddWithValue("cnt", (object?)m.DeclaredRecordCount ?? DBNull.Value);
-            p.AddWithValue("eur", (object?)m.DeclaredTotalEur ?? DBNull.Value);
-            p.AddWithValue("czk", (object?)m.DeclaredTotalCzk ?? DBNull.Value);
             p.AddWithValue("exp", (object?)m.ExpectedBy?.ToUniversalTime() ?? DBNull.Value);
             p.AddWithValue("rec", (object?)m.ReceivedAt?.ToUniversalTime() ?? DBNull.Value);
             p.AddWithValue("state", DeliveryStates.Wire(state));
@@ -124,6 +122,15 @@ public sealed class DeliveryRegistry(
             p.AddWithValue("fmt", WireNames.ToUpperSnake(r.Format));
             p.AddWithValue("seq", (object?)m.SequenceNumber ?? DBNull.Value);
             await ins.ExecuteNonQueryAsync(ct);
+        }
+        foreach (var t in m.DeclaredTotals)
+        {
+            await using var ct1 = new NpgsqlCommand(
+                "INSERT INTO delivery_control_totals (delivery_id, currency, declared_amount) VALUES (@d, @c, @a)", conn, tx);
+            ct1.Parameters.AddWithValue("d", m.DeliveryId);
+            ct1.Parameters.AddWithValue("c", t.Currency);
+            ct1.Parameters.AddWithValue("a", t.Amount);
+            await ct1.ExecuteNonQueryAsync(ct);
         }
         foreach (var f in failures) await IngestionSql.InsertFailureAsync(tx, m.DeliveryId, f, ct);
 

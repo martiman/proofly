@@ -224,15 +224,14 @@ public sealed record SafeguardingBalance(
 /// <param name="SchemaVersion">schema_version</param>
 /// <param name="FileName">file_name</param>
 /// <param name="DeclaredRecordCount">declared_record_count (rows in the file, data rows only)</param>
-/// <param name="DeclaredTotalEur">declared_total_eur (sum of the source's ControlAmount in EUR); null = not declared</param>
-/// <param name="DeclaredTotalCzk">declared_total_czk; null = not declared</param>
+/// <param name="DeclaredTotals">declared_total_&lt;ccy&gt; columns: the declared sum of the source's ControlAmount per currency; empty = no totals declared (check skipped)</param>
 /// <param name="ExpectedBy">expected_by</param>
 /// <param name="ReceivedAt">received_at</param>
 /// <param name="CorrectionOfDeliveryId">correction_of_delivery_id; set when this delivery corrects an earlier one</param>
 /// <param name="SequenceNumber">optional sequence_number for sources that number their deliveries</param>
 public sealed record DeliveryManifestEntry(
     string SourceName, string DeliveryId, DateOnly BusinessDate, string SchemaVersion, string FileName,
-    int? DeclaredRecordCount, decimal? DeclaredTotalEur, decimal? DeclaredTotalCzk, DateTimeOffset? ExpectedBy,
+    int? DeclaredRecordCount, IReadOnlyList<Money> DeclaredTotals, DateTimeOffset? ExpectedBy,
     DateTimeOffset? ReceivedAt, string? CorrectionOfDeliveryId, int? SequenceNumber = null) : ISourceRecord
 {
     public string SourceRowId => DeliveryId;
