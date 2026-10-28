@@ -1,4 +1,6 @@
 using Proofly.Data;
+using Proofly.Worker.Jobs;
+using Proofly.Data.Audit;
 
 namespace Proofly.Worker;
 
@@ -7,5 +9,7 @@ public static class Modules
 {
     public static IServiceCollection AddModules(this IServiceCollection services, IConfiguration configuration) => services
         .AddData(configuration)
-        .AddHeartbeat();
+        .AddAudit()
+        .AddHeartbeat()
+        .AddJobWorker();
 }

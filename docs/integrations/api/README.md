@@ -63,11 +63,11 @@ under "New in the real API vs mock".
 
 | Role | Permissions |
 | --- | --- |
-| CONTROL_ANALYST | run.view, source.view, source.retry, exception.view/assign/investigate/propose/reopen, transaction.view, matching.view/propose, ledger.view, safeguarding.view, safeguarding.adjustment.propose, signoff.view, signoff.prepare, evidence.view, approval.view |
-| CONTROL_OWNER / APPROVER | analyst set + run.reprocess, source.supersede, exception.approve, safeguarding.adjustment.approve, signoff.decide, evidence.export, settings.view |
-| CONFIG_ADMIN (ADMIN) | settings.view/draft (cannot approve own change) |
-| SECURITY_ADMIN | access.manage, settings.view |
-| AUDIT_REVIEWER | read-only: *.view, audit.view, evidence.view, evidence.export |
+| ANALYST | auth.self, run.view, source.view, source.retry, exception.view/assign/investigate/propose/reopen, transaction.view, matching.view/propose, ledger.view, safeguarding.view, safeguarding.adjustment.propose, signoff.view, signoff.prepare, evidence.view, approval.view |
+| APPROVER | analyst set + run.reprocess, source.supersede, exception.approve, safeguarding.adjustment.approve, signoff.decide, evidence.export, audit.view, settings.view |
+| CONFIG_ADMIN | auth.self, run.view, settings.view/draft/approve, approval.view (cannot approve own change) |
+| SECURITY_ADMIN | auth.self, run.view, access.manage, settings.view, approval.view, audit.view |
+| VIEWER | read-only: auth.self, run/source/exception/transaction/matching/ledger/safeguarding/signoff/evidence/approval `.view`, audit.view, evidence.export |
 
 `settings.approve` is granted "as configured" and never lets a user approve their own change.
 
@@ -152,7 +152,7 @@ Changes to existing shapes (all additive unless stated):
 | `AuditEvent.actor`: string becomes `{type,id,name}`; adds `reason`, `requestId`, `previousHash`; `runId` nullable; `subjectKind` and `type` enums extended (ADJUSTMENT, SIGN_OFF, CONFIG, MATCH_GROUP; resolution decided, config, access, retry, supersede, download, etc.). Filters add `actorId`, `actorType`, `runId`, `from`, `to`. **Breaking (actor).** | Audit actor type, hash chain, correlation. |
 | `TimelineEvent.actor`: string becomes `Actor`. **Breaking.** | Same as audit. |
 | `EvidencePack.status` adds `GENERATING`, `FAILED`; adds `sha256`, `sizeBytes`; generate returns 202. | Async generation, integrity. |
-| `Role` adds `CONFIG_ADMIN`, `SECURITY_ADMIN`. | Roles doc distinguishes them from ADMIN. |
+| `Role` is `ANALYST`, `APPROVER`, `CONFIG_ADMIN`, `SECURITY_ADMIN`, `VIEWER`; mock `ADMIN` dropped (ADR 0005). | Fixed role bundles. |
 | `Settings` adds `pendingChanges`; `RuleConfig`/`SourceConfig`/`UserAccess` add `pendingChangeId`; `ApprovalPolicy` adds `requiredRole`, `version`. | Pending configuration changes visible in the settings screen. |
 | `Page<T>` for `listRuns`; `listLegalEntities` stays an array. | Runs grow unbounded. |
 | `ControlRoom`, `ControlAreaSummary`, `Account`, `Money`, `SafeguardingPosition` and the remaining types unchanged (Money amount regex allows up to 6 dp; mock used 2). | Compatibility. |

@@ -26,3 +26,14 @@ Contract: `docs/integrations/api/openapi.yaml`. Stack: ADR 0004. Build/test: `cd
 - Money is `decimal`/`NUMERIC`, never floating point. `Money` rejects mixed currencies.
 - Warnings are errors; nullable on; package versions only in `Directory.Packages.props`.
 - Connection string `ConnectionStrings:Proofly`; dev DB `proofly_dev`, tests use `proofly_test` (localhost:55432, trust auth).
+
+## Background jobs (issue #17)
+
+Decision: small in-house outbox on PostgreSQL (`jobs` table, migration `0017_jobs.sql`) instead of Hangfire (ADR 0004 option). Claiming uses `SELECT ... FOR UPDATE SKIP LOCKED`; no extra dependency and no licence exposure for on-prem distribution.
+
+- Code: `Proofly.Data/Jobs` (queue, store, processor, handler registry), host loop in `Proofly.Worker/Jobs`.
+- Enqueue: `IJobQueue.EnqueueAsync(new JobRequest(type, payload, DedupeKey: ...), transaction)`. Pass the business `NpgsqlTransaction` so both commit or roll back together; the unique `dedupe_key` makes it idempotent (`EnqueueResult.Created` is false on a repeat).
+- Handlers: `services.AddJobHandler<THandler, TPayload>("job.type")` (after `AddJobs`); `THandler : IJobHandler<TPayload>`, resolved per job in a new DI scope. Handlers must be idempotent (at-least-once). Throw `PermanentJobException` to dead-letter immediately.
+- States: QUEUED, RUNNING (leased), FAILED (retry waits until `run_after`), SUCCEEDED, DEAD. Failure backoff is `BackoffBase * 2^(attempt-1)` capped at `BackoffMax`; DEAD after `max_attempts`.
+- Lease: heartbeat at lease/3; a RUNNING job with an expired lease is re-queued (DEAD if attempts exhausted) by every worker poll. Completion is fenced by `locked_by`, so a stale worker cannot overwrite the result. Shutdown releases the in-flight job without consuming an attempt.
+- Metrics: `IJobQueue.CountsByStateAsync()` and `System.Diagnostics.Metrics` meter `Proofly.Jobs` (`proofly.jobs.succeeded|failed|dead`).

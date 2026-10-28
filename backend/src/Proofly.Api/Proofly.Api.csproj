@@ -2,6 +2,8 @@
   <ItemGroup>
     <PackageReference Include="JsonSchema.Net" />
     <PackageReference Include="YamlDotNet" />
+    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" />
+    <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" />
   </ItemGroup>
   <ItemGroup>
     <!-- The contract is the single source of truth; embed the file rather than copying it. -->

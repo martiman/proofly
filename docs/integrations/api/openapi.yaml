@@ -1053,7 +1053,7 @@ components:
         - CONFIG_CHANGE_PROPOSED
         - CONFIG_CHANGE_DECIDED
         - ACCESS_CHANGED
-    Role: {type: string, enum: [CONTROL_ANALYST, CONTROL_OWNER, APPROVER, AUDIT_REVIEWER, ADMIN, CONFIG_ADMIN, SECURITY_ADMIN]}
+    Role: {type: string, enum: [ANALYST, APPROVER, CONFIG_ADMIN, SECURITY_ADMIN, VIEWER]}
     Permission:
       type: string
       description: Values used in `x-required-permission`.

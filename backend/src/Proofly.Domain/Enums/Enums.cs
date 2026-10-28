@@ -15,7 +15,7 @@ public enum AdjustmentStatus { Proposed, Approved, Rejected, Expired }
 public enum SafeguardingState { Covered, Shortfall, Surplus, Qualified, NoObligation }
 public enum DeliveryState { Received, Late, Missing, Rejected, Superseded, Qualified }
 public enum ActorType { User, System, ServiceAccount }
-public enum Role { ControlAnalyst, ControlOwner, Approver, AuditReviewer, Admin, ConfigAdmin, SecurityAdmin }
+public enum Role { Analyst, Approver, ConfigAdmin, SecurityAdmin, Viewer }
 
 public enum Permission
 {
