@@ -7,6 +7,7 @@ using Proofly.Controls.Common;
 using Proofly.Controls.Ledger;
 using Proofly.Data.Audit;
 using Proofly.Data.Exceptions;
+using Proofly.Data.Governance.Commands;
 using Proofly.Data.Ingestion;
 using Proofly.Data.Jobs;
 using Proofly.Domain;
@@ -23,8 +24,25 @@ namespace Proofly.Data.Orchestration;
 /// run (see <see cref="RunReprocessService"/>); its exceptions continue those of the version it supersedes
 /// (<see cref="CarryOver"/>).
 /// </summary>
-public sealed class RunProcessor(NpgsqlDataSource dataSource, IAuditWriter audit, IngestionOptions ingestion, RunProcessingOptions options)
+public sealed class RunProcessor(
+    NpgsqlDataSource dataSource, IAuditWriter audit, IngestionOptions ingestion, RunProcessingOptions options,
+    IRulesetResolver? rulesets = null, TimeProvider? time = null)
 {
+    private readonly IRulesetResolver _rulesets = rulesets ?? new RulesetResolver(dataSource);
+    private readonly TimeProvider _time = time ?? TimeProvider.System;
+
+    /// <summary>
+    /// The configuration ruleset in force now (ruleset_versions: activated_at &lt;= now and effective_from &lt;= today), read in the run's
+    /// transaction. The run records <c>{configVersion}+{control rule versions}</c>; the control parameters are the code defaults
+    /// overlaid with the snapshot's (<see cref="RulesetParameters"/>). A change approved later never reaches a run already started.
+    /// </summary>
+    private async Task<(string Version, RunProcessingOptions Options)> ResolveRulesetAsync(NpgsqlTransaction tx, CancellationToken ct)
+    {
+        var cfg = await _rulesets.ResolveAsync(_time.GetUtcNow(), tx, ct);
+        var effective = RulesetParameters.Apply(options, cfg.SnapshotJson);
+        return ($"{cfg.Version}+{effective.RulesetVersion}", effective);
+    }
+
     internal static readonly AuditActor Actor = AuditActor.System("run-orchestration");
 
     public static string RunId(string legalEntityId, DateOnly date, int version) => $"RUN-{legalEntityId}-{date:yyyyMMdd}-v{version}";
@@ -34,6 +52,8 @@ public sealed class RunProcessor(NpgsqlDataSource dataSource, IAuditWriter audit
         await using var conn = await dataSource.OpenConnectionAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
         await Sql.Exec(tx, "SELECT pg_advisory_xact_lock(hashtextextended(@k, 0))", ct, Sql.P("k", $"run|{p.LegalEntityId}|{p.BusinessDate:yyyy-MM-dd}"));
+
+        var (rulesetVersion, effective) = await ResolveRulesetAsync(tx, ct);
 
         // 1. Create or lock the run.
         var run = await Sql.Read(tx, p.RunId is null
@@ -48,9 +68,9 @@ public sealed class RunProcessor(NpgsqlDataSource dataSource, IAuditWriter audit
             await Sql.Exec(tx, """
                 INSERT INTO runs (id, legal_entity_id, business_date, run_version, ruleset_version, state, sign_off_state)
                 VALUES (@id, @le, @d, 1, @rs, 'PROCESSING', 'PREPARATION_INCOMPLETE')
-                """, ct, Sql.P("id", id), Sql.P("le", p.LegalEntityId), Sql.P("d", p.BusinessDate), Sql.P("rs", options.RulesetVersion));
+                """, ct, Sql.P("id", id), Sql.P("le", p.LegalEntityId), Sql.P("d", p.BusinessDate), Sql.P("rs", rulesetVersion));
             await audit.AppendAsync(tx, new AuditEventInput("RUN_STARTED", Actor, "RUN", id, $"Run {id} started for {p.LegalEntityId} on {p.BusinessDate:yyyy-MM-dd}",
-                RunId: id, RuleVersion: options.RulesetVersion, AfterJson: new JsonObject { ["version"] = 1, ["trigger"] = p.Trigger }.ToJsonString()), ct);
+                RunId: id, RuleVersion: rulesetVersion, AfterJson: new JsonObject { ["version"] = 1, ["trigger"] = p.Trigger }.ToJsonString()), ct);
             run = (id, 1, "PROCESSING", null, null);
         }
         if (run.State == "SUPERSEDED") return new RunProcessingOutcome(RunProcessingStatus.RunSuperseded, run.Id, run.Hash, run.State, 0, 0);
@@ -61,13 +81,13 @@ public sealed class RunProcessor(NpgsqlDataSource dataSource, IAuditWriter audit
         RunInputLoader.Loaded loaded;
         using (RunTelemetry.Source.StartActivity("run.load")) loaded = await RunInputLoader.LoadAsync(tx, run.Id, p.LegalEntityId, p.BusinessDate, ingestion.MandatorySources, ct);
         await Sql.Exec(tx, "UPDATE runs SET state='PROCESSING', ruleset_version=@rs, last_evidence_arrival_at=COALESCE(@arr, last_evidence_arrival_at) WHERE id=@id", ct,
-            Sql.P("id", run.Id), Sql.P("rs", options.RulesetVersion), Sql.P("arr", loaded.LastArrival));
+            Sql.P("id", run.Id), Sql.P("rs", rulesetVersion), Sql.P("arr", loaded.LastArrival));
         await Sql.Exec(tx, "UPDATE source_deliveries SET run_id=@r WHERE legal_entity_id=@le AND business_date=@d AND run_id IS DISTINCT FROM @r", ct,
             Sql.P("r", run.Id), Sql.P("le", p.LegalEntityId), Sql.P("d", p.BusinessDate));
 
         // 3. Controls (pure).
         RunEvaluation eval;
-        using (RunTelemetry.Source.StartActivity("run.evaluate")) eval = RunEvaluator.Evaluate(loaded.Inputs, options);
+        using (RunTelemetry.Source.StartActivity("run.evaluate")) eval = RunEvaluator.Evaluate(loaded.Inputs, effective);
 
         // 4. Persist.
         using var persistActivity = RunTelemetry.Source.StartActivity("run.persist");
@@ -82,7 +102,7 @@ public sealed class RunProcessor(NpgsqlDataSource dataSource, IAuditWriter audit
         var insertedExceptions = await RunBulkPersistence.InsertExceptionsAsync(tx, audit, Actor, run.Id, p, items, ct);
         var carried = items.Count(i => i.Pred is not null && insertedExceptions.Contains(i.Draft.Id));
         await RunBulkPersistence.InsertGroupsAsync(tx, run.Id, p.LegalEntityId, eval.Groups, ct);
-        await RunBulkPersistence.InsertBalancesAsync(tx, run.Id, options.Ledger.RuleVersion, eval.Balances, ct);
+        await RunBulkPersistence.InsertBalancesAsync(tx, run.Id, effective.Ledger.RuleVersion, eval.Balances, ct);
         foreach (var pos in eval.Positions)
         {
             var sp = pos.Position;
@@ -133,10 +153,10 @@ public sealed class RunProcessor(NpgsqlDataSource dataSource, IAuditWriter audit
         }
         await audit.AppendAsync(tx, new AuditEventInput("RUN_PROCESSED", Actor, "RUN", run.Id,
             $"Run {run.Id} processed (version {run.Version}): {state}, {eval.Exceptions.Count} exception(s), {carried} continued from the previous version",
-            RunId: run.Id, RuleVersion: eval.RulesetVersion,
+            RunId: run.Id, RuleVersion: rulesetVersion,
             AfterJson: new JsonObject
             {
-                ["event"] = "RUN_PROCESSED", ["state"] = state, ["version"] = run.Version, ["resultHash"] = eval.ResultHash, ["rulesetVersion"] = eval.RulesetVersion,
+                ["event"] = "RUN_PROCESSED", ["state"] = state, ["version"] = run.Version, ["resultHash"] = eval.ResultHash, ["rulesetVersion"] = rulesetVersion,
                 ["exceptions"] = eval.Exceptions.Count, ["carriedOver"] = carried, ["inputs"] = inputs,
             }.ToJsonString()), ct);
 
@@ -154,6 +174,8 @@ public sealed class RunProcessor(NpgsqlDataSource dataSource, IAuditWriter audit
         await using var conn = await dataSource.OpenConnectionAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
         await Sql.Exec(tx, "SELECT pg_advisory_xact_lock(hashtextextended(@k, 0))", ct, Sql.P("k", $"run|{p.LegalEntityId}|{p.BusinessDate:yyyy-MM-dd}"));
+        // Not via ResolveRulesetAsync: a snapshot whose parameters do not parse must not stop the failure from being recorded.
+        var rulesetVersion = $"{(await _rulesets.ResolveAsync(_time.GetUtcNow(), tx, ct)).Version}+{options.RulesetVersion}";
         var id = await Sql.Scalar<string>(tx, p.RunId is null
             ? "UPDATE runs SET state='FAILED' WHERE id = (SELECT id FROM runs WHERE legal_entity_id=@le AND business_date=@d ORDER BY run_version DESC LIMIT 1) AND result_hash IS NULL AND state IN ('AWAITING_EVIDENCE','PROCESSING') RETURNING id"
             : "UPDATE runs SET state='FAILED' WHERE id=@id AND result_hash IS NULL AND state IN ('AWAITING_EVIDENCE','PROCESSING') RETURNING id", ct,
@@ -167,14 +189,14 @@ public sealed class RunProcessor(NpgsqlDataSource dataSource, IAuditWriter audit
                 await Sql.Exec(tx, """
                     INSERT INTO runs (id, legal_entity_id, business_date, run_version, ruleset_version, state, sign_off_state)
                     VALUES (@id, @le, @d, 1, @rs, 'FAILED', 'PREPARATION_INCOMPLETE')
-                    """, ct, Sql.P("id", id), Sql.P("le", p.LegalEntityId), Sql.P("d", p.BusinessDate), Sql.P("rs", options.RulesetVersion));
+                    """, ct, Sql.P("id", id), Sql.P("le", p.LegalEntityId), Sql.P("d", p.BusinessDate), Sql.P("rs", rulesetVersion));
                 await audit.AppendAsync(tx, new AuditEventInput("RUN_STARTED", Actor, "RUN", id, $"Run {id} started for {p.LegalEntityId} on {p.BusinessDate:yyyy-MM-dd}",
-                    RunId: id, RuleVersion: options.RulesetVersion, AfterJson: new JsonObject { ["version"] = 1, ["trigger"] = p.Trigger }.ToJsonString()), ct);
+                    RunId: id, RuleVersion: rulesetVersion, AfterJson: new JsonObject { ["version"] = 1, ["trigger"] = p.Trigger }.ToJsonString()), ct);
             }
         }
         if (id is null) { await tx.RollbackAsync(ct); return; }
         await audit.AppendAsync(tx, new AuditEventInput("CONTROL_EXECUTED", Actor, "RUN", id, $"Run {id} processing failed",
-            Reason: reason.Length >= 3 ? reason[..Math.Min(reason.Length, 500)] : "processing failed", RunId: id, RuleVersion: options.RulesetVersion,
+            Reason: reason.Length >= 3 ? reason[..Math.Min(reason.Length, 500)] : "processing failed", RunId: id, RuleVersion: rulesetVersion,
             AfterJson: new JsonObject { ["event"] = "RUN_FAILED", ["state"] = "FAILED" }.ToJsonString()), ct);
         await tx.CommitAsync(ct);
     }

@@ -139,7 +139,7 @@ public static class SourceSchemas
             ColumnSpec.Text("schema_version", maxLength: 16), ColumnSpec.Text("file_name", maxLength: 200),
             ColumnSpec.Integer("declared_record_count", required: false), ColumnSpec.Timestamp("expected_by", false),
             ColumnSpec.Timestamp("received_at", false), ColumnSpec.Text("correction_of_delivery_id", false, 64),
-            ColumnSpec.Integer("sequence_number", required: false)),
+            ColumnSpec.Integer("sequence_number", required: false), ColumnSpec.Text("legal_entity_id", false, 64)),
         "delivery_id", null,
         v =>
         {
@@ -148,7 +148,7 @@ public static class SourceSchemas
                 throw RowValues.Reject(ReasonCodes.InvalidValue, totals.Errors[0].Split(':')[0], totals.Errors[0]);
             return new DeliveryManifestEntry(v.Str("source_name"), v.Str("delivery_id"), v.Date("business_date"), v.Str("schema_version"),
                 v.Str("file_name"), v.OptInt("declared_record_count"), totals.Totals, v.OptTs("expected_by"), v.OptTs("received_at"),
-                v.OptStr("correction_of_delivery_id"), v.OptInt("sequence_number"));
+                v.OptStr("correction_of_delivery_id"), v.OptInt("sequence_number"), v.OptStr("legal_entity_id"));
         },
         ManifestTotals.Prefix);
 

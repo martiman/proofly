@@ -283,8 +283,7 @@ public sealed class World : IAsyncLifetime
 
     /// <summary>
     /// A second (or later) entity: all five mandatory deliveries inserted as accepted canonical records, then the real run.process handler.
-    /// (DeliveryRegistry keys "the current delivery" on source and date only, not on the legal entity, so a second entity cannot register
-    /// the same source and day through the registry: see docs/testing/governance-acceptance.md, gaps.)
+    /// (Registration is per legal entity since migration 0049; this shortcut only avoids building five CSV files per entity.)
     /// </summary>
     public async Task<string> ProcessedRunSeeded(string le)
     {

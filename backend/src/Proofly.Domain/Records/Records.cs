@@ -199,7 +199,7 @@ public sealed record BankTransaction(
 /// <param name="LegalEntityId">legal_entity_id</param>
 /// <param name="BalanceTimestamp">balance_timestamp</param>
 /// <param name="BalanceType">balance_type</param>
-/// <param name="Balance">balance_amount + currency (negative values are valid input; policy decides, see F-015)</param>
+/// <param name="Balance">balance_amount + currency (never negative: the schema layer rejects a negative balance as INVALID_VALUE, see the findings catalogue)</param>
 /// <param name="EvidenceReference">evidence_reference (required)</param>
 /// <param name="SourceTimestamp">source_timestamp</param>
 public sealed record SafeguardingBalance(
@@ -229,14 +229,15 @@ public sealed record SafeguardingBalance(
 /// <param name="ReceivedAt">received_at</param>
 /// <param name="CorrectionOfDeliveryId">correction_of_delivery_id; set when this delivery corrects an earlier one</param>
 /// <param name="SequenceNumber">optional sequence_number for sources that number their deliveries</param>
+/// <param name="ManifestLegalEntityId">optional legal_entity_id column: the entity the delivery belongs to; must match the registration's entity when present</param>
 public sealed record DeliveryManifestEntry(
     string SourceName, string DeliveryId, DateOnly BusinessDate, string SchemaVersion, string FileName,
     int? DeclaredRecordCount, IReadOnlyList<Money> DeclaredTotals, DateTimeOffset? ExpectedBy,
-    DateTimeOffset? ReceivedAt, string? CorrectionOfDeliveryId, int? SequenceNumber = null) : ISourceRecord
+    DateTimeOffset? ReceivedAt, string? CorrectionOfDeliveryId, int? SequenceNumber = null, string? ManifestLegalEntityId = null) : ISourceRecord
 {
     public string SourceRowId => DeliveryId;
     public string NaturalKey => DeliveryId;
-    public string? LegalEntityId => null;
+    public string? LegalEntityId => ManifestLegalEntityId;
     public Money? ControlAmount => null;
     public IEnumerable<Money> Amounts => [];
 }

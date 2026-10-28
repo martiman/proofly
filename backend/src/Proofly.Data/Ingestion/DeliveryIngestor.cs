@@ -212,7 +212,7 @@ public sealed class DeliveryIngestor(
     {
         await using var conn = await dataSource.OpenConnectionAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
-        await IngestionSql.LockSourceDateAsync(tx, d.Source, d.Date, ct);
+        await IngestionSql.LockSourceDateAsync(tx, d.LegalEntityId, d.Source, d.Date, ct);
 
         var current = await IngestionSql.ScalarAsync<string>(tx,
             "SELECT state FROM source_deliveries WHERE id=@id AND ingested_at IS NULL FOR UPDATE", ct, ("id", d.Id));

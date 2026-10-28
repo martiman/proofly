@@ -33,9 +33,38 @@ internal sealed class SignOffEndpoints(ISignOffRepository repo) : IEndpointModul
         // x-required-permission: signoff.view
         g.MapGet("/runs/{runId}/sign-off", async (HttpContext ctx, string runId, CancellationToken ct) =>
         {
-            var (caller, pack) = await LoadAsync(ctx, runId, null, ct);
+            var limit = SignOffRepository.OpenMattersDefaultLimit;
+            if (ctx.Request.Query.TryGetValue("openMattersLimit", out var ol) && ol.Count > 0 && ol[0] is { Length: > 0 } ov
+                && (!int.TryParse(ov, out limit) || limit is < 1 or > 200))
+            {
+                throw ProblemException.Validation("openMattersLimit", "openMattersLimit must be an integer from 1 to 200.");
+            }
+            var (caller, pack) = await LoadAsync(ctx, runId, null, ct, limit);
             ctx.Set(Etag(pack));
             return Results.Ok(ToDto(pack, caller));
+        });
+
+        // x-required-permission: signoff.view
+        g.MapGet("/runs/{runId}/sign-off/open-matters", async (HttpContext ctx, string runId, CancellationToken ct) =>
+        {
+            var q = ctx.Request.Query;
+            bool? blocking = null;
+            if (q.TryGetValue("blocking", out var b) && b.Count > 0 && b[0] is { Length: > 0 } bv)
+            {
+                blocking = bool.TryParse(bv, out var parsed) ? parsed : throw ProblemException.Validation("blocking", "blocking must be true or false.");
+            }
+            string? severity = null;
+            if (q.TryGetValue("severity", out var sv) && sv.Count > 0 && sv[0] is { Length: > 0 } sev)
+            {
+                severity = sev is "CRITICAL" or "HIGH" or "MEDIUM" or "LOW" ? sev : throw ProblemException.Validation("severity", "severity must be CRITICAL, HIGH, MEDIUM or LOW.");
+            }
+            var page = PageRequest.From(ctx);
+            var caller = ctx.GetCaller();
+            var rows = await repo.ListOpenMattersAsync(RunsMapping.ScopeFor(caller, Permission.SignoffView), runId, new OpenMatterFilter(blocking, severity), page.Limit,
+                page.Decode<OpenMatterCursor>(), page.IncludeTotal, ct) ?? throw new ProblemException(ProblemTypes.NotFound);
+            caller.Require(Permission.SignoffView, rows.LegalEntityId);
+            var paged = Paging.Create(rows.Items, page, i => i.Key, rows.Total);
+            return Results.Ok(new PageDto<ExceptionSummaryDto>(paged.Items.Select(i => ExceptionMapping.ToSummary(i.Row)).ToList(), paged.Page));
         });
 
         // x-required-permission: signoff.prepare; x-audit-event: SIGN_OFF_SUBMITTED
@@ -81,10 +110,10 @@ internal sealed class SignOffEndpoints(ISignOffRepository repo) : IEndpointModul
         new(caller.UserId, ctx.GetRequestId(), (int)pack.Run.RowVersion, pack.SignOff?.Version ?? 0);
 
     /// <summary>404 (missing or outside the caller's scope) then 403 (no permission in that entity).</summary>
-    private async Task<(Caller, SignOffPackRows)> LoadAsync(HttpContext ctx, string runId, Permission? command, CancellationToken ct)
+    private async Task<(Caller, SignOffPackRows)> LoadAsync(HttpContext ctx, string runId, Permission? command, CancellationToken ct, int openMattersLimit = SignOffRepository.OpenMattersDefaultLimit)
     {
         var caller = ctx.GetCaller();
-        var pack = await repo.GetPackAsync(RunsMapping.ScopeFor(caller, Permission.SignoffView), runId, ct) ?? throw new ProblemException(ProblemTypes.NotFound);
+        var pack = await repo.GetPackAsync(RunsMapping.ScopeFor(caller, Permission.SignoffView), runId, openMattersLimit, ct) ?? throw new ProblemException(ProblemTypes.NotFound);
         caller.Require(Permission.SignoffView, pack.Run.LegalEntityId);
         if (command is { } p) { caller.Require(p, pack.Run.LegalEntityId); }
         return (caller, pack);
@@ -137,8 +166,8 @@ internal sealed class SignOffEndpoints(ISignOffRepository repo) : IEndpointModul
         return new RunSignOffDto(
             RunsMapping.Run(p.Run),
             p.Checklist.Select(c => new ChecklistItemDto(c.Control, c.Control, Label(c.Control), c.State, true,
-                $"{c.FindingCount} findings, {c.BlockingFindingCount} blocking", c.ExceptionIds)).ToList(),
-            p.OpenMatters.Select(ExceptionMapping.ToSummary).ToList(), p.Qualifications, p.ChangesSincePreparation, p.AttestationText, p.AttestationTextHash,
+                $"{c.FindingCount} findings, {c.BlockingFindingCount} blocking", c.ExceptionIds, c.OpenCount)).ToList(),
+            p.OpenMatters.Select(ExceptionMapping.ToSummary).ToList(), p.OpenMattersTotal, p.OpenMattersByCategory.Select(x => new OpenMatterCategoryDto(x.Control, x.Total, x.Blocking)).ToList(), p.Qualifications, p.ChangesSincePreparation, p.AttestationText, p.AttestationTextHash,
             allowed.Contains("APPROVE"), p.Blockers, p.EvidencePackId, approval,
             p.History.Select(h => new TimelineEventDto("h-" + h.Id, h.At, new ActorDto(h.ActorType, h.ActorId, h.ActorName), h.Type == "RUN_SIGNED_OFF" ? "APPROVAL" : "STATUS_CHANGE", HistoryText(h))).ToList(),
             allowed);

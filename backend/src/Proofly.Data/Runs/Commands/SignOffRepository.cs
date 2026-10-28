@@ -12,6 +12,10 @@ public interface ISignOffRepository
 {
     /// <summary>Null when the run does not exist or its legal entity is outside the scope.</summary>
     Task<SignOffPackRows?> GetPackAsync(EntityScope scope, string runId, CancellationToken ct = default);
+    /// <summary>The pack with at most <paramref name="openMattersLimit"/> open matters (blocking first, then severity, then value); the totals count all of them.</summary>
+    Task<SignOffPackRows?> GetPackAsync(EntityScope scope, string runId, int openMattersLimit, CancellationToken ct = default);
+    /// <summary>One keyset page of the open matters of an in-scope run, in the order of the pack; null when the run does not exist or is out of scope.</summary>
+    Task<OpenMatterPageRows?> ListOpenMattersAsync(EntityScope scope, string runId, OpenMatterFilter filter, int limit, OpenMatterCursor? after, bool includeTotal, CancellationToken ct = default);
     Task<SignOffResult> SubmitAsync(string runId, string? requiredApproverId, string? note, SignOffCommandContext ctx, CancellationToken ct = default);
     Task<SignOffResult> ReturnAsync(string runId, string reason, SignOffCommandContext ctx, CancellationToken ct = default);
     Task<SignOffResult> ApproveAsync(string runId, string reason, string? attestationTextHash, SignOffCommandContext ctx, CancellationToken ct = default);
@@ -121,30 +125,97 @@ public sealed class SignOffRepository(NpgsqlDataSource db, IAuditWriter audit) :
 
     // ---------------------------------------------------------------- read
 
-    public async Task<SignOffPackRows?> GetPackAsync(EntityScope scope, string runId, CancellationToken ct = default)
+    public const int OpenMattersDefaultLimit = 50;
+
+    // Open-matter order. The sort keys are the expressions of ix_exceptions_run_open_matters (migration 0049), so the first page is an index range scan.
+    private const string KeyBlocking = "(CASE WHEN e.blocking THEN 0 ELSE 1 END)";
+    private const string KeySeverity = "(CASE e.severity WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2 ELSE 3 END)";
+    private const string KeyValue = "(-COALESCE(abs(e.value_amount), -1))";
+    private const string KeyId = "(e.id COLLATE \"C\")";
+    private const string OpenMatterOrder = $"{KeyBlocking}, {KeySeverity}, {KeyValue}, {KeyId}";
+
+    private const string ExceptionColumns = """
+        e.id, e.run_id, e.title, e.control, e.reason_code, e.severity, e.status, e.value_amount, e.value_currency, e.legal_entity_id, e.business_date,
+        e.owner_user_id, u.name, e.created_at, GREATEST(0, (now()::date - e.created_at::date))::int, e.due_at, e.blocking, e.source_file, e.source_row_id, e.version
+        """;
+
+    private static ExceptionRow ReadException(NpgsqlDataReader r) =>
+        new(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4), r.GetString(5), r.GetString(6),
+            r.IsDBNull(7) ? null : r.GetDecimal(7), N(r, 8), r.GetString(9), DateOnly.FromDateTime(r.GetDateTime(10)), N(r, 11), N(r, 12),
+            r.GetFieldValue<DateTimeOffset>(13), r.GetInt32(14), r.GetFieldValue<DateTimeOffset>(15), r.GetBoolean(16), N(r, 17), N(r, 18), r.GetInt32(19));
+
+    public Task<SignOffPackRows?> GetPackAsync(EntityScope scope, string runId, CancellationToken ct = default) => GetPackAsync(scope, runId, OpenMattersDefaultLimit, ct);
+
+    public async Task<OpenMatterPageRows?> ListOpenMattersAsync(EntityScope scope, string runId, OpenMatterFilter filter, int limit, OpenMatterCursor? after, bool includeTotal, CancellationToken ct = default)
+    {
+        var run = await new RunReadRepository(db, TimeProvider.System).GetRunAsync(scope, runId, ct);
+        if (run is null) { return null; }
+        await using var c = await db.OpenConnectionAsync(ct);
+        const string filterSql = $"e.run_id=@r AND e.status NOT IN {TerminalSql} AND (@blk::boolean IS NULL OR e.blocking = @blk) AND (@sev::text IS NULL OR e.severity = @sev)";
+        void Bind(NpgsqlCommand cmd)
+        {
+            cmd.Parameters.AddWithValue("r", runId);
+            cmd.Parameters.Add(new NpgsqlParameter("blk", NpgsqlTypes.NpgsqlDbType.Boolean) { Value = (object?)filter.Blocking ?? DBNull.Value });
+            cmd.Parameters.Add(new NpgsqlParameter("sev", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)filter.Severity ?? DBNull.Value });
+        }
+
+        var items = new List<OpenMatterItem>();
+        await using (var cmd = Cmd(c, null, $"""
+            SELECT {ExceptionColumns}, {KeyBlocking}, {KeySeverity}, {KeyValue}
+            FROM exceptions e LEFT JOIN users u ON u.id = e.owner_user_id
+            WHERE {filterSql}
+              AND (@hasCur = false OR ({OpenMatterOrder}) > (@c1, @c2, @c3, @c4))
+            ORDER BY {OpenMatterOrder}
+            LIMIT @lim
+            """))
+        {
+            Bind(cmd);
+            cmd.Parameters.AddWithValue("hasCur", after is not null);
+            cmd.Parameters.Add(new NpgsqlParameter("c1", NpgsqlTypes.NpgsqlDbType.Integer) { Value = after?.Blocking ?? 0 });
+            cmd.Parameters.Add(new NpgsqlParameter("c2", NpgsqlTypes.NpgsqlDbType.Integer) { Value = after?.Severity ?? 0 });
+            cmd.Parameters.Add(new NpgsqlParameter("c3", NpgsqlTypes.NpgsqlDbType.Numeric) { Value = after?.NegAbs ?? 0m });
+            cmd.Parameters.Add(new NpgsqlParameter("c4", NpgsqlTypes.NpgsqlDbType.Text) { Value = after?.Id ?? "" });
+            cmd.Parameters.AddWithValue("lim", limit + 1);
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            while (await r.ReadAsync(ct)) { items.Add(new OpenMatterItem(ReadException(r), new OpenMatterCursor(r.GetInt32(20), r.GetInt32(21), r.GetDecimal(22), r.GetString(0)))); }
+        }
+
+        int? total = null;
+        if (includeTotal)
+        {
+            await using var cmd = Cmd(c, null, $"SELECT count(*) FROM exceptions e WHERE {filterSql}");
+            Bind(cmd);
+            total = (int)(long)(await cmd.ExecuteScalarAsync(ct))!;
+        }
+        return new OpenMatterPageRows(items, total, run.LegalEntityId);
+    }
+
+    public async Task<SignOffPackRows?> GetPackAsync(EntityScope scope, string runId, int openMattersLimit, CancellationToken ct = default)
     {
         var run = await new RunReadRepository(db, TimeProvider.System).GetRunAsync(scope, runId, ct);
         if (run is null) { return null; }
         await using var c = await db.OpenConnectionAsync(ct);
         var so = await LatestSignOffAsync(c, null, runId, false, ct);
 
-        var all = await ExceptionStatesAsync(c, null, runId, ct);
+        // The open set is summarised by SQL aggregates; only the top matters are materialised.
         var open = new List<ExceptionRow>();
         await using (var cmd = Cmd(c, null, $"""
-            SELECT e.id, e.run_id, e.title, e.control, e.reason_code, e.severity, e.status, e.value_amount, e.value_currency, e.legal_entity_id, e.business_date,
-                   e.owner_user_id, u.name, e.created_at, GREATEST(0, (now()::date - e.created_at::date))::int, e.due_at, e.blocking, e.source_file, e.source_row_id, e.version
+            SELECT {ExceptionColumns}
             FROM exceptions e LEFT JOIN users u ON u.id = e.owner_user_id
             WHERE e.run_id=@r AND e.status NOT IN {TerminalSql}
-            ORDER BY e.blocking DESC, e.id COLLATE "C"
-            """, ("r", runId)))
+            ORDER BY {OpenMatterOrder}
+            LIMIT @lim
+            """, ("r", runId), ("lim", openMattersLimit)))
         await using (var r = await cmd.ExecuteReaderAsync(ct))
         {
-            while (await r.ReadAsync(ct))
-            {
-                open.Add(new ExceptionRow(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4), r.GetString(5), r.GetString(6),
-                    r.IsDBNull(7) ? null : r.GetDecimal(7), N(r, 8), r.GetString(9), DateOnly.FromDateTime(r.GetDateTime(10)), N(r, 11), N(r, 12),
-                    r.GetFieldValue<DateTimeOffset>(13), r.GetInt32(14), r.GetFieldValue<DateTimeOffset>(15), r.GetBoolean(16), N(r, 17), N(r, 18), r.GetInt32(19)));
-            }
+            while (await r.ReadAsync(ct)) { open.Add(ReadException(r)); }
+        }
+
+        var byCategory = new List<OpenMatterCategoryRow>();
+        await using (var cmd = Cmd(c, null, $"SELECT e.control, count(*), count(*) FILTER (WHERE e.blocking) FROM exceptions e WHERE e.run_id=@r AND e.status NOT IN {TerminalSql} GROUP BY e.control ORDER BY e.control", ("r", runId)))
+        await using (var r = await cmd.ExecuteReaderAsync(ct))
+        {
+            while (await r.ReadAsync(ct)) { byCategory.Add(new OpenMatterCategoryRow(r.GetString(0), (int)r.GetInt64(1), (int)r.GetInt64(2))); }
         }
 
         var checklist = new List<ChecklistRow>();
@@ -155,20 +226,26 @@ public sealed class SignOffRepository(NpgsqlDataSource db, IAuditWriter audit) :
             while (await r.ReadAsync(ct))
             {
                 var control = r.GetString(0);
-                checklist.Add(new ChecklistRow(control, r.GetString(1), r.GetInt32(2), r.GetInt32(3), open.Where(e => e.Control == control).Select(e => e.Id).ToList()));
+                checklist.Add(new ChecklistRow(control, r.GetString(1), r.GetInt32(2), r.GetInt32(3), [], byCategory.Where(x => x.Control == control).Sum(x => x.Total)));
                 if (r.GetString(1) == "QUALIFIED") { qualifications.Add($"{control} is qualified ({r.GetInt32(2)} findings)"); }
             }
+        }
+        for (var i = 0; i < checklist.Count; i++)
+        {
+            if (checklist[i].OpenCount > 0) { checklist[i] = checklist[i] with { ExceptionIds = await ControlOpenIdsAsync(c, runId, checklist[i].Control, openMattersLimit, ct) }; }
         }
 
         var text = SignOffAttestation.Text(run.Id, run.LegalEntityId, run.BusinessDate, run.RulesetVersion, await ResultHashAsync(c, runId, ct), qualifications);
         var textHash = SignOffAttestation.Sha256Hex(text);
 
-        var open2 = SignOffAttestation.OpenSetHash(all, IsOpen);
-        var state2 = SignOffAttestation.ExceptionStateHash(all);
         var resultHash = await ResultHashAsync(c, runId, ct);
         var changes = new List<string>();
         if (so?.SubmittedResultHash is not null && so.State == "APPROVAL_PENDING")
         {
+            // The hashes need every exception of the run, so they are only computed when there is a submission to compare with.
+            var all = await ExceptionStatesAsync(c, null, runId, ct);
+            var open2 = SignOffAttestation.OpenSetHash(all, IsOpen);
+            var state2 = SignOffAttestation.ExceptionStateHash(all);
             if (so.SubmittedResultHash != resultHash) { changes.Add("The run result changed since submission."); }
             if (so.SubmittedOpenSetHash != open2) { changes.Add("The set of open exceptions changed since submission."); }
             if (so.SubmittedExceptionStateHash != state2) { changes.Add("An exception changed state since submission."); }
@@ -209,8 +286,19 @@ public sealed class SignOffRepository(NpgsqlDataSource db, IAuditWriter audit) :
             while (await r.ReadAsync(ct)) { history.Add(new SignOffHistoryRow(r.GetInt64(0), r.GetFieldValue<DateTimeOffset>(1), r.GetString(2), N(r, 3), r.GetString(4), r.GetString(5), N(r, 6))); }
         }
 
-        return new SignOffPackRows(run, so, checklist, open, qualifications, changes, blockers, text, textHash,
+        return new SignOffPackRows(run, so, checklist, open, byCategory.Sum(x => x.Total), byCategory, qualifications, changes, blockers, text, textHash,
             so?.EvidencePackId ?? await LatestEvidencePackAsync(c, null, runId, ct), approval, history, changes.Count > 0);
+    }
+
+    /// <summary>Ids of the first open exceptions of one control in open-matter order (a checklist item lists at most <paramref name="limit"/>).</summary>
+    private static async Task<List<string>> ControlOpenIdsAsync(NpgsqlConnection c, string runId, string control, int limit, CancellationToken ct)
+    {
+        await using var cmd = Cmd(c, null, $"SELECT e.id FROM exceptions e WHERE e.run_id=@r AND e.control=@c AND e.status NOT IN {TerminalSql} ORDER BY {OpenMatterOrder} LIMIT @lim",
+            ("r", runId), ("c", control), ("lim", limit));
+        var ids = new List<string>();
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct)) { ids.Add(r.GetString(0)); }
+        return ids;
     }
 
     private static async Task<string?> ResultHashAsync(NpgsqlConnection c, string runId, CancellationToken ct)

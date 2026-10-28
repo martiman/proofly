@@ -59,6 +59,7 @@ public class SeededDb : SecDb
             ["groupId"] = $"MG-SEC{x}",
             ["accountId"] = $"ACC-SEC{x}",
             ["adjustmentId"] = $"ADJ-SEC{x}",
+            ["currency"] = x == "A" ? "GBP" : "EUR", // the currency Seed(x, ...) gives the entity's safeguarding position
             ["subjectKind"] = "EXCEPTION",
             ["subjectId"] = $"EX-SEC{x}",
         };

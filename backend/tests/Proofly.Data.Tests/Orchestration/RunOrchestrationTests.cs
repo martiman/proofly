@@ -97,7 +97,7 @@ public class RunOrchestrationTests : IClassFixture<SchemaFixture>, IAsyncLifetim
         Assert.Equal("REVIEW_REQUIRED", await Q<string>($"SELECT state FROM runs WHERE id='{run}'")); // the GBP shortfall blocks
         Assert.Equal("PREPARATION_INCOMPLETE", await Q<string>($"SELECT sign_off_state FROM runs WHERE id='{run}'"));
         Assert.Matches("^[0-9a-f]{64}$", (await Q<string>($"SELECT result_hash FROM runs WHERE id='{run}'"))!);
-        Assert.Equal(new RunProcessingOptions().RulesetVersion, await Q<string>($"SELECT ruleset_version FROM runs WHERE id='{run}'"));
+        Assert.Equal("v1+" + new RunProcessingOptions().RulesetVersion, await Q<string>($"SELECT ruleset_version FROM runs WHERE id='{run}'"));
         Assert.Equal(5, await Q<int>($"SELECT jsonb_array_length(input_manifest) FROM runs WHERE id='{run}'"));
         Assert.Equal(5, await Q<long>($"SELECT count(*) FROM source_deliveries WHERE run_id='{run}'"));
 

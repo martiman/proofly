@@ -1,6 +1,7 @@
 using Proofly.Controls.Common;
 using Proofly.Domain;
 using Proofly.Domain.Enums;
+using Proofly.Domain.Records;
 
 namespace Proofly.Controls.Matching;
 
@@ -22,9 +23,56 @@ public static class MatchingControl
             new PairRun(pair, options, groups).Run();
         }
 
-        var ordered = groups.OrderBy(g => g.Id, StringComparer.Ordinal).ToList();
+        var ordered = CollapseExternalLeftovers(input, groups).OrderBy(g => g.Id, StringComparer.Ordinal).ToList();
         var findings = ordered.Select(g => ToFinding(g, options)).OfType<Finding>();
         return new MatchingResult(ControlResult.From(ControlArea.Matching, options.RuleVersion, findings), ordered);
+    }
+
+    /// <summary>
+    /// A bank (external) record sits on the right of several pairs. It is unmatched only if it is unmatched in every pair it could
+    /// take part in: a 0:1 NO_CANDIDATE group for it is dropped when any pair matched it, and otherwise reported once (in the first
+    /// pair by ordinal name) with the pairs considered named in the rationale. Internal records are judged in their own pair.
+    /// </summary>
+    private static List<MatchGroup> CollapseExternalLeftovers(MatchingInput input, List<MatchGroup> groups)
+    {
+        var matched = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var g in groups.Where(g => g.Status == MatchGroupStatus.Matched))
+        {
+            foreach (var r in g.Right.Where(r => r.SourceName == SourceNames.BankingTransactions))
+            {
+                matched.Add(r.SourceName + "/" + r.SourceRowId);
+            }
+        }
+        var pairsByKey = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
+        foreach (var p in input.Pairs)
+        {
+            foreach (var r in p.Right.Where(r => r.Source == SourceNames.BankingTransactions))
+            {
+                (pairsByKey.TryGetValue(r.Key, out var set) ? set : pairsByKey[r.Key] = new SortedSet<string>(StringComparer.Ordinal)).Add(p.Name);
+            }
+        }
+        var result = new List<MatchGroup>(groups.Count);
+        var reported = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var g in groups.OrderBy(g => g.Pair, StringComparer.Ordinal).ThenBy(g => g.Id, StringComparer.Ordinal))
+        {
+            var isLeftover = g.ReasonCode == MatchingCodes.NoCandidate && g.Left.Count == 0 && g.Right.Count == 1
+                && g.Right[0].SourceName == SourceNames.BankingTransactions;
+            if (!isLeftover)
+            {
+                result.Add(g);
+                continue;
+            }
+            var key = g.Right[0].SourceName + "/" + g.Right[0].SourceRowId;
+            if (matched.Contains(key) || !reported.Add(key))
+            {
+                continue;
+            }
+            var pairs = pairsByKey.TryGetValue(key, out var ps) ? ps : [];
+            result.Add(pairs.Count > 1
+                ? g with { Rationale = g.Rationale + " Unmatched in every pair considered: " + string.Join(", ", pairs) + "." }
+                : g);
+        }
+        return result;
     }
 
     private static Finding? ToFinding(MatchGroup g, MatchingOptions o)

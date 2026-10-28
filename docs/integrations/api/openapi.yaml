@@ -91,6 +91,7 @@ paths:
       tags: [Runs]
       operationId: getControlRoom
       summary: Control room aggregate for a run
+      description: Every list is bounded. `attentionQueue` holds the top 10 open exceptions; each delivery in `evidenceReadiness` lists at most 20 `findingIds` and each safeguarding currency at most 20 `exceptionIds`, with `findingCount` / `exceptionCount` carrying the true number (the exception list is the full view). Safeguarding lines are not part of this response.
       x-required-permission: run.view
       responses:
         '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/ControlRoom'}}}}
@@ -671,12 +672,35 @@ paths:
       tags: [Safeguarding]
       operationId: getSafeguardingPosition
       summary: Safeguarding position per currency with obligation, eligible balances, adjustments
+      description: Positions, totals, adjustments and change analysis are complete and computed server-side per currency. `obligations` and `eligibleBalances` hold only the top `linesLimit` lines per currency by absolute amount (then by source order); `obligationLinesTotal` and `balanceLinesTotal` on each position carry the true counts. The full lists are paged by `listSafeguardingLines`.
       x-required-permission: safeguarding.view
+      parameters:
+        - {name: linesLimit, in: query, description: "Lines per currency and kind to include.", schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
       responses:
         '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/SafeguardingPosition'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+  /runs/{runId}/safeguarding/{currency}/lines:
+    parameters: [{$ref: '#/components/parameters/RunId'}, {name: currency, in: path, required: true, schema: {$ref: '#/components/schemas/Currency'}}]
+    get:
+      tags: [Safeguarding]
+      operationId: listSafeguardingLines
+      summary: Obligation or eligible-balance lines of one currency, paged
+      description: Largest absolute amount first (then source order). `kind` selects the list; the page carries it in `obligationLines` or `balanceLines` and the other array is empty. 404 when the run has no position in this currency.
+      x-required-permission: safeguarding.view
+      parameters:
+        - {name: kind, in: query, required: true, schema: {type: string, enum: [obligation, balance]}}
+        - {name: search, in: query, description: "Case-insensitive substring of the account id (obligation) or external account id (balance).", schema: {type: string, maxLength: 200}}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/IncludeTotal'}
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/SafeguardingLinePage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
   /runs/{runId}/safeguarding/adjustments:
     parameters: [{$ref: '#/components/parameters/RunId'}]
     get:
@@ -740,12 +764,35 @@ paths:
       tags: [SignOff]
       operationId: getRunSignOff
       summary: Sign-off pack (checklist, open matters, preparer, required approver, blockers)
+      description: "`openMatters` holds the first `openMattersLimit` open exceptions in the order blocking first, then severity (CRITICAL to LOW), then absolute value descending, then id; `openMattersTotal` and `openMattersByCategory` count all of them. Checklist items list at most `openMattersLimit` `exceptionIds` in the same order and carry `exceptionCount`. The full list is paged by `listRunOpenMatters`."
       x-required-permission: signoff.view
+      parameters:
+        - {name: openMattersLimit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
       responses:
         '200': {description: "OK", headers: {ETag: {$ref: '#/components/headers/ETag'}}, content: {application/json: {schema: {$ref: '#/components/schemas/RunSignOff'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+  /runs/{runId}/sign-off/open-matters:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    get:
+      tags: [SignOff]
+      operationId: listRunOpenMatters
+      summary: Open matters of a run, paged, in the order of the sign-off pack
+      description: Unresolved exceptions (not RESOLVED, ACCEPTED_DIFFERENCE or FALSE_POSITIVE) blocking first, then severity, then absolute value descending, then id.
+      x-required-permission: signoff.view
+      parameters:
+        - {name: blocking, in: query, schema: {type: boolean}}
+        - {name: severity, in: query, schema: {$ref: '#/components/schemas/Severity'}}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/IncludeTotal'}
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/ExceptionPage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
   /runs/{runId}/sign-off/submit:
     parameters: [{$ref: '#/components/parameters/RunId'}]
     post:
@@ -1270,7 +1317,8 @@ components:
         acceptedRecords: {type: integer}
         rejectedRecords: {type: integer}
         qualifications: {type: array, items: {type: string}}
-        findingIds: {type: array, items: {type: string}, description: "Exception ids"}
+        findingIds: {type: array, items: {type: string}, description: "Exception ids. In the control room at most 20 (see `findingCount`)."}
+        findingCount: {type: integer, description: "Number of exceptions raised on the delivery; present in the control room, where `findingIds` is capped."}
     CheckResult:
       type: object
       required: [check, result]
@@ -1726,7 +1774,10 @@ components:
         stale: {type: boolean, description: "True when an adjustment was approved or expired after the run was processed; the stored result does not include it. Reprocess the run."}
         qualifications: {type: array, items: {type: string}}
         previousResult: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
-        exceptionIds: {type: array, items: {type: string}}
+        exceptionIds: {type: array, items: {type: string}, description: "Open safeguarding exceptions of the currency. In the control room at most 20 (see `exceptionCount`)."}
+        exceptionCount: {type: integer, description: "Control room only: number of open safeguarding exceptions of the currency."}
+        obligationLinesTotal: {type: integer, description: "getSafeguardingPosition only: number of obligation lines of the currency (the response lists the top `linesLimit`)."}
+        balanceLinesTotal: {type: integer, description: "getSafeguardingPosition only: number of eligible-balance lines of the currency."}
     ObligationLine:
       type: object
       required: [accountId, currency, amount]
@@ -1748,6 +1799,15 @@ components:
         included: {type: boolean}
         reason: {type: string}
         findingIds: {type: array, items: {type: string}}
+    SafeguardingLinePage:
+      type: object
+      required: [kind, currency, obligationLines, balanceLines, page]
+      properties:
+        kind: {type: string, enum: [obligation, balance]}
+        currency: {$ref: '#/components/schemas/Currency'}
+        obligationLines: {type: array, items: {$ref: '#/components/schemas/ObligationLine'}}
+        balanceLines: {type: array, items: {$ref: '#/components/schemas/EligibleBalanceLine'}}
+        page: {$ref: '#/components/schemas/PageInfo'}
     ChangeDriver:
       type: object
       required: [label, currency, change]
@@ -1795,8 +1855,8 @@ components:
         evidenceReadiness: {type: string, enum: [COMPLETE, QUALIFIED, INCOMPLETE]}
         approvalState: {$ref: '#/components/schemas/SignOffState'}
         positions: {type: array, items: {$ref: '#/components/schemas/SafeguardingCurrencyPosition'}}
-        obligations: {type: array, items: {$ref: '#/components/schemas/ObligationLine'}}
-        eligibleBalances: {type: array, items: {$ref: '#/components/schemas/EligibleBalanceLine'}}
+        obligations: {type: array, items: {$ref: '#/components/schemas/ObligationLine'}, description: "Top `linesLimit` per currency by absolute amount; see `obligationLinesTotal` and `listSafeguardingLines`."}
+        eligibleBalances: {type: array, items: {$ref: '#/components/schemas/EligibleBalanceLine'}, description: "Top `linesLimit` per currency by absolute amount; see `balanceLinesTotal` and `listSafeguardingLines`."}
         adjustments: {type: array, items: {$ref: '#/components/schemas/SafeguardingAdjustment'}}
         changeAnalysis: {type: array, items: {$ref: '#/components/schemas/ChangeDriver'}}
         stale: {type: boolean, description: "True when any currency position is stale"}
@@ -1810,14 +1870,24 @@ components:
         state: {$ref: '#/components/schemas/ControlState'}
         mandatory: {type: boolean}
         note: {type: string}
-        exceptionIds: {type: array, items: {type: string}}
+        exceptionIds: {type: array, items: {type: string}, description: "First open exceptions of the control (at most `openMattersLimit`), in open-matter order."}
+        exceptionCount: {type: integer, description: "All open exceptions of the control."}
+    OpenMatterCategory:
+      type: object
+      required: [control, total, blocking]
+      properties:
+        control: {$ref: '#/components/schemas/ControlArea'}
+        total: {type: integer}
+        blocking: {type: integer}
     RunSignOff:
       type: object
       required: [run, checklist, openMatters, changesSincePreparation, attestationText, canSignOff, blockers, evidencePackId]
       properties:
         run: {$ref: '#/components/schemas/Run'}
         checklist: {type: array, items: {$ref: '#/components/schemas/ChecklistItem'}}
-        openMatters: {type: array, items: {$ref: '#/components/schemas/ExceptionSummary'}}
+        openMatters: {type: array, items: {$ref: '#/components/schemas/ExceptionSummary'}, description: "At most `openMattersLimit` (default 50, max 200) open exceptions, blocking first, then severity, then absolute value; the rest is `listRunOpenMatters`."}
+        openMattersTotal: {type: integer, description: "All open exceptions of the run."}
+        openMattersByCategory: {type: array, items: {$ref: '#/components/schemas/OpenMatterCategory'}}
         qualifications: {type: array, items: {type: string}}
         changesSincePreparation: {type: array, items: {type: string}}
         attestationText: {type: string}

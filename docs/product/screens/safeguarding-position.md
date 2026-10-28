@@ -35,7 +35,7 @@ Currencies and legal entities remain isolated unless a specific authorised rule 
 
 ### Obligation breakdown
 
-Allows drill-down by client account, product, movement type and source. The user can trace the total back to independently calculated balances.
+Allows drill-down by client account, product, movement type and source. The user can trace the total back to independently calculated balances. The position carries the largest lines per currency and their total count; the full list is paged and searchable by account (`listSafeguardingLines`). Totals are never calculated from the lines shown.
 
 ### Eligible-balance breakdown
 

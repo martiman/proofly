@@ -17,6 +17,8 @@ public interface IRunReadRepository
 public sealed class RunReadRepository(NpgsqlDataSource dataSource, TimeProvider clock) : IRunReadRepository
 {
     public const int AttentionQueueSize = 10;
+    /// <summary>Ids listed per delivery and per safeguarding currency in the control room; the count carries the rest (the exception list is the full view).</summary>
+    public const int IdsPerItem = 20;
     private const string OpenStatus = "status NOT IN ('RESOLVED','ACCEPTED_DIFFERENCE','FALSE_POSITIVE')";
     private static readonly (string Area, string Label)[] Areas =
     [
@@ -164,9 +166,21 @@ public sealed class RunReadRepository(NpgsqlDataSource dataSource, TimeProvider 
             while (await tr.ReadAsync(ct)) { (totals.TryGetValue(tr.GetString(0), out var l) ? l : totals[tr.GetString(0)] = []).Add(new MoneyRow(tr.GetDecimal(2), tr.GetString(1))); }
         }
         var findings = new Dictionary<string, List<string>>();
-        await using (var f = dataSource.CreateCommand("SELECT delivery_id, id FROM exceptions WHERE run_id = @r AND delivery_id IS NOT NULL ORDER BY delivery_id, id"))
+        var findingCounts = new Dictionary<string, int>();
+        await using (var f = dataSource.CreateCommand("SELECT delivery_id, count(*) FROM exceptions WHERE run_id = @r AND delivery_id IS NOT NULL GROUP BY delivery_id"))
         {
             f.Parameters.AddWithValue("r", runId);
+            await using var fr = await f.ExecuteReaderAsync(ct);
+            while (await fr.ReadAsync(ct)) { findingCounts[fr.GetString(0)] = (int)fr.GetInt64(1); }
+        }
+        await using (var f = dataSource.CreateCommand("""
+            SELECT d.id, x.id FROM source_deliveries d
+            CROSS JOIN LATERAL (SELECT e.id FROM exceptions e WHERE e.run_id = @r AND e.delivery_id = d.id ORDER BY e.id LIMIT @lim) x
+            WHERE d.run_id = @r ORDER BY d.id, x.id
+            """))
+        {
+            f.Parameters.AddWithValue("r", runId);
+            f.Parameters.AddWithValue("lim", IdsPerItem);
             await using var fr = await f.ExecuteReaderAsync(ct);
             while (await fr.ReadAsync(ct)) { (findings.TryGetValue(fr.GetString(0), out var l) ? l : findings[fr.GetString(0)] = []).Add(fr.GetString(1)); }
         }
@@ -188,7 +202,7 @@ public sealed class RunReadRepository(NpgsqlDataSource dataSource, TimeProvider 
             list.Add(new DeliveryRow(id, r.GetString(1), r.GetString(2), DateOnly.FromDateTime(r.GetDateTime(3)), r.GetString(4), r.IsDBNull(5) ? null : r.GetInt32(5), r.GetInt32(6),
                 totals.GetValueOrDefault(id) ?? [], r.IsDBNull(7) ? null : r.GetFieldValue<DateTimeOffset>(7), r.IsDBNull(8) ? null : r.GetFieldValue<DateTimeOffset>(8),
                 r.IsDBNull(9) ? null : r.GetString(9), r.IsDBNull(10) ? null : r.GetString(10), r.GetString(11), r.GetInt32(12), r.GetInt32(13),
-                findings.GetValueOrDefault(id) ?? []));
+                findings.GetValueOrDefault(id) ?? [], findingCounts.GetValueOrDefault(id)));
         }
         return list;
     }
@@ -317,13 +331,22 @@ public sealed class RunReadRepository(NpgsqlDataSource dataSource, TimeProvider 
             while (await r.ReadAsync(ct)) { previous[r.GetString(0)] = r.GetDecimal(1); }
         }
         var exceptionIds = new Dictionary<string, List<string>>();
+        var exceptionCounts = new Dictionary<string, int>();
         await using (var c = dataSource.CreateCommand($"""
-            SELECT value_currency::text, id FROM exceptions WHERE run_id = @r AND control = 'safeguarding' AND {OpenStatus} AND value_currency IS NOT NULL ORDER BY id
+            SELECT ccy, id, cnt FROM (
+              SELECT value_currency::text AS ccy, id, row_number() OVER (PARTITION BY value_currency ORDER BY id) AS rn, count(*) OVER (PARTITION BY value_currency) AS cnt
+              FROM exceptions WHERE run_id = @r AND control = 'safeguarding' AND {OpenStatus} AND value_currency IS NOT NULL) s
+            WHERE rn <= @lim ORDER BY ccy, id
             """))
         {
             c.Parameters.AddWithValue("r", run.Id);
+            c.Parameters.AddWithValue("lim", (long)IdsPerItem);
             await using var r = await c.ExecuteReaderAsync(ct);
-            while (await r.ReadAsync(ct)) { (exceptionIds.TryGetValue(r.GetString(0), out var l) ? l : exceptionIds[r.GetString(0)] = []).Add(r.GetString(1)); }
+            while (await r.ReadAsync(ct))
+            {
+                (exceptionIds.TryGetValue(r.GetString(0), out var l) ? l : exceptionIds[r.GetString(0)] = []).Add(r.GetString(1));
+                exceptionCounts[r.GetString(0)] = (int)r.GetInt64(2);
+            }
         }
 
         await using var cmd = dataSource.CreateCommand("""
@@ -338,7 +361,7 @@ public sealed class RunReadRepository(NpgsqlDataSource dataSource, TimeProvider 
             var ccy = rd.GetString(0);
             list.Add(new SafeguardingRow(ccy, new MoneyRow(rd.GetDecimal(1), ccy), new MoneyRow(rd.GetDecimal(2), ccy),
                 new MoneyRow(adjustments.GetValueOrDefault(ccy), ccy), rd.IsDBNull(3) ? null : new MoneyRow(rd.GetDecimal(3), ccy), rd.GetString(4), Qualifications(rd.GetString(5)),
-                previous.TryGetValue(ccy, out var p) ? new MoneyRow(p, ccy) : null, exceptionIds.GetValueOrDefault(ccy) ?? [], rd.GetBoolean(6)));
+                previous.TryGetValue(ccy, out var p) ? new MoneyRow(p, ccy) : null, exceptionIds.GetValueOrDefault(ccy) ?? [], rd.GetBoolean(6), exceptionCounts.GetValueOrDefault(ccy)));
         }
         return list;
     }

@@ -115,7 +115,7 @@ public sealed class EntityIsolationTests : IClassFixture<SeededDb>, IAsyncLifeti
     }
 
     /// <summary>Query parameters that carry a resource id (compare: against).</summary>
-    private static string? Query(Dictionary<string, string> ids, string name) => name switch { "against" or "runId" => ids["runId"], _ => null };
+    private static string? Query(Dictionary<string, string> ids, string name) => name switch { "against" or "runId" => ids["runId"], "kind" => "obligation", _ => null };
 
     [Fact]
     public async Task Comparing_the_callers_own_run_with_a_run_of_another_entity_is_refused()

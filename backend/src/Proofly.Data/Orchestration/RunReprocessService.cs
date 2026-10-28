@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Npgsql;
+using Proofly.Data.Governance.Commands;
 using Proofly.Data.Audit;
 using Proofly.Data.Jobs;
 
@@ -20,8 +21,13 @@ public sealed record ReprocessResult(ReprocessStatus Status, string? NewRunId = 
 /// enqueued, all committed together. Nothing of the old version's results, exceptions or sign-off record is changed.
 /// Only the current version can be reprocessed, and only in REVIEW_REQUIRED, READY_FOR_SIGN_OFF, SIGNED_OFF or FAILED.
 /// </summary>
-public sealed class RunReprocessService(NpgsqlDataSource dataSource, IAuditWriter audit, IJobQueue jobs, RunProcessingOptions options)
+public sealed class RunReprocessService(
+    NpgsqlDataSource dataSource, IAuditWriter audit, IJobQueue jobs, RunProcessingOptions options,
+    IRulesetResolver? rulesets = null, TimeProvider? time = null)
 {
+    private readonly IRulesetResolver _rulesets = rulesets ?? new RulesetResolver(dataSource);
+    private readonly TimeProvider _time = time ?? TimeProvider.System;
+
     private static readonly string[] Reprocessable = ["REVIEW_REQUIRED", "READY_FOR_SIGN_OFF", "SIGNED_OFF", "FAILED"];
 
     public async Task<ReprocessResult> RequestAsync(ReprocessRequest req, CancellationToken ct = default)
@@ -42,13 +48,15 @@ public sealed class RunReprocessService(NpgsqlDataSource dataSource, IAuditWrite
         if (!Reprocessable.Contains(old.State))
             return new ReprocessResult(ReprocessStatus.InvalidState, Detail: $"A run in state {old.State} cannot be reprocessed; wait for processing to finish.");
 
+        // The new version starts under the ruleset in force now (run.process re-resolves when it runs).
+        var rulesetVersion = $"{(await _rulesets.ResolveAsync(_time.GetUtcNow(), tx, ct)).Version}+{options.RulesetVersion}";
         var newId = RunProcessor.RunId(old.Le, old.Date, old.Version + 1);
         var wasSigned = old.State == "SIGNED_OFF";
         await Sql.Exec(tx, "UPDATE runs SET state='SUPERSEDED', sign_off_state='SUPERSEDED' WHERE id=@id", ct, Sql.P("id", old.Id));
         await Sql.Exec(tx, """
             INSERT INTO runs (id, legal_entity_id, business_date, run_version, ruleset_version, state, sign_off_state, supersedes_run_id, last_evidence_arrival_at)
             VALUES (@id, @le, @d, @v, @rs, 'PROCESSING', 'PREPARATION_INCOMPLETE', @old, @arr)
-            """, ct, Sql.P("id", newId), Sql.P("le", old.Le), Sql.P("d", old.Date), Sql.P("v", old.Version + 1), Sql.P("rs", options.RulesetVersion), Sql.P("old", old.Id),
+            """, ct, Sql.P("id", newId), Sql.P("le", old.Le), Sql.P("d", old.Date), Sql.P("v", old.Version + 1), Sql.P("rs", rulesetVersion), Sql.P("old", old.Id),
             Sql.P("arr", old.Arrival));
 
         await audit.AppendAsync(tx, new AuditEventInput("RUN_REPROCESS_REQUESTED", req.Actor, "RUN", old.Id,
@@ -56,7 +64,7 @@ public sealed class RunReprocessService(NpgsqlDataSource dataSource, IAuditWrite
             BeforeJson: new JsonObject { ["state"] = old.State, ["signOffState"] = old.SignOff, ["version"] = old.Version, ["resultHash"] = old.Hash }.ToJsonString(),
             AfterJson: new JsonObject { ["state"] = "SUPERSEDED", ["signOffState"] = "SUPERSEDED", ["supersededByRunId"] = newId, ["signedOffRunPreserved"] = wasSigned }.ToJsonString()), ct);
         await audit.AppendAsync(tx, new AuditEventInput("RUN_STARTED", req.Actor, "RUN", newId,
-            $"Run {newId} started as version {old.Version + 1} of {old.Le} for {old.Date:yyyy-MM-dd}", Reason: req.Reason.Trim(), RunId: newId, RuleVersion: options.RulesetVersion,
+            $"Run {newId} started as version {old.Version + 1} of {old.Le} for {old.Date:yyyy-MM-dd}", Reason: req.Reason.Trim(), RunId: newId, RuleVersion: rulesetVersion,
             RequestId: req.RequestId, AfterJson: new JsonObject { ["version"] = old.Version + 1, ["supersedesRunId"] = old.Id, ["trigger"] = "reprocess" }.ToJsonString()), ct);
 
         await jobs.EnqueueAsync(new JobRequest(RunJobs.ProcessRun, new ProcessRunPayload(old.Le, old.Date, newId, "reprocess"),

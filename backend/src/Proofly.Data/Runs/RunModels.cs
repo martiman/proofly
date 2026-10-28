@@ -34,7 +34,8 @@ public sealed record DailySummaryRow(string Text, string? LinkKind, string? Link
 public sealed record DeliveryRow(
     string Id, string SourceName, string FileName, DateOnly BusinessDate, string SchemaVersion, int? DeclaredRecordCount, int ActualRecordCount,
     IReadOnlyList<MoneyRow> DeclaredTotals, DateTimeOffset? ExpectedBy, DateTimeOffset? ReceivedAt, string? CorrectionOfDeliveryId,
-    string? SupersededByDeliveryId, string State, int AcceptedRecords, int RejectedRecords, IReadOnlyList<string> FindingIds);
+    string? SupersededByDeliveryId, string State, int AcceptedRecords, int RejectedRecords, IReadOnlyList<string> FindingIds,
+    int FindingCount);
 
 public sealed record AttentionRow(
     string Id, string RunId, string Title, string Control, string ReasonCode, string Severity, string Status, MoneyRow? Value, string LegalEntityId,
@@ -43,7 +44,7 @@ public sealed record AttentionRow(
 
 public sealed record SafeguardingRow(
     string Currency, MoneyRow Obligation, MoneyRow EligibleBalance, MoneyRow ApprovedAdjustments, MoneyRow? Result, string State,
-    IReadOnlyList<string> Qualifications, MoneyRow? PreviousResult, IReadOnlyList<string> ExceptionIds, bool Stale);
+    IReadOnlyList<string> Qualifications, MoneyRow? PreviousResult, IReadOnlyList<string> ExceptionIds, bool Stale, int ExceptionCount);
 
 public sealed record ControlRoomRows(
     RunRow Run, IReadOnlyList<DailySummaryRow> Summary, IReadOnlyList<DeliveryRow> EvidenceReadiness, IReadOnlyList<ControlAreaRow> ControlAreas,

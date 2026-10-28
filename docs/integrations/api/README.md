@@ -208,6 +208,13 @@ enabled `config_rules`); the previous ACTIVE change of the target becomes `RETIR
 `IRulesetResolver.ResolveAsync(now, tx)` (latest ruleset with `activated_at <= now` and `effective_from <= UTC date`); a change therefore applies to
 the next run only and never to a run that already started.
 
+`runs.ruleset_version` is `<config ruleset version>+<control rule versions>` (for example `v2+proofly-controls/1[...]`); the result hash does not include
+the configuration version, so a re-run under a new ruleset has the same hash unless a parameter changed the outcome. Control parameters are read from the
+resolved snapshot by rule id (`kind = rule`, others ignored, unset = code default): `MATCH-AMOUNT-TOLERANCE` (tolerance per currency, severity of value
+mismatches), `MATCH-UNMATCHED` / `MATCH-AMBIGUOUS` (severity), `LEDGER-BALANCE-TOLERANCE` (tolerance amount), `LIFECYCLE-DEFAULT` / `LIFECYCLE-TIMING`
+(severity), `SAFEGUARDING-STALE` (severity). Windows, blocking flags and stale/eligibility thresholds have no payload key yet and stay code defaults.
+A snapshot value that does not parse fails the run visibly.
+
 **`exception_rule_traces`** (one row per exception, written when the control raises it): `rule_id`,
 `rule_version`, `tolerance`, `expected_effect`, `description` and `calculation` =
 `{"inputs": [{"name": "...", "value": "..."}], "text": "...", "result": "..."}`. `getException` reads it; without a
@@ -348,8 +355,25 @@ All additive or relaxations except where marked **breaking for a typed client**.
 | H9 | `SafeguardingCurrencyPosition.result` is nullable (null for a QUALIFIED currency); `stale` boolean on `SafeguardingCurrencyPosition` and `SafeguardingPosition`. **Breaking for a typed client reading `result.amount`.** |
 | H10 | `getLineage` implemented (no contract change). `listDeliveryRecords` for a delivery whose source is not a manifest source is 404 (the records are not addressable); `RunState` `FAILED` is reported for a run whose first processing attempt failed. |
 
+## Changelog (bounded response bodies, issue found by the 100k spike)
+
+The 100,000-transaction spike measured a 77 MB sign-off response, 8.9 MB safeguarding position and 3 MB control room (see
+[performance-spike.md](../../testing/performance-spike.md)). Every list in those three responses is now bounded; the full lists are paged
+operations. Additive unless marked **breaking for a typed client**.
+
+| # | Change |
+| --- | --- |
+| I1 | `getRunSignOff`: `openMatters` is capped at `openMattersLimit` (query, default 50, max 200) in the order blocking first, severity, absolute value descending, id. New `openMattersTotal` and `openMattersByCategory` (`OpenMatterCategory {control, total, blocking}`). **Breaking for a client that assumed `openMatters` is the full list.** |
+| I2 | New `listRunOpenMatters` (`GET /runs/{runId}/sign-off/open-matters`, `signoff.view`): the same order, cursor paged, filters `blocking` and `severity`, `includeTotal`. |
+| I3 | `ChecklistItem.exceptionIds` lists at most `openMattersLimit` ids (first in open-matter order); new `ChecklistItem.exceptionCount` is the full number. **Breaking for a client that treated `exceptionIds` as complete.** |
+| I4 | `getSafeguardingPosition`: `obligations` and `eligibleBalances` hold the top `linesLimit` (query, default 50, max 200) lines per currency by absolute amount; new `SafeguardingCurrencyPosition.obligationLinesTotal` / `balanceLinesTotal`. Positions, adjustments and change analysis are unchanged. **Breaking for a client that summed or listed the lines as complete.** Order of the lines changed (largest absolute amount first; was currency, account). |
+| I5 | New `listSafeguardingLines` (`GET /runs/{runId}/safeguarding/{currency}/lines?kind=obligation|balance`, `safeguarding.view`): cursor paged, `search` by account, `includeTotal`; response `SafeguardingLinePage` with `obligationLines` or `balanceLines` (the other is empty). 404 when the run has no position in that currency. |
+| I6 | `getControlRoom`: each delivery in `evidenceReadiness` lists at most 20 `findingIds` and each safeguarding currency at most 20 `exceptionIds`; new `SourceDelivery.findingCount` and `SafeguardingCurrencyPosition.exceptionCount` carry the true numbers (present in the control room only). The attention queue stays at 10. **Breaking for a client that treated `findingIds` / `exceptionIds` as complete in the control room.** |
+
+Migration `0050` adds the partial index for the open-matter order and an index for the balance-line order.
+
 ## Lint
 
 `npx --yes @redocly/cli lint docs/integrations/api/openapi.yaml` passes with no errors. The two remaining
 warnings are `no-unused-components` for the `RequestId` header/parameter: `X-Request-Id` is a global
-convention, so it is defined as a component but not referenced from each of the 54 operations.
+convention, so it is defined as a component but not referenced from each of the 57 operations.

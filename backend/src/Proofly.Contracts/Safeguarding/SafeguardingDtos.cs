@@ -4,7 +4,8 @@ namespace Proofly.Contracts.Safeguarding;
 
 public sealed record SafeguardingCurrencyPositionDto(
     string Currency, MoneyDto Obligation, MoneyDto EligibleBalance, MoneyDto ApprovedAdjustments, MoneyDto? Result,
-    string State, IReadOnlyList<string> Qualifications, MoneyDto? PreviousResult, IReadOnlyList<string> ExceptionIds, bool Stale);
+    string State, IReadOnlyList<string> Qualifications, MoneyDto? PreviousResult, IReadOnlyList<string> ExceptionIds, bool Stale,
+    int ObligationLinesTotal, int BalanceLinesTotal);
 
 public sealed record ObligationLineDto(string AccountId, string Currency, MoneyDto Amount,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? MovementType);
@@ -32,3 +33,7 @@ public sealed record SafeguardingPositionDto(
     IReadOnlyList<EligibleBalanceLineDto> EligibleBalances, IReadOnlyList<SafeguardingAdjustmentDto> Adjustments,
     IReadOnlyList<ChangeDriverDto> ChangeAnalysis, bool Stale);
 
+
+/// <summary>listSafeguardingLines: one page of the obligation or the balance lines of a currency; the array of the other kind is empty.</summary>
+public sealed record SafeguardingLinePageDto(
+    string Kind, string Currency, IReadOnlyList<ObligationLineDto> ObligationLines, IReadOnlyList<EligibleBalanceLineDto> BalanceLines, PageInfoDto Page);

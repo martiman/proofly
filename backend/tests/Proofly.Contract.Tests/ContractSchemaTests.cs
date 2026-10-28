@@ -11,10 +11,10 @@ public class ContractSchemaTests(ContractApiFixture f)
     private static readonly Dictionary<string, string> Ids = new()
     {
         ["runId"] = "R1", ["deliveryId"] = "D1", ["exceptionId"] = "X-1", ["transactionId"] = "TRF-1",
-        ["accountId"] = "ACC-1", ["groupId"] = "MG-1", ["recordId"] = "transfer_instructions:1", ["changeId"] = "CC-1", ["subjectKind"] = "EXCEPTION", ["subjectId"] = "X-1",
+        ["accountId"] = "ACC-1", ["groupId"] = "MG-1", ["recordId"] = "transfer_instructions:1", ["changeId"] = "CC-1", ["subjectKind"] = "EXCEPTION", ["subjectId"] = "X-1", ["currency"] = "GBP",
     };
 
-    private static readonly Dictionary<string, string> Query = new() { ["compareRuns"] = "against=R0" };
+    private static readonly Dictionary<string, string> Query = new() { ["compareRuns"] = "against=R0", ["listSafeguardingLines"] = "kind=obligation" };
 
     private static HashSet<string> Unimplemented() =>
         File.ReadAllLines(Path.Combine(AppContext.BaseDirectory, "unimplemented-operations.txt"))

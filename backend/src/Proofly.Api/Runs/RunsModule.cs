@@ -45,14 +45,14 @@ internal static class RunsMapping
         c.Summary.Select(s => new DailySummaryItemDto(s.Text, s.LinkKind is null ? null : new DailySummaryLinkDto(s.LinkKind, s.LinkId!))).ToList(),
         c.EvidenceReadiness.Select(d => new ControlRoomDeliveryDto(d.Id, d.SourceName, d.FileName, d.BusinessDate, d.SchemaVersion, d.DeclaredRecordCount,
             d.ActualRecordCount, d.DeclaredTotals.Select(Money).ToList(), d.ExpectedBy, d.ReceivedAt, d.CorrectionOfDeliveryId, d.SupersededByDeliveryId,
-            d.State, d.AcceptedRecords, d.RejectedRecords, [], d.FindingIds)).ToList(),
+            d.State, d.AcceptedRecords, d.RejectedRecords, [], d.FindingIds, d.FindingCount)).ToList(),
         c.ControlAreas.Select(a => new ControlAreaSummaryDto(a.Area, a.Label, a.State, a.RecordCount, a.Value.Select(Money).ToList(), a.OpenExceptions,
             a.PreviousRecordCount, a.ChangeFromPrevious)).ToList(),
         c.AttentionQueue.Select(e => new ControlRoomExceptionDto(e.Id, e.RunId, e.Title, e.Control, e.ReasonCode, e.Severity, e.Status,
             e.Value is null ? null : Money(e.Value), e.LegalEntityId, e.BusinessDate, User(e.Owner), e.CreatedAt, e.AgeDays, e.DueAt, e.Blocking,
             e.SourceFile, e.SourceRowId, ETags.ForVersion(e.RowVersion))).ToList(),
         c.Safeguarding.Select(s => new SafeguardingCurrencyPositionDto(s.Currency, Money(s.Obligation), Money(s.EligibleBalance), Money(s.ApprovedAdjustments),
-            s.Result is null ? null : Money(s.Result), s.State, s.Qualifications, s.PreviousResult is null ? null : Money(s.PreviousResult), s.ExceptionIds, s.Stale)).ToList());
+            s.Result is null ? null : Money(s.Result), s.State, s.Qualifications, s.PreviousResult is null ? null : Money(s.PreviousResult), s.ExceptionIds, s.Stale, s.ExceptionCount)).ToList());
 }
 
 internal sealed class RunsEndpoints(IRunReadRepository repo) : IEndpointModule

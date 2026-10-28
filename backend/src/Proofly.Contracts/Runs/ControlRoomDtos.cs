@@ -15,7 +15,8 @@ public sealed record DailySummaryItemDto(string Text, [property: JsonIgnore(Cond
 public sealed record ControlRoomDeliveryDto(
     string DeliveryId, string SourceName, string FileName, DateOnly BusinessDate, string SchemaVersion, int? DeclaredRecordCount, int ActualRecordCount,
     IReadOnlyList<MoneyDto> DeclaredTotals, DateTimeOffset? ExpectedBy, DateTimeOffset? ReceivedAt, string? CorrectionOfDeliveryId,
-    string? SupersededByDeliveryId, string State, int AcceptedRecords, int RejectedRecords, IReadOnlyList<string> Qualifications, IReadOnlyList<string> FindingIds);
+    string? SupersededByDeliveryId, string State, int AcceptedRecords, int RejectedRecords, IReadOnlyList<string> Qualifications, IReadOnlyList<string> FindingIds,
+    int FindingCount);
 
 /// <summary>ExceptionSummary as embedded in the control room (attention queue).</summary>
 public sealed record ControlRoomExceptionDto(
@@ -24,7 +25,7 @@ public sealed record ControlRoomExceptionDto(
 
 public sealed record SafeguardingCurrencyPositionDto(
     string Currency, MoneyDto Obligation, MoneyDto EligibleBalance, MoneyDto ApprovedAdjustments, MoneyDto? Result, string State,
-    IReadOnlyList<string> Qualifications, MoneyDto? PreviousResult, IReadOnlyList<string> ExceptionIds, bool Stale);
+    IReadOnlyList<string> Qualifications, MoneyDto? PreviousResult, IReadOnlyList<string> ExceptionIds, bool Stale, int ExceptionCount);
 
 public sealed record ControlRoomDto(
     RunDto Run, IReadOnlyList<DailySummaryItemDto> Summary, IReadOnlyList<ControlRoomDeliveryDto> EvidenceReadiness,

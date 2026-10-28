@@ -28,6 +28,8 @@ Lists evidence completeness, independent ledger, matching, lifecycle, safeguardi
 
 Shows unresolved exceptions, accepted differences, pending actions and data qualifications. Materiality and value remain visible.
 
+The pack carries the first 50 open matters (blocking first, then severity, then value), the total count and the counts per control area; the screen shows these as a summary and loads the full list page by page (`listRunOpenMatters`, filter blocking or severity). A run can have more than a hundred thousand open exceptions, so the screen never expects the pack to hold all of them.
+
 ### Changes since preparation
 
 Highlights new evidence, reprocessing, configuration changes, reopened exceptions or changed calculations since the sign-off was prepared.

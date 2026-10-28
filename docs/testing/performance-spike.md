@@ -197,6 +197,17 @@ These need a decision by the owner of the control or of the contract; the spike 
    (136,364 open exceptions); `GET /runs/{id}/safeguarding` returns every obligation line: 8.9 MB, 1.4 s; `GET /runs/{id}/control-room` carries every exception id per
    delivery: 3 MB, 0.8 s. These sizes are properties of the response shape in `openapi.yaml`, not of a slow query; a fix is a contract change (counts plus a link
    or a page), so this is raised, not implemented.
+   **Fixed afterwards** (contract changelog I1 to I6 in [the API README](../integrations/api/README.md), migration `0050`): the sign-off pack lists the top 50 open matters
+   with totals and per-control counts (full list: `listRunOpenMatters`), the safeguarding position lists the top 50 lines per currency and kind with totals (full lists:
+   `listSafeguardingLines`), the control room lists at most 20 ids per delivery and per currency with counts. Same 100% data set, same machine, final run:
+
+   | endpoint | before: p50 / size | after: p50 / size |
+   |---|---|---|
+   | run sign-off | 8,187 ms / 77,040 KB | 13 ms / 68 KB |
+   | safeguarding position | 1,382 ms / 8,909 KB | 205 ms / 18 KB |
+   | control room | 782 ms / about 3,000 KB | 108 ms / 19 KB |
+
+   Response-size regression tests: `backend/tests/Proofly.Api.Tests/Runs/ResponseSizeTests.cs`.
 3. A filter on **match status or exception presence** on the transaction list still evaluates the whole run (about 520 ms at 100%); an account **state** filter
    likewise. Free-text search is an unindexed `ILIKE '%...%'` (about 100 ms on 136,000 exceptions at 100%).
 4. **Exception summary** issues five single-pass aggregates (243 ms p50 at 100%); one grouped pass would be about a fifth of that.

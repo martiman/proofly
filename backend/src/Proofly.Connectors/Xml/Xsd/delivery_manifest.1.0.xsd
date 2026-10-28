@@ -77,6 +77,13 @@
                   </xs:restriction>
                 </xs:simpleType>
               </xs:element>
+              <xs:element name="legal_entity_id" minOccurs="0">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:maxLength value="64" />
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
               <xs:element name="declared_total_aed" minOccurs="0">
                 <xs:simpleType>
                   <xs:restriction base="xs:string">

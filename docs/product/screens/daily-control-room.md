@@ -46,7 +46,7 @@ Each card shows record count, value, control state and change from the previous 
 
 ### Attention queue
 
-Shows material exceptions, overdue work, pending approvals and controls blocked by missing evidence. Users can filter by severity, owner, currency and control area.
+Shows material exceptions, overdue work, pending approvals and controls blocked by missing evidence. Users can filter by severity, owner, currency and control area. The control room response is bounded: the queue is the top 10, and per-source and per-currency exception lists show a few ids with the true count; the exception list is the full view.
 
 ### Safeguarding summary
 

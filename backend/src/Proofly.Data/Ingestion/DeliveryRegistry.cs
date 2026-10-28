@@ -13,7 +13,7 @@ namespace Proofly.Data.Ingestion;
 /// Registers a delivery (manifest entry + stored evidence) in one transaction with its audit event and, when the
 /// registration checks pass, the <c>delivery.ingest</c> job. Registration checks: schema version supported,
 /// fingerprint not a duplicate, correction link present and valid for a second delivery of the same source/date,
-/// sequence number contiguous. A failed check does not discard the delivery: it is stored as REJECTED with the
+/// sequence number contiguous; every check, and the advisory lock, is scoped to the legal entity as well as source/date. A failed check does not discard the delivery: it is stored as REJECTED with the
 /// reasons in <c>delivery_rejections</c> so the attempt stays visible. Registration is serialised per source/date by
 /// an advisory lock. Replaying the same delivery id and fingerprint returns the existing registration.
 /// </summary>
@@ -28,11 +28,13 @@ public sealed class DeliveryRegistry(
         var m = r.Manifest;
         if (!EvidenceStore.IsValidSha256(r.FingerprintSha256)) throw new ArgumentException("Fingerprint must be a lower-case hex SHA-256.", nameof(r));
         if (string.IsNullOrWhiteSpace(m.DeliveryId) || string.IsNullOrWhiteSpace(m.SourceName)) throw new ArgumentException("Manifest needs source_name and delivery_id.", nameof(r));
+        if (m.LegalEntityId is { } named && named != r.LegalEntityId)
+            throw new ArgumentException($"Manifest names legal entity '{named}' but the delivery is registered for '{r.LegalEntityId}'.", nameof(r));
         var actor = r.Actor ?? System;
 
         await using var conn = await dataSource.OpenConnectionAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
-        await IngestionSql.LockSourceDateAsync(tx, m.SourceName, m.BusinessDate, ct);
+        await IngestionSql.LockSourceDateAsync(tx, r.LegalEntityId, m.SourceName, m.BusinessDate, ct);
 
         await using (var q = new NpgsqlCommand("SELECT fingerprint_sha256, state FROM source_deliveries WHERE id = @id", conn, tx))
         {
@@ -63,8 +65,8 @@ public sealed class DeliveryRegistry(
 
         string? supersedes = null;
         var duplicateOf = await IngestionSql.ScalarAsync<string>(tx,
-            "SELECT id FROM source_deliveries WHERE source_name=@s AND business_date=@d AND fingerprint_sha256=@f AND state <> 'REJECTED' LIMIT 1",
-            ct, ("s", m.SourceName), ("d", m.BusinessDate), ("f", r.FingerprintSha256));
+            "SELECT id FROM source_deliveries WHERE legal_entity_id=@le AND source_name=@s AND business_date=@d AND fingerprint_sha256=@f AND state <> 'REJECTED' LIMIT 1",
+            ct, ("le", r.LegalEntityId), ("s", m.SourceName), ("d", m.BusinessDate), ("f", r.FingerprintSha256));
         if (duplicateOf is not null)
         {
             failures.Add(new(ReasonCodes.DuplicateDelivery, $"Same content already delivered as {duplicateOf}."));
@@ -72,8 +74,8 @@ public sealed class DeliveryRegistry(
         else
         {
             var current = await IngestionSql.ScalarAsync<string>(tx,
-                "SELECT id FROM source_deliveries WHERE source_name=@s AND business_date=@d AND state NOT IN ('REJECTED','SUPERSEDED') ORDER BY created_at DESC LIMIT 1",
-                ct, ("s", m.SourceName), ("d", m.BusinessDate));
+                "SELECT id FROM source_deliveries WHERE legal_entity_id=@le AND source_name=@s AND business_date=@d AND state NOT IN ('REJECTED','SUPERSEDED') ORDER BY created_at DESC LIMIT 1",
+                ct, ("le", r.LegalEntityId), ("s", m.SourceName), ("d", m.BusinessDate));
             if (m.CorrectionOfDeliveryId is null)
             {
                 if (current is not null)
@@ -91,7 +93,7 @@ public sealed class DeliveryRegistry(
             if (m.SequenceNumber is { } seq && m.CorrectionOfDeliveryId is null)
             {
                 var last = await IngestionSql.ScalarAsync<int?>(tx,
-                    "SELECT max(sequence_number) FROM source_deliveries WHERE source_name=@s AND state <> 'REJECTED'", ct, ("s", m.SourceName));
+                    "SELECT max(sequence_number) FROM source_deliveries WHERE legal_entity_id=@le AND source_name=@s AND state <> 'REJECTED'", ct, ("le", r.LegalEntityId), ("s", m.SourceName));
                 if (last is { } l && seq != l + 1)
                     failures.Add(new(ReasonCodes.SequenceGap, $"Sequence {seq} does not follow the last accepted sequence {l}."));
             }

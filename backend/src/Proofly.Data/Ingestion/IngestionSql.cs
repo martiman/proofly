@@ -4,11 +4,11 @@ namespace Proofly.Data.Ingestion;
 
 internal static class IngestionSql
 {
-    /// <summary>Serialises registration and finalisation per source/business date for the life of the transaction.</summary>
-    public static async Task LockSourceDateAsync(NpgsqlTransaction tx, string source, DateOnly date, CancellationToken ct)
+    /// <summary>Serialises registration and finalisation per legal entity, source and business date for the life of the transaction.</summary>
+    public static async Task LockSourceDateAsync(NpgsqlTransaction tx, string? legalEntityId, string source, DateOnly date, CancellationToken ct)
     {
         await using var c = new NpgsqlCommand("SELECT pg_advisory_xact_lock(hashtextextended(@k, 0))", tx.Connection, tx);
-        c.Parameters.AddWithValue("k", $"delivery|{source}|{date:yyyy-MM-dd}");
+        c.Parameters.AddWithValue("k", $"delivery|{legalEntityId}|{source}|{date:yyyy-MM-dd}");
         await c.ExecuteNonQueryAsync(ct);
     }
 

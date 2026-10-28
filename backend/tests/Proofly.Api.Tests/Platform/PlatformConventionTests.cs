@@ -437,7 +437,7 @@ public class PlatformConventionTests : IDisposable
     public void Embedded_contract_loads_and_resolves_refs()
     {
         var contract = OpenApiContract.LoadEmbedded();
-        Assert.Equal(55, contract.Operations.Count);
+        Assert.Equal(57, contract.Operations.Count);
         var getRun = contract.Match("GET", "/api/v1/runs/R-1");
         Assert.Equal("getRun", getRun!.OperationId);
         Assert.Equal("run.view", getRun.RequiredPermission);

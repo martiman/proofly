@@ -173,4 +173,50 @@ public class MatchingControlTests
         var input = MatchingInput.FromRecords([], [], [], [], [], []);
         Assert.Empty(input.Pairs);
     }
+
+    private static MatchingResult Cross(MatchItem[] a, MatchItem[] b, MatchItem[] bank) =>
+        MatchingControl.Evaluate(new MatchingInput([new MatchPair("pair_a", a, bank), new MatchPair("pair_b", b, bank)]), new MatchingOptions());
+
+    [Fact]
+    public void BankRowMatchedInPairAOnlyHasNoLeftoverInB()
+    {
+        var res = Cross([L("1", "R1", 5m)], [], [B("b1", "R1", 5m)]);
+        Assert.Empty(res.Control.Findings);
+        Assert.DoesNotContain(res.Groups, g => g.ReasonCode == MatchingCodes.NoCandidate);
+    }
+
+    [Fact]
+    public void BankRowMatchedInPairBOnlyHasNoLeftoverInA()
+    {
+        var res = Cross([], [L("2", "R2", 7m)], [B("b2", "R2", 7m)]);
+        Assert.Empty(res.Control.Findings);
+        Assert.Single(res.Groups);
+    }
+
+    [Fact]
+    public void BankRowMatchedInBothPairsIsNotAConflict()
+    {
+        var res = Cross([L("1", "R", 5m)], [L("2", "R", 5m)], [B("b", "R", 5m)]);
+        Assert.Equal(2, res.Groups.Count(g => g.Status == MatchGroupStatus.Matched));
+        Assert.Empty(res.Control.Findings);
+    }
+
+    [Fact]
+    public void BankRowMatchedNowhereIsReportedOnceWithPairsConsidered()
+    {
+        var res = Cross([L("1", "R1", 5m)], [L("2", "R2", 7m)], [B("b", "ZZ", 99m)]);
+        var g = Assert.Single(res.Groups, x => x.Right.Count == 1 && x.Left.Count == 0);
+        Assert.Equal(MatchingCodes.NoCandidate, g.ReasonCode);
+        Assert.Contains("pair_a, pair_b", g.Rationale);
+        Assert.Equal(3, res.Groups.Count); // two internal leftovers + one bank leftover
+    }
+
+    [Fact]
+    public void InternalUnmatchedStaysUnmatchedWhenBankMatchedElsewhere()
+    {
+        var res = Cross([L("1", "R1", 5m)], [L("2", "OTHER", 9m)], [B("b", "R1", 5m)]);
+        var g = Assert.Single(res.Groups, x => x.Status == MatchGroupStatus.Unmatched);
+        Assert.Equal("1:0", g.Cardinality);
+        Assert.Equal("pair_b", g.Pair);
+    }
 }

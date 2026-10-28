@@ -92,11 +92,30 @@ public sealed class ConfigChangeTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// Documents a gap found by this suite: RunProcessor stamps every run with RunProcessingOptions.RulesetVersion (the code version of the
-    /// five controls), not with the ruleset version that IRulesetResolver reports for the run start (migration 0045 says "runs.ruleset_version
-    /// records the one in force at run start"). So the first half of the rule, "a run keeps the version it started with", holds trivially and
-    /// is tested above; the second half, "the next run uses the activated version", is not implemented yet.
+    /// The first half of the rule, "a run keeps the version it started with", is tested above; the second half: the next run records the
+    /// ruleset version that was in force when it started, i.e. the activated one.
     /// </summary>
-    [Fact(Skip = "Gap: run.process does not record the configuration ruleset version in force at run start (IRulesetResolver is not used by the orchestration).")]
-    public Task Next_run_after_activation_records_the_activated_ruleset_version() => Task.CompletedTask;
+    [Fact]
+    public async Task Next_run_after_activation_records_the_activated_ruleset_version()
+    {
+        await _w.Users();
+        await _w.SeedRule();
+        var run = await _w.ProcessedRun(Flow.Le);
+        var codeVersion = new Proofly.Data.Orchestration.RunProcessingOptions().RulesetVersion;
+        Assert.Equal($"v1+{codeVersion}", await _w.Scalar<string>($"SELECT ruleset_version FROM runs WHERE id='{run}'"));
+        var hash = await _w.Scalar<string>($"SELECT result_hash FROM runs WHERE id='{run}'");
+
+        var id = (await _w.ProposeConfig("cfg1", Flow.Today)).Is(201).Str("id");
+        (await _w.DecideConfig("cfg2", id)).Is(200);
+        Assert.Equal("v2", (await new RulesetResolver(_w.Db).ResolveAsync(DateTimeOffset.UtcNow)).Version);
+
+        // The next run (a reprocess of the same evidence) starts under v2; the earlier one is untouched.
+        (await _w.Send("approver1", HttpMethod.Post, $"/api/v1/runs/{run}/reprocess", new { reason = "Re-run under the activated tolerance" },
+            await _w.ETag("approver1", $"/api/v1/runs/{run}"))).Is(202);
+        await _w.Drain();
+        Assert.Equal($"v2+{codeVersion}", await _w.Scalar<string>($"SELECT ruleset_version FROM runs WHERE id='{Flow.RunV2}'"));
+        Assert.Equal($"v1+{codeVersion}", await _w.Scalar<string>($"SELECT ruleset_version FROM runs WHERE id='{run}'"));
+        Assert.Equal(hash, await _w.Scalar<string>($"SELECT result_hash FROM runs WHERE id='{run}'"));
+        Assert.True((await _w.VerifyAudit()).IsValid);
+    }
 }

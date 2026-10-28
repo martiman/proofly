@@ -13,6 +13,15 @@ public interface ISafeguardingReadRepository
     /// <summary>Full position view of an in-scope run; null when the run is not found or out of scope.</summary>
     Task<SafeguardingView?> GetPositionAsync(string runId, EntityScope scope, CancellationToken ct);
 
+    /// <summary>As above, with at most <paramref name="linesLimit"/> obligation lines and balance lines per currency (largest absolute amount first).</summary>
+    Task<SafeguardingView?> GetPositionAsync(string runId, EntityScope scope, int linesLimit, CancellationToken ct);
+
+    /// <summary>
+    /// One keyset page of the obligation (<c>obligation</c>) or balance (<c>balance</c>) lines of one currency, largest absolute amount first.
+    /// Null when the run is not found or out of scope, or the currency has no position in the run.
+    /// </summary>
+    Task<LinePageRows?> ListLinesAsync(string runId, string currency, string kind, string? search, int limit, LineKey? after, bool includeTotal, EntityScope scope, CancellationToken ct);
+
     /// <summary>All adjustments of an in-scope run (optionally one status), oldest first; null when run not found or out of scope.</summary>
     Task<IReadOnlyList<AdjustmentRow>?> ListAdjustmentsAsync(string runId, string? status, EntityScope scope, CancellationToken ct);
 
@@ -47,21 +56,34 @@ public sealed class SafeguardingReadRepository(NpgsqlDataSource db) : ISafeguard
             : null;
     }
 
-    public async Task<SafeguardingView?> GetPositionAsync(string runId, EntityScope scope, CancellationToken ct)
+    public const int DefaultLinesLimit = 50;
+
+    public Task<SafeguardingView?> GetPositionAsync(string runId, EntityScope scope, CancellationToken ct) => GetPositionAsync(runId, scope, DefaultLinesLimit, ct);
+
+    /// <summary>Array of the position detail, or an empty array when absent or not an array. Lines stay in the database; only the requested page is read.</summary>
+    private static string Arr(string name) => $"(CASE WHEN jsonb_typeof(p.detail->'{name}')='array' THEN p.detail->'{name}' ELSE '[]'::jsonb END)";
+
+    /// <summary>Amount of a detail line element as NUMERIC; 0 when it is not a decimal (the control always writes decimal strings).</summary>
+    private const string LineAmount = "(CASE WHEN (t.e->>'amount') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (t.e->>'amount')::numeric ELSE 0 END)";
+
+    private static string Like(string search) => "%" + search.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
+
+    public async Task<SafeguardingView?> GetPositionAsync(string runId, EntityScope scope, int linesLimit, CancellationToken ct)
     {
         var run = await GetRunAsync(runId, scope, ct);
         if (run is null) { return null; }
 
         // Positions + approved adjustments (live fallback when the snapshot carries none). All sums stay NUMERIC in SQL.
-        var details = new Dictionary<string, JsonElement>();
         var positions = new List<PositionRow>();
         var obligations = new List<ObligationLineRow>();
-        var lineDetail = new Dictionary<(string Currency, string Row), (bool Included, string Reason, string[] Findings)>();
+        var obligationTotals = new Dictionary<string, int>();
         var exceptions = await ExceptionIdsAsync(run, ct);
         var liveApproved = await ApprovedByCurrencyAsync(run, ct);
 
         await using (var c = db.CreateCommand(
-            "SELECT currency, obligation_amount, eligible_amount, difference_amount, state, detail::text, stale FROM safeguarding_positions WHERE run_id=@r AND legal_entity_id=@le ORDER BY currency"))
+            $@"SELECT p.currency, p.obligation_amount, p.eligible_amount, p.difference_amount, p.state, p.stale, p.detail->>'approvedAdjustments',
+                      {Arr("qualifications")}::text, jsonb_array_length({Arr("obligationLines")})
+               FROM safeguarding_positions p WHERE p.run_id=@r AND p.legal_entity_id=@le ORDER BY p.currency"))
         {
             c.Parameters.AddWithValue("r", run.RunId);
             c.Parameters.AddWithValue("le", run.LegalEntityId);
@@ -69,53 +91,59 @@ public sealed class SafeguardingReadRepository(NpgsqlDataSource db) : ISafeguard
             while (await rd.ReadAsync(ct))
             {
                 var ccy = rd.GetString(0).Trim();
-                using var doc = JsonDocument.Parse(rd.GetString(5));
-                var d = doc.RootElement;
-                var approved = TryDecimal(d, "approvedAdjustments") ?? liveApproved.GetValueOrDefault(ccy);
+                using var q = JsonDocument.Parse(rd.GetString(7));
+                var approved = !rd.IsDBNull(6) && decimal.TryParse(rd.GetString(6), NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var ap)
+                    ? ap : liveApproved.GetValueOrDefault(ccy);
                 positions.Add(new PositionRow(ccy, rd.GetDecimal(1), rd.GetDecimal(2), approved, rd.IsDBNull(3) ? null : rd.GetDecimal(3), rd.GetString(4),
-                    Strings(d, "qualifications"), exceptions.GetValueOrDefault(ccy) ?? [], rd.GetBoolean(6)));
-                if (d.TryGetProperty("obligationLines", out var ol) && ol.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var l in ol.EnumerateArray())
-                    {
-                        obligations.Add(new ObligationLineRow(l.GetProperty("accountId").GetString()!, ccy,
-                            TryDecimal(l, "amount") ?? 0m,
-                            l.TryGetProperty("movementType", out var mt) && mt.ValueKind == JsonValueKind.String ? mt.GetString() : null));
-                    }
-                }
-                if (d.TryGetProperty("balanceLines", out var bl) && bl.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var l in bl.EnumerateArray())
-                    {
-                        lineDetail[(ccy, l.GetProperty("sourceRowId").GetString()!)] = (
-                            l.TryGetProperty("included", out var inc) && inc.ValueKind == JsonValueKind.True,
-                            l.TryGetProperty("reason", out var rs) && rs.ValueKind == JsonValueKind.String ? rs.GetString()! : "",
-                            Strings(l, "findingIds").ToArray());
-                    }
-                }
+                    Strings(q.RootElement, null), exceptions.GetValueOrDefault(ccy) ?? [], rd.GetBoolean(5)));
+                obligationTotals[ccy] = rd.GetInt32(8);
+            }
+        }
+
+        await using (var c = db.CreateCommand(
+            $@"SELECT p.currency, t.e->>'accountId', t.e->>'amount', t.e->>'movementType'
+               FROM safeguarding_positions p
+               CROSS JOIN LATERAL (
+                   SELECT t.e, t.ord, {LineAmount} AS amt FROM jsonb_array_elements({Arr("obligationLines")}) WITH ORDINALITY AS t(e, ord)
+                   ORDER BY abs({LineAmount}) DESC, t.ord LIMIT @n) t
+               WHERE p.run_id=@r AND p.legal_entity_id=@le
+               ORDER BY p.currency, abs(t.amt) DESC, t.ord"))
+        {
+            c.Parameters.AddWithValue("r", run.RunId);
+            c.Parameters.AddWithValue("le", run.LegalEntityId);
+            c.Parameters.AddWithValue("n", linesLimit);
+            await using var rd = await c.ExecuteReaderAsync(ct);
+            while (await rd.ReadAsync(ct))
+            {
+                obligations.Add(new ObligationLineRow(rd.GetString(1), rd.GetString(0).Trim(),
+                    rd.IsDBNull(2) ? 0m : decimal.Parse(rd.GetString(2), CultureInfo.InvariantCulture), rd.IsDBNull(3) ? null : rd.GetString(3)));
             }
         }
 
         var balances = new List<BalanceLineRow>();
+        var balanceTotals = new Dictionary<string, int>();
         await using (var c = db.CreateCommand(
-            @"SELECT b.id, b.source_row_id, b.external_account_id, b.balance_timestamp, b.balance_amount, b.currency, b.evidence_reference
-              FROM safeguarding_balances b JOIN source_deliveries d ON d.id=b.delivery_id
-              WHERE d.run_id=@r AND d.state <> 'SUPERSEDED' AND b.legal_entity_id=@le
-              ORDER BY b.currency, b.external_account_id, b.balance_timestamp, b.source_row_id"))
+            @"SELECT s.id, s.source_row_id, s.external_account_id, s.balance_timestamp, s.balance_amount, s.currency, s.evidence_reference, s.total
+              FROM (SELECT b.id, b.source_row_id, b.external_account_id, b.balance_timestamp, b.balance_amount, b.currency, b.evidence_reference,
+                           row_number() OVER (PARTITION BY b.currency ORDER BY abs(b.balance_amount) DESC, b.id) AS rn,
+                           count(*) OVER (PARTITION BY b.currency) AS total
+                    FROM safeguarding_balances b JOIN source_deliveries d ON d.id=b.delivery_id
+                    WHERE d.run_id=@r AND d.state <> 'SUPERSEDED' AND b.legal_entity_id=@le) s
+              WHERE s.rn <= @n ORDER BY s.currency, s.rn"))
         {
             c.Parameters.AddWithValue("r", run.RunId);
             c.Parameters.AddWithValue("le", run.LegalEntityId);
-            await using var rd = await c.ExecuteReaderAsync(ct);
-            while (await rd.ReadAsync(ct))
+            c.Parameters.AddWithValue("n", (long)linesLimit);
+            var raw = new List<BalanceLineRow>();
+            await using (var rd = await c.ExecuteReaderAsync(ct))
             {
-                var ccy = rd.GetString(5).Trim();
-                var row = rd.GetString(1);
-                var has = lineDetail.TryGetValue((ccy, row), out var ld);
-                balances.Add(new BalanceLineRow(row, "safeguarding_balances:" + rd.GetInt64(0).ToString(CultureInfo.InvariantCulture), rd.GetString(2),
-                    new DateTimeOffset(rd.GetDateTime(3), TimeSpan.Zero), rd.GetDecimal(4), ccy,
-                    rd.IsDBNull(6) ? null : rd.GetString(6),
-                    has && ld.Included, has ? ld.Reason : "NOT_EVALUATED", has ? ld.Findings : []));
+                while (await rd.ReadAsync(ct))
+                {
+                    raw.Add(ReadBalance(rd));
+                    balanceTotals[rd.GetString(5).Trim()] = (int)rd.GetInt64(7);
+                }
             }
+            balances.AddRange(await WithLineDetailAsync(run, raw, ct));
         }
 
         var previous = new List<PreviousPosition>();
@@ -137,7 +165,111 @@ public sealed class SafeguardingReadRepository(NpgsqlDataSource db) : ISafeguard
         }
 
         var adjustments = await ListAdjustmentsAsync(run.RunId, null, scope, ct) ?? [];
-        return new SafeguardingView(run, await ReadinessAsync(run, positions, ct), positions, obligations, balances, adjustments, previous);
+        return new SafeguardingView(run, await ReadinessAsync(run, positions, ct), positions, obligations, balances, adjustments, previous, obligationTotals, balanceTotals);
+    }
+
+    private static BalanceLineRow ReadBalance(NpgsqlDataReader rd) => new(rd.GetString(1), "safeguarding_balances:" + rd.GetInt64(0).ToString(CultureInfo.InvariantCulture),
+        rd.GetString(2), new DateTimeOffset(rd.GetDateTime(3), TimeSpan.Zero), rd.GetDecimal(4), rd.GetString(5).Trim(), rd.IsDBNull(6) ? null : rd.GetString(6), false, "NOT_EVALUATED", []);
+
+    /// <summary>Adds the control's per-line verdict (included, reason, findings) from the position detail; lines the control did not evaluate stay NOT_EVALUATED.</summary>
+    private async Task<IReadOnlyList<BalanceLineRow>> WithLineDetailAsync(SafeguardingRun run, IReadOnlyList<BalanceLineRow> lines, CancellationToken ct)
+    {
+        if (lines.Count == 0) { return lines; }
+        var detail = new Dictionary<(string Currency, string Row), (bool Included, string Reason, string[] Findings)>();
+        await using var c = db.CreateCommand(
+            $@"SELECT p.currency, t.e->>'sourceRowId', t.e->>'included', t.e->>'reason', COALESCE(t.e->'findingIds', '[]'::jsonb)::text
+               FROM safeguarding_positions p CROSS JOIN LATERAL jsonb_array_elements({Arr("balanceLines")}) AS t(e)
+               WHERE p.run_id=@r AND p.legal_entity_id=@le AND t.e->>'sourceRowId' = ANY(@rows)");
+        c.Parameters.AddWithValue("r", run.RunId);
+        c.Parameters.AddWithValue("le", run.LegalEntityId);
+        c.Parameters.Add(new NpgsqlParameter("rows", NpgsqlDbType.Array | NpgsqlDbType.Text) { Value = lines.Select(l => l.SourceRowId).Distinct().ToArray() });
+        await using (var rd = await c.ExecuteReaderAsync(ct))
+        {
+            while (await rd.ReadAsync(ct))
+            {
+                using var f = JsonDocument.Parse(rd.GetString(4));
+                detail[(rd.GetString(0).Trim(), rd.GetString(1))] = (rd.IsDBNull(2) ? false : rd.GetString(2) == "true", rd.IsDBNull(3) ? "" : rd.GetString(3), Strings(f.RootElement, null).ToArray());
+            }
+        }
+        return lines.Select(l => detail.TryGetValue((l.Currency, l.SourceRowId), out var d) ? l with { Included = d.Included, Reason = d.Reason, FindingIds = d.Findings } : l).ToList();
+    }
+
+    public async Task<LinePageRows?> ListLinesAsync(string runId, string currency, string kind, string? search, int limit, LineKey? after, bool includeTotal, EntityScope scope, CancellationToken ct)
+    {
+        var run = await GetRunAsync(runId, scope, ct);
+        if (run is null) { return null; }
+        await using (var c = db.CreateCommand("SELECT 1 FROM safeguarding_positions WHERE run_id=@r AND legal_entity_id=@le AND currency::text=@ccy"))
+        {
+            c.Parameters.AddWithValue("r", run.RunId);
+            c.Parameters.AddWithValue("le", run.LegalEntityId);
+            c.Parameters.AddWithValue("ccy", currency);
+            if (await c.ExecuteScalarAsync(ct) is null) { return null; }
+        }
+
+        var like = string.IsNullOrEmpty(search) ? null : Like(search);
+        void Bind(NpgsqlCommand c, bool cursor)
+        {
+            c.Parameters.AddWithValue("r", run.RunId);
+            c.Parameters.AddWithValue("le", run.LegalEntityId);
+            c.Parameters.AddWithValue("ccy", currency);
+            c.Parameters.Add(new NpgsqlParameter("s", NpgsqlDbType.Text) { Value = (object?)like ?? DBNull.Value });
+            if (!cursor) { return; }
+            c.Parameters.AddWithValue("hasCur", after is not null);
+            c.Parameters.Add(new NpgsqlParameter("ca", NpgsqlDbType.Numeric) { Value = after?.NegAbs ?? 0m });
+            c.Parameters.Add(new NpgsqlParameter("ct", NpgsqlDbType.Bigint) { Value = after?.Tie ?? 0L });
+            c.Parameters.AddWithValue("lim", limit + 1);
+        }
+
+        if (kind == "obligation")
+        {
+            const string from = @"FROM safeguarding_positions p
+                CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(p.detail->'obligationLines')='array' THEN p.detail->'obligationLines' ELSE '[]'::jsonb END) WITH ORDINALITY AS t(e, ord)
+                WHERE p.run_id=@r AND p.legal_entity_id=@le AND p.currency::text=@ccy AND (@s::text IS NULL OR (t.e->>'accountId') ILIKE @s)";
+            var key = "-abs(" + LineAmount + ")";
+            var items = new List<ObligationLineItem>();
+            await using (var c = db.CreateCommand(
+                $@"SELECT t.e->>'accountId', t.e->>'amount', t.e->>'movementType', {key}, t.ord {from}
+                   AND (@hasCur = false OR ({key}, t.ord) > (@ca, @ct)) ORDER BY {key}, t.ord LIMIT @lim"))
+            {
+                Bind(c, true);
+                await using var rd = await c.ExecuteReaderAsync(ct);
+                while (await rd.ReadAsync(ct))
+                {
+                    items.Add(new ObligationLineItem(new ObligationLineRow(rd.GetString(0), currency, rd.IsDBNull(1) ? 0m : decimal.Parse(rd.GetString(1), CultureInfo.InvariantCulture),
+                        rd.IsDBNull(2) ? null : rd.GetString(2)), new LineKey(rd.GetDecimal(3), rd.GetInt64(4))));
+                }
+            }
+            int? total = null;
+            if (includeTotal)
+            {
+                await using var c = db.CreateCommand("SELECT count(*) " + from);
+                Bind(c, false);
+                total = (int)(long)(await c.ExecuteScalarAsync(ct))!;
+            }
+            return new LinePageRows(items, [], total);
+        }
+
+        const string bFrom = @"FROM safeguarding_balances b JOIN source_deliveries d ON d.id=b.delivery_id
+            WHERE d.run_id=@r AND d.state <> 'SUPERSEDED' AND b.legal_entity_id=@le AND b.currency::text=@ccy AND (@s::text IS NULL OR b.external_account_id ILIKE @s)";
+        var raw = new List<(BalanceLineRow Row, LineKey Key)>();
+        await using (var c = db.CreateCommand(
+            $@"SELECT b.id, b.source_row_id, b.external_account_id, b.balance_timestamp, b.balance_amount, b.currency, b.evidence_reference, -abs(b.balance_amount) {bFrom}
+               AND (@hasCur = false OR (-abs(b.balance_amount), b.id) > (@ca, @ct)) ORDER BY -abs(b.balance_amount), b.id LIMIT @lim"))
+        {
+            Bind(c, true);
+            await using var rd = await c.ExecuteReaderAsync(ct);
+            while (await rd.ReadAsync(ct)) { raw.Add((ReadBalance(rd), new LineKey(rd.GetDecimal(7), rd.GetInt64(0)))); }
+        }
+        var detailed = await WithLineDetailAsync(run, raw.Select(r => r.Row).ToList(), ct);
+        var balances = detailed.Select((l, i) => new BalanceLineItem(l, raw[i].Key)).ToList();
+        int? bTotal = null;
+        if (includeTotal)
+        {
+            await using var c = db.CreateCommand("SELECT count(*) " + bFrom);
+            Bind(c, false);
+            bTotal = (int)(long)(await c.ExecuteScalarAsync(ct))!;
+        }
+        return new LinePageRows([], balances, bTotal);
     }
 
     public async Task<IReadOnlyList<AdjustmentRow>?> ListAdjustmentsAsync(string runId, string? status, EntityScope scope, CancellationToken ct) =>
@@ -288,6 +420,9 @@ public sealed class SafeguardingReadRepository(NpgsqlDataSource db) : ISafeguard
         e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
         && decimal.TryParse(v.GetString(), NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var d) ? d : null;
 
-    private static List<string> Strings(JsonElement e, string name) =>
-        e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Array ? v.EnumerateArray().Select(x => x.GetString()!).ToList() : [];
+    private static List<string> Strings(JsonElement e, string? name)
+    {
+        var v = name is null ? e : e.TryGetProperty(name, out var p) ? p : default;
+        return v.ValueKind == JsonValueKind.Array ? v.EnumerateArray().Select(x => x.GetString()!).ToList() : [];
+    }
 }

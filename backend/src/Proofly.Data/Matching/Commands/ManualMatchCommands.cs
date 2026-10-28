@@ -10,7 +10,7 @@ namespace Proofly.Data.Matching.Commands;
 
 public enum ManualMatchOutcome
 {
-    Ok, RunNotFound, GroupNotFound, Validation, RecordAlreadyUsed, InvalidState, RunLocked, StaleVersion, SeparationOfDuties, StaleProposal,
+    Ok, RunNotFound, GroupNotFound, Validation, RecordAlreadyUsed, InvalidState, RunLocked, RunSuperseded, StaleVersion, SeparationOfDuties, StaleProposal,
 }
 
 /// <summary>Result of a manual-match command. Pointer/Detail carry the reason for every non-Ok outcome; nothing is repaired.</summary>
@@ -66,7 +66,7 @@ public sealed class ManualMatchCommands(NpgsqlDataSource db, IAuditWriter audit)
             if (!await rd.ReadAsync(ct)) { return ManualMatchResult.Fail(ManualMatchOutcome.RunNotFound, "Run not found."); }
             le = rd.GetString(0); runState = rd.GetString(1);
         }
-        if (runState is "SUPERSEDED" or "SIGNED_OFF") { return ManualMatchResult.Fail(ManualMatchOutcome.RunLocked, $"The run is {runState} and read-only."); }
+        if (runState is "SUPERSEDED" or "SIGNED_OFF") { return ManualMatchResult.Fail(runState == "SUPERSEDED" ? ManualMatchOutcome.RunSuperseded : ManualMatchOutcome.RunLocked, $"The run is {runState} and read-only."); }
 
         // Parse and validate ids (never repaired: a wrong side, a duplicate or an unknown record rejects the whole proposal).
         var recs = new List<Rec>();
@@ -199,7 +199,7 @@ public sealed class ManualMatchCommands(NpgsqlDataSource db, IAuditWriter audit)
         }
         if (proposer == cmd.UserId && apStatus == "PENDING") { return ManualMatchResult.Fail(ManualMatchOutcome.SeparationOfDuties, "The proposer cannot decide their own manual match."); }
         if (version != cmd.ExpectedGroupVersion) { return ManualMatchResult.Fail(ManualMatchOutcome.StaleVersion, "The match group changed since it was read."); }
-        if (runState is "SUPERSEDED" or "SIGNED_OFF") { return ManualMatchResult.Fail(ManualMatchOutcome.RunLocked, $"The run is {runState} and read-only."); }
+        if (runState is "SUPERSEDED" or "SIGNED_OFF") { return ManualMatchResult.Fail(runState == "SUPERSEDED" ? ManualMatchOutcome.RunSuperseded : ManualMatchOutcome.RunLocked, $"The run is {runState} and read-only."); }
         if (status != "PENDING_APPROVAL" || approvalId is null || apStatus != "PENDING")
         {
             return ManualMatchResult.Fail(ManualMatchOutcome.InvalidState, $"The match group is {status} with no pending manual-match approval.");

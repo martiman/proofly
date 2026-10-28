@@ -27,6 +27,7 @@ internal sealed class SafeguardingEndpoints(ISafeguardingReadRepository repo) : 
         var g = app.MapGroup("/api/v1/runs/{runId}/safeguarding");
         g.MapGet("", GetPosition);
         g.MapGet("/adjustments", ListAdjustments);
+        g.MapGet("/{currency}/lines", ListLines);
     }
 
     private static EntityScope ScopeOf(Caller c) => c.LegalEntityIds.Contains(Caller.AllEntities) ? EntityScope.Everything : new EntityScope(false, c.LegalEntityIds.ToArray());
@@ -34,10 +35,41 @@ internal sealed class SafeguardingEndpoints(ISafeguardingReadRepository repo) : 
     private async Task<IResult> GetPosition(string runId, HttpContext ctx, CancellationToken ct)
     {
         var caller = ctx.GetCaller();
-        var view = await repo.GetPositionAsync(runId, ScopeOf(caller), ct) ?? throw new ProblemException(ProblemTypes.NotFound);
+        var linesLimit = SafeguardingReadRepository.DefaultLinesLimit;
+        if (ctx.Request.Query.TryGetValue("linesLimit", out var ll) && ll.Count > 0 && ll[0] is { Length: > 0 } lv
+            && (!int.TryParse(lv, out linesLimit) || linesLimit is < 1 or > 200))
+        {
+            throw ProblemException.Validation("linesLimit", "linesLimit must be an integer from 1 to 200.");
+        }
+        var view = await repo.GetPositionAsync(runId, ScopeOf(caller), linesLimit, ct) ?? throw new ProblemException(ProblemTypes.NotFound);
         caller.Require(Permission.SafeguardingView, view.Run.LegalEntityId);
         return Results.Ok(Map(view, caller));
     }
+
+    private async Task<IResult> ListLines(string runId, string currency, HttpContext ctx, CancellationToken ct)
+    {
+        var caller = ctx.GetCaller();
+        var q = ctx.Request.Query;
+        var kind = q.TryGetValue("kind", out var k) && k.Count > 0 ? k[0] : null;
+        if (kind is not ("obligation" or "balance")) { throw ProblemException.Validation("kind", "kind is required and must be obligation or balance.", "required"); }
+        if (currency.Length != 3 || !currency.All(char.IsAsciiLetterUpper)) { throw ProblemException.Validation("currency", "currency must be an ISO 4217 code."); }
+        var search = q.TryGetValue("search", out var sv) && sv.Count > 0 && sv[0] is { Length: > 0 } str ? str : null;
+        if (search is { Length: > 200 }) { throw ProblemException.Validation("search", "search must be at most 200 characters.", "max-length"); }
+        var run = await repo.GetRunAsync(runId, ScopeOf(caller), ct) ?? throw new ProblemException(ProblemTypes.NotFound);
+        caller.Require(Permission.SafeguardingView, run.LegalEntityId);
+        var page = PageRequest.From(ctx);
+        var rows = await repo.ListLinesAsync(runId, currency, kind, search, page.Limit, page.Decode<LineKey>(), page.IncludeTotal, ScopeOf(caller), ct)
+            ?? throw new ProblemException(ProblemTypes.NotFound);
+        PageInfoDto info;
+        if (kind == "obligation") { info = Paging.Create(rows.Obligations, page, i => i.Key, rows.Total).Page; }
+        else { info = Paging.Create(rows.Balances, page, i => i.Key, rows.Total).Page; }
+        var obligations = rows.Obligations.Take(page.Limit).Select(i => new ObligationLineDto(i.Line.AccountId, i.Line.Currency, M(i.Line.Amount, i.Line.Currency), i.Line.MovementType)).ToList();
+        var balances = rows.Balances.Take(page.Limit).Select(i => ToDto(i.Line)).ToList();
+        return Results.Ok(new SafeguardingLinePageDto(kind, currency, obligations, balances, info));
+    }
+
+    private static EligibleBalanceLineDto ToDto(BalanceLineRow b) => new(b.SourceRowId, b.RecordId, b.ExternalAccountId, b.BalanceTimestamp, M(b.Balance, b.Currency),
+        b.EvidenceReference, b.Included, b.Reason, b.FindingIds);
 
     private async Task<IResult> ListAdjustments(string runId, HttpContext ctx, CancellationToken ct)
     {
@@ -60,7 +92,8 @@ internal sealed class SafeguardingEndpoints(ISafeguardingReadRepository repo) : 
         var prev = v.Previous.ToDictionary(p => p.Currency);
         var positions = v.Positions.Select(p => new SafeguardingCurrencyPositionDto(
             p.Currency, M(p.Obligation, p.Currency), M(p.Eligible, p.Currency), M(p.ApprovedAdjustments, p.Currency), p.Result is { } res ? M(res, p.Currency) : null,
-            p.State, p.Qualifications, prev.TryGetValue(p.Currency, out var pp) && pp.Result is { } pr ? M(pr, p.Currency) : null, p.ExceptionIds, p.Stale)).ToList();
+            p.State, p.Qualifications, prev.TryGetValue(p.Currency, out var pp) && pp.Result is { } pr ? M(pr, p.Currency) : null, p.ExceptionIds, p.Stale,
+            v.ObligationLinesTotal.GetValueOrDefault(p.Currency), v.BalanceLinesTotal.GetValueOrDefault(p.Currency))).ToList();
 
         var drivers = new List<ChangeDriverDto>();
         foreach (var p in v.Positions.Where(p => prev.ContainsKey(p.Currency)))
@@ -77,8 +110,7 @@ internal sealed class SafeguardingEndpoints(ISafeguardingReadRepository repo) : 
 
         return new SafeguardingPositionDto(v.Run.RunId, v.Run.BusinessDate, v.Run.LegalEntityId, v.EvidenceReadiness, v.Run.SignOffState, positions,
             v.Obligations.Select(l => new ObligationLineDto(l.AccountId, l.Currency, M(l.Amount, l.Currency), l.MovementType)).ToList(),
-            v.Balances.Select(b => new EligibleBalanceLineDto(b.SourceRowId, b.RecordId, b.ExternalAccountId, b.BalanceTimestamp, M(b.Balance, b.Currency),
-                b.EvidenceReference, b.Included, b.Reason, b.FindingIds)).ToList(),
+            v.Balances.Select(ToDto).ToList(),
             v.Adjustments.Select(a => Map(a, caller, v.Run.LegalEntityId)).ToList(), drivers, v.Positions.Any(p => p.Stale));
     }
 

@@ -12,6 +12,8 @@
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="../Proofly.Connectors.Tests/Excel/ExcelSupport.cs" Link="Linked/ExcelSupport.cs" />
+    <Compile Include="../Proofly.Connectors.Tests/Support.cs" Link="Linked/Support.cs" />
     <ProjectReference Include="../../src/Proofly.Data/Proofly.Data.csproj" />
     <ProjectReference Include="../../src/Proofly.Domain/Proofly.Domain.csproj" />
     <ProjectReference Include="../../src/Proofly.Connectors/Proofly.Connectors.csproj" />

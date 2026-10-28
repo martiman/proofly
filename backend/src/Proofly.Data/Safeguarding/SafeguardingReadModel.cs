@@ -44,7 +44,24 @@ public sealed record AdjustmentCursor(DateTimeOffset At, string Id);
 
 public sealed record AdjustmentPageRows(IReadOnlyList<AdjustmentRow> Items, bool HasMore, int? Total);
 
+/// <summary>
+/// Keyset state of the line lists: largest absolute amount first (stored negated so one ascending row comparison serves), then a stable
+/// tie-break (array position for obligation lines, balance row id for balance lines).
+/// </summary>
+public sealed record LineKey(decimal NegAbs, long Tie);
+
+public sealed record ObligationLineItem(ObligationLineRow Line, LineKey Key);
+public sealed record BalanceLineItem(BalanceLineRow Line, LineKey Key);
+
+/// <summary>One page of obligation or balance lines of one currency (up to limit + 1 rows); <see cref="Total"/> counts the filtered list.</summary>
+public sealed record LinePageRows(IReadOnlyList<ObligationLineItem> Obligations, IReadOnlyList<BalanceLineItem> Balances, int? Total);
+
+/// <summary>
+/// Obligation and balance lines are the top <c>LinesLimit</c> per currency by absolute amount; the full lists are paged through
+/// <see cref="ISafeguardingReadRepository.ListLinesAsync"/>. The totals count every line per currency.
+/// </summary>
 public sealed record SafeguardingView(
     SafeguardingRun Run, string EvidenceReadiness, IReadOnlyList<PositionRow> Positions, IReadOnlyList<ObligationLineRow> Obligations,
     IReadOnlyList<BalanceLineRow> Balances, IReadOnlyList<AdjustmentRow> Adjustments,
-    IReadOnlyList<PreviousPosition> Previous);
+    IReadOnlyList<PreviousPosition> Previous,
+    IReadOnlyDictionary<string, int> ObligationLinesTotal, IReadOnlyDictionary<string, int> BalanceLinesTotal);

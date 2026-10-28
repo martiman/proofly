@@ -257,6 +257,21 @@ public class ManualMatchApiTests(ManualMatchFixture f) : IClassFixture<ManualMat
         Assert.True(dec.StatusCode == HttpStatusCode.OK, await dec.Content.ReadAsStringAsync());
     }
 
+    [Theory]
+    [InlineData("SIGNED_OFF", "invalid-state")]
+    [InlineData("SUPERSEDED", "run-superseded")]
+    public async Task Proposing_on_a_locked_run_is_409_with_the_matching_problem_type(string state, string slug)
+    {
+        var run = "R-LOCK-" + state;
+        await using (var c = f.Db.CreateCommand($"INSERT INTO runs (id, legal_entity_id, business_date, run_version, ruleset_version, state) VALUES ('{run}','LE-M1','2026-04-0{(state == "SIGNED_OFF" ? 1 : 2)}',1,'rs-1','{state}')"))
+        {
+            await c.ExecuteNonQueryAsync();
+        }
+        var res = await Analyst.SendAsync(Post($"/api/v1/runs/{run}/match-groups", Proposal(["TRF-1"], ["BNK-1"])));
+        Assert.Equal(HttpStatusCode.Conflict, res.StatusCode);
+        Assert.Equal(slug, Slug(await Json(res)));
+    }
+
     [Fact]
     public async Task Failed_decision_in_transaction_leaves_no_audit_event_and_no_change()
     {
