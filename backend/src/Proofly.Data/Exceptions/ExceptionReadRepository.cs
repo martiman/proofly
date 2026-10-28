@@ -16,7 +16,11 @@ public interface IExceptionReadRepository
     Task<ExceptionDetailData?> GetDetailAsync(string exceptionId, IReadOnlyCollection<string>? entityScope, DateTimeOffset now, CancellationToken ct = default);
     /// <summary>Filters JSON of a saved view visible to the user (own or shared, scope 'exceptions'); null when none.</summary>
     Task<string?> FindSavedViewFiltersAsync(string savedViewId, string userId, CancellationToken ct = default);
+    /// <summary>Active users holding one of <paramref name="roles"/> (role wire names) for the entity (directly or via '*'); null when the entity does not exist. Roles listed are the user's roles applying to the entity.</summary>
+    Task<IReadOnlyList<AssignableUserRow>?> ListAssignableUsersAsync(string legalEntityId, IReadOnlyCollection<string> roles, CancellationToken ct = default);
 }
+
+public sealed record AssignableUserRow(string Id, string Name, IReadOnlyList<string> Roles);
 
 public sealed class ExceptionReadRepository(NpgsqlDataSource db) : IExceptionReadRepository
 {
@@ -267,8 +271,9 @@ public sealed class ExceptionReadRepository(NpgsqlDataSource db) : IExceptionRea
         await using (var cmd = db.CreateCommand("""
             SELECT a.id, a.object_type, a.object_id, a.run_id, a.proposal_version, a.proposer_user_id, pu.name,
                    a.approver_user_id, au.name, a.required_role, a.status, a.decision, a.rationale, a.evidence_refs::text,
-                   a.policy_version, a.proposed_at, a.decided_at
+                   a.policy_version, a.proposed_at, a.decided_at, rp.kind
             FROM approvals a
+            LEFT JOIN resolution_proposals rp ON rp.id = a.object_id AND a.object_type = 'EXCEPTION_RESOLUTION'
             JOIN users pu ON pu.id = a.proposer_user_id
             LEFT JOIN users au ON au.id = a.approver_user_id
             WHERE a.object_type = 'EXCEPTION_RESOLUTION'
@@ -284,7 +289,8 @@ public sealed class ExceptionReadRepository(NpgsqlDataSource db) : IExceptionRea
                 approvals.Add(new ApprovalRow(r.GetString(0), r.GetString(1), r.GetString(2), r.IsDBNull(3) ? null : r.GetString(3), r.GetInt32(4),
                     r.GetString(5), r.GetString(6), r.IsDBNull(7) ? null : r.GetString(7), r.IsDBNull(8) ? null : r.GetString(8),
                     r.GetString(9), r.GetString(10), r.IsDBNull(11) ? null : r.GetString(11), r.IsDBNull(12) ? null : r.GetString(12), refs,
-                    r.GetString(14), r.GetFieldValue<DateTimeOffset>(15), r.IsDBNull(16) ? null : r.GetFieldValue<DateTimeOffset>(16)));
+                    r.GetString(14), r.GetFieldValue<DateTimeOffset>(15), r.IsDBNull(16) ? null : r.GetFieldValue<DateTimeOffset>(16),
+                    r.IsDBNull(17) ? null : r.GetString(17)));
             }
         }
 
@@ -314,5 +320,28 @@ public sealed class ExceptionReadRepository(NpgsqlDataSource db) : IExceptionRea
         cmd.Parameters.AddWithValue("id", savedViewId);
         cmd.Parameters.AddWithValue("u", userId);
         return await cmd.ExecuteScalarAsync(ct) as string;
+    }
+
+    public async Task<IReadOnlyList<AssignableUserRow>?> ListAssignableUsersAsync(string legalEntityId, IReadOnlyCollection<string> roles, CancellationToken ct = default)
+    {
+        await using (var exists = db.CreateCommand("SELECT 1 FROM legal_entities WHERE id = @le"))
+        {
+            exists.Parameters.AddWithValue("le", legalEntityId);
+            if (await exists.ExecuteScalarAsync(ct) is null) { return null; }
+        }
+        await using var cmd = db.CreateCommand("""
+            SELECT u.id, u.name, array_agg(DISTINCT ur.role_id ORDER BY ur.role_id)
+            FROM users u JOIN user_roles ur ON ur.user_id = u.id
+            WHERE u.active AND ur.legal_entity_id IN ('*', @le)
+            GROUP BY u.id, u.name
+            HAVING bool_or(ur.role_id = ANY(@roles))
+            ORDER BY u.name, u.id
+            """);
+        cmd.Parameters.AddWithValue("le", legalEntityId);
+        cmd.Parameters.AddWithValue("roles", roles.ToArray());
+        var rows = new List<AssignableUserRow>();
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct)) { rows.Add(new AssignableUserRow(r.GetString(0), r.GetString(1), r.GetFieldValue<string[]>(2))); }
+        return rows;
     }
 }

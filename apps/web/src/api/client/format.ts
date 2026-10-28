@@ -10,8 +10,9 @@ export function formatMoney(amount: string, currency: string, locale?: string | 
   if (!/^[A-Z]{3}$/.test(currency)) throw new RangeError(`Invalid currency: ${JSON.stringify(currency)}`)
   const base = new Intl.NumberFormat(locale, { style: 'currency', currency })
   const own = base.resolvedOptions().minimumFractionDigits ?? 2
-  const given = amount.includes('.') ? amount.split('.')[1]!.length : 0
-  const digits = Math.max(own, given) // never round away precision the server sent
+  // Only insignificant trailing zeros are dropped (down to the currency's minor units); no precision is ever rounded away.
+  const given = amount.includes('.') ? amount.split('.')[1]!.replace(/0+$/, '').length : 0
+  const digits = Math.max(own, given)
   // Intl.NumberFormat v3 accepts a decimal string and formats it exactly; the TS lib types only number, hence the cast.
   return new Intl.NumberFormat(locale, { style: 'currency', currency, minimumFractionDigits: digits, maximumFractionDigits: digits })
     .format(amount as unknown as number)

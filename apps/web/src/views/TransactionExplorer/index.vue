@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { PageHeader, StatePlaceholder, StatusPill, EvidenceLink } from '../../components'
 import type { Status } from '../../components/StatusPill.vue'
-import { getTransaction, getTransactionLineage, listTransactions } from '../../api/services'
+import { getLineage, getTransaction, getTransactionLineage, listTransactions } from '../../api/services'
 import type { Schema } from '../../api/services'
 import { usePaged, useResource } from '../../api/composables'
 import { formatMoney, isNotFound } from '../../api/client'
@@ -17,7 +17,7 @@ type Aggregates = NonNullable<Schema<'TransactionPage'>['aggregates']>
 
 const route = useRoute()
 const router = useRouter()
-const { runId } = useRunContext()
+const { runId, currencies } = useRunContext()
 
 const q = (k: string) => (typeof route.query[k] === 'string' && route.query[k] ? (route.query[k] as string) : undefined)
 const search = ref(q('q') ?? '')
@@ -27,11 +27,19 @@ const currency = computed(() => q('currency'))
 const accountId = computed(() => q('account'))
 const hasException = computed(() => (q('exc') === 'true' ? true : q('exc') === 'false' ? false : undefined))
 const qText = computed(() => q('q'))
-const selectedId = computed(() => q('id'))
+const recordIdQ = computed(() => q('recordId'))
+// A source record id (global search) is resolved to its transaction through the record lineage; none found => not-found state.
+const recordLookup = useResource(
+  () => (runId.value && recordIdQ.value && !q('id') ? `${runId.value}|${recordIdQ.value}` : null),
+  (k: string, signal) => { const [r, id] = k.split('|'); return getLineage('RECORD', id!, { runId: r }, { signal }) },
+)
+const recordTxId = computed(() =>
+  recordLookup.data.value?.nodes.find((n) => n.recordId === recordIdQ.value && n.kind !== 'DELIVERY' && n.kind !== 'CONTROL_RESULT')?.id)
+const recordNotFound = computed(() => !!recordIdQ.value && !q('id') && (isNotFound(recordLookup.error.value) || (!!recordLookup.data.value && !recordTxId.value)))
+const selectedId = computed(() => q('id') ?? recordTxId.value)
 
 const kinds: Kind[] = ['BANK_TRANSFER', 'DIRECT_DEBIT', 'CARD', 'BANK_EVIDENCE', 'LEDGER_ENTRY']
 const matchStatuses: MatchStatus[] = ['MATCHED', 'UNMATCHED', 'VALUE_MISMATCH', 'NOT_APPLICABLE', 'PENDING_APPROVAL']
-const currencies = ['EUR', 'GBP', 'JPY', 'USD']
 const nice = (s: string) => s.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase())
 const matchPill = (m: MatchStatus): Status => (m === 'MATCHED' ? 'pass' : m === 'UNMATCHED' ? 'fail' : m === 'VALUE_MISMATCH' ? 'warn' : m === 'PENDING_APPROVAL' ? 'info' : 'neutral')
 const fm = (m: Money | null | undefined) => (m ? formatMoney(m.amount, m.currency) : '—')
@@ -138,7 +146,8 @@ const nodeCols = [
     </div>
 
     <div class="detail">
-      <div v-if="!selectedId" class="card ph">Select a transaction to see its lifecycle, record details and evidence.</div>
+      <div v-if="!selectedId && !recordNotFound" class="card ph">Select a transaction to see its lifecycle, record details and evidence.</div>
+      <StatePlaceholder v-else-if="recordNotFound" state="empty" :message="`No transaction was found for source record ${recordIdQ}.`" />
       <StatePlaceholder v-else-if="tx.placeholder.value === 'loading'" state="loading" />
       <StatePlaceholder v-else-if="notFound" state="empty" :message="`Transaction ${selectedId} was not found in this run.`" />
       <StatePlaceholder v-else-if="tx.placeholder.value === 'forbidden'" state="forbidden" />

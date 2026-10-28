@@ -379,8 +379,25 @@ Migration `0050` adds the partial index for the open-matter order and an index f
 | J1 | `SafeguardingAdjustment.etag` (required) and `ConfigChange.etag` (required): the strong ETag of the row version (for example `"v3"`), same format as the `ETag` header, so `decideAdjustment` and the config decide operations can send `If-Match` after a page reload. Present in list items, command responses and the embedded `adjustments` of the safeguarding position. **Breaking for a client that builds these objects by hand.** |
 | J2 | `PageInfo.nextCursor` is now `required` (`string` or explicit `null` on the last page). Was already always written; generated types are `string | null`. |
 
+## Changelog (contract batch 3, web screen migrations)
+
+All changes are additive for a client that ignores unknown fields; new response fields are declared `required` (always written, possibly `null`) so generated types are exact. Migration `0051`.
+
+| # | Change |
+| --- | --- |
+| K1 | `getExceptionsSummary` accepts exactly the `listExceptions` filters (all except `sort` and paging: `blocking`, `legalEntityId`, `valueMin`/`valueMax` with the currency rule, `ageDaysMin`/`ageDaysMax`, `businessDateFrom`/`businessDateTo`, `dueBefore`, `search`, `ownerId`, `unassigned`, `severity`/`status`/`control` lists, `currency`, `savedViewId`) and documents 422. It uses the same parser and SQL predicate as the list, so `summary.total` equals the `listExceptions` `page.total` (`includeTotal`) for the same query. |
+| K2 | New `listAssignableUsers` (`GET /legal-entities/{legalEntityId}/assignable-users`, permission `exception.assign` for that entity): `[{id, name, roles}]`, active users holding `exception.investigate` there (directly or through an all-entities role), ordered by name. 404 when the entity does not exist or is outside the caller's scope, 403 without `exception.assign`. Not `settings.view`. Note: `assignException` itself still accepts any active user with a role in the entity. |
+| K3 | `Approval.kind` (required, nullable): for `EXCEPTION_RESOLUTION` approvals the proposed `ResolutionKind`, `null` for every other object type. `ExceptionDetail.pendingApproval` / `approvals[]` therefore carry the pending proposal's kind (`kind`), reason (`rationale`) and `evidenceRefs`; no other `ExceptionDetail` field was missing. |
+| K4 | `EvidencePack.manifest` (`schemaVersion`, `resultHash`, `files[{path, sha256, sizeBytes}]` without `manifest.json` itself, `generatedBy` (UserRef or null), `generatedAt`) and `EvidencePack.auditChain` (`valid`, `eventsChecked`, `firstBreak` = `{chainId, chainSeq, eventId, problem}` or null) are persisted when the pack becomes READY (`evidence_packs.manifest`, `audit_chain`, migration `0051`) and returned as is. `null` while GENERATING / NOT_GENERATED / FAILED and for packs generated before `0051`. |
+| K5 | New `listUnmatchedRecords` (`GET /runs/{runId}/matching/unmatched`, `matching.view`): cursor paged candidates of UNMATCHED groups (order: group, candidate), filters `pair` (a `TransactionKind`: there is no other pair concept in the data), `currency`, `search` (reference, source row key, source name, or an exact transaction id), `includeTotal` (the filtered count; unfiltered it equals `stats.unmatchedCount`). `getMatchingWorkbench` gains `unmatchedLimit` (default 50, max 200, 422 outside); **the inline `unmatched` list was 200 and is now 50 by default**; the true population is `stats.unmatchedCount`. |
+| K6 | `ControlRoom.blockingCount` (unresolved blocking exceptions, the sign-off gate's definition) and `openExceptionsTotal` (all unresolved exceptions), computed in SQL over the whole run (the attention queue still shows 10). |
+| K7 | `RunSignOff.blockerDetails[{code, message, exceptionId, control}]` (same length and order as `blockers`, which stays a `string[]`). Codes: `RUN_STATE`, `NO_RESULT_HASH`, `COMPLETENESS_MISSING`, `COMPLETENESS_NOT_PASSED`, `BLOCKING_EXCEPTION` (`exceptionId` and `control` set). |
+| K8 | `AccountLedgerView.availableCurrencies`: every currency the account holds in the run (the shown one included), sorted. |
+| K9 | `Me.environment {name, kind: DEV|TEST|PILOT|PRODUCTION}` from configuration `Environment:Name` / `Environment:Kind`. Outside Production the defaults are the host environment name and `DEV`; Production refuses to start without both (startup self-check), and a present `Kind` must be one of the four values in every environment. |
+| K10 | Not a contract change: `audit.view` (Evidence & Audit) is deliberately **not** in the ANALYST bundle; it is held by VIEWER, APPROVER and SECURITY_ADMIN. Analysts work exceptions and sign-off preparation; the audit trail is reviewed by independent roles. See the backend README. |
+
 ## Lint
 
 `npx --yes @redocly/cli lint docs/integrations/api/openapi.yaml` passes with no errors. The two remaining
 warnings are `no-unused-components` for the `RequestId` header/parameter: `X-Request-Id` is a global
-convention, so it is defined as a component but not referenced from each of the 57 operations.
+convention, so it is defined as a component but not referenced from each of the 59 operations.

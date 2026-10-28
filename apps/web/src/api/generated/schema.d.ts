@@ -305,7 +305,7 @@ export interface paths {
         };
         /**
          * Server-side totals and per-currency aggregates for the queue
-         * @description Accepts the same filters as `listExceptions` (omitted here for brevity in the schema; see that operation) and aggregates over the full filtered set, not the current page.
+         * @description Accepts exactly the filters of `listExceptions` (all of them except sort and paging) and is built from the same parser and SQL predicate, so `total` always equals the `listExceptions` total for the same query. Aggregates cover the full filtered set, not a page. Invalid filters are rejected with 422.
          */
         get: operations["getExceptionsSummary"];
         put?: never;
@@ -371,6 +371,28 @@ export interface paths {
         post?: never;
         /** Delete a saved view (personal preference; not a material decision) */
         delete: operations["deleteExceptionView"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/legal-entities/{legalEntityId}/assignable-users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                legalEntityId: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Users an exception of this legal entity can be assigned to
+         * @description Active users who hold `exception.investigate` for the legal entity (directly or through an all-entities role), ordered by name. Requires `exception.assign` for the entity (404 when the entity is outside the caller's scope). Not a settings or user-administration view; it carries only id, name and roles.
+         */
+        get: operations["listAssignableUsers"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -593,6 +615,29 @@ export interface paths {
         };
         /** Matching workbench focused on a transaction or an exception */
         get: operations["getMatchingWorkbench"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{runId}/matching/unmatched": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Run version id; a new id is issued per reprocess. */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Unmatched population of the run, paged
+         * @description Candidates of UNMATCHED match groups ordered by match group, then candidate. The first `unmatchedLimit` entries are also inlined in the workbench. `page.total` (includeTotal) counts the filtered set; unfiltered it equals `stats.unmatchedCount`.
+         */
+        get: operations["listUnmatchedRecords"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1164,6 +1209,12 @@ export interface components {
             name: string;
             /** Format: email */
             email: string;
+            /** @description Deployment label from configuration (`Environment:Name`, `Environment:Kind`). Defaults to the host environment name and DEV outside Production; both are required in Production. */
+            environment: {
+                name: string;
+                /** @enum {string} */
+                kind: "DEV" | "TEST" | "PILOT" | "PRODUCTION";
+            };
             roles: components["schemas"]["Role"][];
             legalEntityIds: string[];
             /** @description Effective permissions (union over roles). UI uses these to show/hide actions; the server still enforces. */
@@ -1233,6 +1284,10 @@ export interface components {
         };
         ControlRoom: {
             run: components["schemas"]["Run"];
+            /** @description Unresolved blocking exceptions of the run (the sign-off gate's definition: blocking and not RESOLVED, ACCEPTED_DIFFERENCE or FALSE_POSITIVE). */
+            blockingCount: number;
+            /** @description All unresolved exceptions of the run (blocking or not); `attentionQueue` shows the top 10 of them. */
+            openExceptionsTotal: number;
             summary: components["schemas"]["DailySummaryItem"][];
             evidenceReadiness: components["schemas"]["SourceDelivery"][];
             controlAreas: components["schemas"]["ControlAreaSummary"][];
@@ -1382,6 +1437,12 @@ export interface components {
             items: components["schemas"]["ExceptionSummary"][];
             page: components["schemas"]["PageInfo"];
         };
+        AssignableUser: {
+            id: string;
+            name: string;
+            /** @description The user's roles that apply to the legal entity (direct or all-entities). */
+            roles: components["schemas"]["Role"][];
+        };
         /** @description Aggregates over the full filtered set. */
         ExceptionsSummary: {
             total: number;
@@ -1497,6 +1558,8 @@ export interface components {
             objectType: components["schemas"]["ApprovalObjectType"];
             objectId: string;
             runId?: string | null;
+            /** @description EXCEPTION_RESOLUTION approvals: the proposed resolution kind (RESOLVED, ACCEPTED_DIFFERENCE, FALSE_POSITIVE). Null for every other object type. */
+            kind: components["schemas"]["ResolutionKind"] | null;
             proposalVersion: number;
             proposer: components["schemas"]["UserRef"];
             approver?: components["schemas"]["UserRef"] | null;
@@ -1644,10 +1707,15 @@ export interface components {
             items: components["schemas"]["MatchGroup"][];
             page: components["schemas"]["PageInfo"];
         };
+        MatchCandidatePage: {
+            items: components["schemas"]["MatchCandidate"][];
+            page: components["schemas"]["PageInfo"];
+        };
         MatchingWorkbench: {
             /** @description The transaction the workbench is centred on; null when the run has no group to focus. A transaction (or exception) that exists but is in no group yields focus = that transaction (null for an exception without a transaction) and groups = []. */
             focusTransactionId: string | null;
             groups: components["schemas"]["MatchGroup"][];
+            /** @description At most `unmatchedLimit` (default 50, max 200) unmatched candidates; `stats.unmatchedCount` is the true total and `listUnmatchedRecords` pages the rest. */
             unmatched: components["schemas"]["MatchCandidate"][];
             stats: {
                 /** @description Automatically matched groups / all groups (decimal string 0..1); null when the run has no groups. */
@@ -1704,6 +1772,8 @@ export interface components {
         };
         AccountLedgerView: {
             account: components["schemas"]["Account"];
+            /** @description Every currency this account holds in the run (the shown one included), sorted; pass one as `currency` to switch. */
+            availableCurrencies: components["schemas"]["Currency"][];
             entries: components["schemas"]["LedgerEntry"][];
             entriesPage?: components["schemas"]["PageInfo"];
             rollForward: {
@@ -1842,7 +1912,18 @@ export interface components {
             attestationTextHash?: string;
             /** @description Server-evaluated for the current caller (blockers, scope, separation of duties) */
             canSignOff: boolean;
+            /** @description Human-readable messages, same order as `blockerDetails`. */
             blockers: string[];
+            /** @description Structured form of `blockers` (same length and order). */
+            blockerDetails: {
+                /** @enum {string} */
+                code: "RUN_STATE" | "NO_RESULT_HASH" | "COMPLETENESS_MISSING" | "COMPLETENESS_NOT_PASSED" | "BLOCKING_EXCEPTION";
+                message: string;
+                /** @description Set for BLOCKING_EXCEPTION. */
+                exceptionId: string | null;
+                /** @description Control of the blocking exception, or data_completeness for the completeness codes. */
+                control: components["schemas"]["ControlArea"] | null;
+            }[];
             evidencePackId: string | null;
             approval?: components["schemas"]["Approval"] | null;
             history?: components["schemas"]["TimelineEvent"][];
@@ -1882,6 +1963,34 @@ export interface components {
             sizeBytes?: number | null;
             /** @description Why generation failed; present only for FAILED. */
             failureReason?: string | null;
+            /** @description Structured form of the pack's manifest.json. Null unless status is GENERATED (and for packs generated before manifests were persisted). */
+            manifest: components["schemas"]["EvidenceManifest"] | null;
+            /** @description Result of the audit hash-chain verification run while the pack was built. Null unless status is GENERATED (and for older packs). */
+            auditChain: components["schemas"]["AuditChainVerification"] | null;
+        };
+        EvidenceManifest: {
+            schemaVersion: string;
+            /** @description SHA-256 binding all listed files. */
+            resultHash: string;
+            /** @description Every file of the pack except manifest.json itself, sorted by path. */
+            files: {
+                path: string;
+                sha256: string;
+                sizeBytes: number;
+            }[];
+            generatedBy: components["schemas"]["UserRef"] | null;
+            /** Format: date-time */
+            generatedAt: string;
+        };
+        AuditChainVerification: {
+            valid: boolean;
+            eventsChecked: number;
+            firstBreak: {
+                chainId: string;
+                chainSeq: number;
+                eventId: number;
+                problem: string;
+            } | null;
         };
         RuleConfig: {
             ruleId: string;
@@ -2551,7 +2660,19 @@ export interface operations {
                 status?: components["schemas"]["ExceptionStatus"][];
                 ownerId?: string;
                 unassigned?: boolean;
+                blocking?: boolean;
+                legalEntityId?: string;
                 currency?: components["schemas"]["Currency"];
+                /** @description Absolute value lower bound (decimal string); requires currency */
+                valueMin?: components["schemas"]["DecimalString"];
+                /** @description Absolute value upper bound (decimal string); requires currency */
+                valueMax?: components["schemas"]["DecimalString"];
+                businessDateFrom?: string;
+                businessDateTo?: string;
+                ageDaysMin?: number;
+                ageDaysMax?: number;
+                dueBefore?: string;
+                /** @description Apply a saved view's filters (explicit params override) */
                 savedViewId?: string;
                 search?: components["parameters"]["Search"];
             };
@@ -2576,6 +2697,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            422: components["responses"]["Unprocessable"];
         };
     };
     bulkAssignExceptions: {
@@ -2718,6 +2840,31 @@ export interface operations {
             404: components["responses"]["NotFound"];
             412: components["responses"]["PreconditionFailed"];
             428: components["responses"]["PreconditionRequired"];
+        };
+    };
+    listAssignableUsers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                legalEntityId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssignableUser"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     getException: {
@@ -3091,6 +3238,8 @@ export interface operations {
                 /** @description Transaction id (TRF-/DD-/CRD-/BNK-/LED- + n) */
                 transactionId?: string;
                 exceptionId?: string;
+                /** @description Maximum number of entries in `unmatched` (default 50, max 200). The true population is `stats.unmatchedCount`; page the rest with `listUnmatchedRecords`. */
+                unmatchedLimit?: number;
             };
             header?: never;
             path: {
@@ -3108,6 +3257,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MatchingWorkbench"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Unprocessable"];
+        };
+    };
+    listUnmatchedRecords: {
+        parameters: {
+            query?: {
+                /** @description Candidate kind (TransactionKind) to keep, e.g. BANK_TRANSFER or BANK_EVIDENCE. */
+                pair?: components["schemas"]["TransactionKind"];
+                currency?: components["schemas"]["Currency"];
+                /** @description Case-insensitive substring of the reference, source row key or source name, or an exact transaction id (e.g. TRF-4). */
+                search?: string;
+                limit?: components["parameters"]["Limit"];
+                /** @description Opaque cursor from `page.nextCursor`. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Include exact `page.total` (may be slower). */
+                includeTotal?: components["parameters"]["IncludeTotal"];
+            };
+            header?: never;
+            path: {
+                /** @description Run version id; a new id is issued per reprocess. */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MatchCandidatePage"];
                 };
             };
             401: components["responses"]["Unauthorized"];

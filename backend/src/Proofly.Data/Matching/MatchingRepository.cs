@@ -18,13 +18,16 @@ public interface IMatchingRepository
     /// (null, transaction-or-null, None); one that does not exist in the run yields NotFound.
     /// </summary>
     Task<(string? GroupId, string? FocusTransactionId, FocusFailure Failure)> ResolveFocusAsync(string runId, string? transactionId, string? exceptionId, CancellationToken ct);
-    Task<IReadOnlyList<MatchCandidateRow>> ListUnmatchedAsync(string runId, int limit, CancellationToken ct);
+    /// <summary>Unmatched candidates ordered by (group id, candidate id), after the keyset position; fetches exactly <paramref name="limit"/> rows (callers ask for one extra to detect a next page).</summary>
+    Task<IReadOnlyList<MatchCandidateRow>> ListUnmatchedAsync(string runId, int limit, CancellationToken ct, UnmatchedFilter? filter = null, UnmatchedCursorState? after = null);
+    Task<long> CountUnmatchedAsync(string runId, UnmatchedFilter? filter, CancellationToken ct);
     Task<MatchingStats> GetStatsAsync(string runId, CancellationToken ct);
 }
 
 public sealed class MatchingRepository(NpgsqlDataSource db) : IMatchingRepository
 {
     public const int UnmatchedLimit = 200;
+    public const int DefaultInlineUnmatched = 50;
 
     /// <summary>Public transaction id of a canonical record (see <see cref="TransactionIds"/>).</summary>
     public static string TransactionId(string table, long id) => TransactionIds.Format(table, id);
@@ -184,7 +187,7 @@ public sealed class MatchingRepository(NpgsqlDataSource db) : IMatchingRepositor
         var side = rd.IsDBNull(9) ? (kind is "BANK_EVIDENCE" or "LEDGER_ENTRY" ? "RIGHT" : "LEFT") : rd.GetString(9);
         var row = new MatchCandidateRow(TransactionId(table, recId), side, kind, $"{rd.GetString(14)} {rowKey}",
             new MatchMoney(rd.GetDecimal(5), rd.GetString(6).Trim()), rd.IsDBNull(12) ? null : rd.GetFieldValue<DateTimeOffset>(12),
-            rd.IsDBNull(13) ? null : rd.GetString(13), rd.GetBoolean(8), rd.IsDBNull(7) ? null : rd.GetDecimal(7));
+            rd.IsDBNull(13) ? null : rd.GetString(13), rd.GetBoolean(8), rd.IsDBNull(7) ? null : rd.GetDecimal(7), rd.GetString(1), rd.GetInt64(0));
         return (rd.GetString(1), row, rd.GetFieldValue<string[]>(15));
     }
 
@@ -261,15 +264,53 @@ public sealed class MatchingRepository(NpgsqlDataSource db) : IMatchingRepositor
         }
     }
 
-    public async Task<IReadOnlyList<MatchCandidateRow>> ListUnmatchedAsync(string runId, int limit, CancellationToken ct)
+    private static void UnmatchedWhere(NpgsqlCommand cmd, System.Text.StringBuilder w, string runId, UnmatchedFilter? f)
     {
-        await using var cmd = db.CreateCommand(CandidateSelect + " WHERE g.run_id = @r AND g.status = 'UNMATCHED' ORDER BY c.match_group_id, c.id LIMIT @lim");
+        w.Append("g.run_id = @r AND g.status = 'UNMATCHED'");
         cmd.Parameters.AddWithValue("r", runId);
+        if (f?.Pair is { Length: > 0 } pair) { w.Append(" AND c.kind = @pair"); cmd.Parameters.AddWithValue("pair", pair); }
+        if (f?.Currency is { Length: > 0 } cur) { w.Append(" AND c.currency = @cur"); cmd.Parameters.AddWithValue("cur", cur); }
+        if (f?.Search is { } s && !string.IsNullOrWhiteSpace(s))
+        {
+            w.Append(" AND (r.ref ILIKE @q OR r.row_key ILIKE @q OR COALESCE(sd.source_name, c.record_table) ILIKE @q");
+            cmd.Parameters.AddWithValue("q", "%" + s.Trim().Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%");
+            if (TransactionIds.TryParse(s.Trim(), out var table, out var id))
+            {
+                w.Append(" OR (c.record_table = @st AND c.record_id = @sid)");
+                cmd.Parameters.AddWithValue("st", table);
+                cmd.Parameters.AddWithValue("sid", id);
+            }
+            w.Append(')');
+        }
+    }
+
+    public async Task<IReadOnlyList<MatchCandidateRow>> ListUnmatchedAsync(string runId, int limit, CancellationToken ct, UnmatchedFilter? filter = null, UnmatchedCursorState? after = null)
+    {
+        await using var cmd = db.CreateCommand();
+        var w = new System.Text.StringBuilder();
+        UnmatchedWhere(cmd, w, runId, filter);
+        if (after is not null)
+        {
+            w.Append(" AND (c.match_group_id > @ag OR (c.match_group_id = @ag AND c.id > @ac))");
+            cmd.Parameters.AddWithValue("ag", after.GroupId);
+            cmd.Parameters.AddWithValue("ac", after.CandidateId);
+        }
+        cmd.CommandText = $"{CandidateSelect} WHERE {w} ORDER BY c.match_group_id, c.id LIMIT @lim";
         cmd.Parameters.AddWithValue("lim", limit);
         var list = new List<MatchCandidateRow>();
         await using var rd = await cmd.ExecuteReaderAsync(ct);
         while (await rd.ReadAsync(ct)) { list.Add(ReadCandidate(rd).Row); }
         return list;
+    }
+
+    public async Task<long> CountUnmatchedAsync(string runId, UnmatchedFilter? filter, CancellationToken ct)
+    {
+        await using var cmd = db.CreateCommand();
+        var w = new System.Text.StringBuilder();
+        UnmatchedWhere(cmd, w, runId, filter);
+        // Same joins as the list so the filter and the total cannot diverge.
+        cmd.CommandText = $"SELECT count(*) FROM ({CandidateSelect} WHERE {w}) x";
+        return (long)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
     public async Task<MatchingStats> GetStatsAsync(string runId, CancellationToken ct)

@@ -51,6 +51,7 @@ public class SeededDb : SecDb
         return new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["runId"] = $"RUN-SEC{x}",
+            ["legalEntityId"] = $"LE-SEC{x}",
             ["deliveryId"] = $"DEL-SEC{x}",
             ["recordId"] = $"transfer_instructions:{trf}",
             ["exceptionId"] = $"EX-SEC{x}",

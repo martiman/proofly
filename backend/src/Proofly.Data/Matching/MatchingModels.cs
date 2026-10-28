@@ -7,7 +7,7 @@ public sealed record MatchMoney(decimal Amount, string Currency);
 /// <summary>One record on a match group. Side is LEFT (operational: transfer, direct debit, card) or RIGHT (evidence: bank, ledger).</summary>
 public sealed record MatchCandidateRow(
     string TransactionId, string Side, string Kind, string Label, MatchMoney Amount, DateTimeOffset? Timestamp,
-    string? Reference, bool Selected, decimal? Score);
+    string? Reference, bool Selected, decimal? Score, string GroupId = "", long CandidateId = 0);
 
 public sealed record MatchApprovalRow(
     string Id, string ObjectType, string ObjectId, string? RunId, int ProposalVersion,
@@ -19,6 +19,12 @@ public sealed record MatchGroupRow(
     string Id, string Status, bool Manual, MatchMoney? Difference, string? RuleVersion, string? Tolerance, string? Rationale, string Cardinality,
     IReadOnlyList<MatchCandidateRow> Left, IReadOnlyList<MatchCandidateRow> Right,
     IReadOnlyList<string> ExceptionIds, MatchApprovalRow? Approval, int Version = 0);
+
+/// <summary>Filter of the unmatched population. Pair = candidate kind (TransactionKind); Search = reference, row key, source name or an exact transaction id.</summary>
+public sealed record UnmatchedFilter(string? Pair = null, string? Currency = null, string? Search = null);
+
+/// <summary>Keyset position of the unmatched list (order: match group id, candidate id).</summary>
+public sealed record UnmatchedCursorState(string GroupId, long CandidateId);
 
 public sealed record CurrencyUnmatched(string Currency, long Count, decimal Value);
 

@@ -67,3 +67,10 @@ Decision: small in-house outbox on PostgreSQL (`jobs` table, migration `0017_job
 - A first-attempt `run.process` failure leaves a FAILED run marker (`RunProcessor.MarkFailedAsync`, own transaction).
 - Binary responses (evidence-pack zip) bypass response buffering in `ResponseValidationMiddleware` and stream from the evidence store.
 - `GET /lineage/{subjectKind}/{subjectId}` (`Proofly.Data/Transactions/LineageRepository`): TRANSACTION (`TRF-4`), RECORD (`transfer_instructions:4`), EXCEPTION and CONTROL_RESULT (exception id or `EXC-<id>`); `runId` optional narrows the subject; entity scope and `evidence.view` of the subject's legal entity.
+
+## Contract batch 3 (web screen migrations)
+
+- Contract: see "Changelog (contract batch 3)" (K1-K10) in `docs/integrations/api/README.md`; migration `0051` (`evidence_packs.manifest`, `audit_chain`).
+- Summary and list share `ExceptionQueryParser` and `ExceptionReadRepository.BuildWhere`; a test checks `summary.total == list total` for random filter combinations. Never add a filter to one without the other.
+- `Environment:Name` / `Environment:Kind` (`DEV|TEST|PILOT|PRODUCTION`) are required in Production (`StartupSelfCheck`) and surface in `getMe` as `environment`.
+- Permissions: `listAssignableUsers` needs `exception.assign` (checked per legal entity), not `settings.view`. **`audit.view` is intentionally not part of the ANALYST bundle** (ADR 0005 separation: the analyst who prepares and resolves exceptions does not review the audit trail; VIEWER, APPROVER and SECURITY_ADMIN do). The web Evidence & Audit screen must hide the audit panel for analysts instead of requesting it.

@@ -30,4 +30,4 @@ public sealed record SafeguardingCurrencyPositionDto(
 public sealed record ControlRoomDto(
     RunDto Run, IReadOnlyList<DailySummaryItemDto> Summary, IReadOnlyList<ControlRoomDeliveryDto> EvidenceReadiness,
     IReadOnlyList<ControlAreaSummaryDto> ControlAreas, IReadOnlyList<ControlRoomExceptionDto> AttentionQueue,
-    IReadOnlyList<SafeguardingCurrencyPositionDto> Safeguarding);
+    IReadOnlyList<SafeguardingCurrencyPositionDto> Safeguarding, int BlockingCount, int OpenExceptionsTotal);

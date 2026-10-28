@@ -20,4 +20,7 @@ public sealed record RunSignOffDto(
     RunDto Run, IReadOnlyList<ChecklistItemDto> Checklist, IReadOnlyList<ExceptionSummaryDto> OpenMatters, int OpenMattersTotal,
     IReadOnlyList<OpenMatterCategoryDto> OpenMattersByCategory, IReadOnlyList<string> Qualifications,
     IReadOnlyList<string> ChangesSincePreparation, string AttestationText, string AttestationTextHash, bool CanSignOff, IReadOnlyList<string> Blockers,
-    string? EvidencePackId, ApprovalDto? Approval, IReadOnlyList<TimelineEventDto> History, IReadOnlyList<string> AllowedActions);
+    string? EvidencePackId, ApprovalDto? Approval, IReadOnlyList<TimelineEventDto> History, IReadOnlyList<string> AllowedActions,
+    IReadOnlyList<SignOffBlockerDto> BlockerDetails);
+
+public sealed record SignOffBlockerDto(string Code, string Message, string? ExceptionId, string? Control);

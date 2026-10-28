@@ -29,6 +29,7 @@ internal sealed class ExceptionsEndpoints : IEndpointModule
         app.MapGet("/api/v1/runs/{runId}/exceptions", ListAsync);
         app.MapGet("/api/v1/runs/{runId}/exceptions/summary", SummaryAsync);
         app.MapGet("/api/v1/exceptions/{exceptionId}", DetailAsync);
+        app.MapGet("/api/v1/legal-entities/{legalEntityId}/assignable-users", AssignableUsersAsync);
     }
 
     /// <summary>Legal entities in which the caller holds exception.view; null = all entities.</summary>
@@ -86,6 +87,17 @@ internal sealed class ExceptionsEndpoints : IEndpointModule
         var (filter, _, scope) = await PrepareAsync(runId, ctx, repo, ct);
         var data = await repo.SummaryAsync(runId, scope, filter, clock.GetUtcNow(), ct);
         return Results.Ok(ExceptionMapping.ToDto(data));
+    }
+
+    /// <summary>x-required-permission: exception.assign. Users who hold exception.investigate in the entity, i.e. who can work an assigned exception.</summary>
+    private static async Task<IResult> AssignableUsersAsync(string legalEntityId, HttpContext ctx, IExceptionReadRepository repo, CancellationToken ct)
+    {
+        ctx.GetCaller().Require(Permission.ExceptionAssign, legalEntityId);
+        var roles = Proofly.Domain.Auth.RolePermissions.Roles
+            .Where(r => Proofly.Domain.Auth.RolePermissions.For(r).Contains(Permission.ExceptionInvestigate))
+            .Select(r => WireNames.ToUpperSnake(r)).ToArray();
+        var rows = await repo.ListAssignableUsersAsync(legalEntityId, roles, ct) ?? throw new ProblemException(ProblemTypes.NotFound);
+        return Results.Ok(rows.Select(r => new AssignableUserDto(r.Id, r.Name, r.Roles)).ToList());
     }
 
     private static async Task<IResult> DetailAsync(string exceptionId, HttpContext ctx, IExceptionReadRepository repo, TimeProvider clock, CancellationToken ct)

@@ -135,6 +135,9 @@ public class AuthTests(AuthFixture f) : IClassFixture<AuthFixture>
         Assert.Equal(RolePermissions.For(role).Select(WireNames.ToPermission).Order().ToArray(),
             me.GetProperty("permissions").EnumerateArray().Select(e => e.GetString()!).Order().ToArray());
         Assert.Equal(LocalUsers.For(role).Email, me.GetProperty("email").GetString());
+        // No Environment:* configuration in Development: the host environment name and kind DEV.
+        Assert.Equal("Development", me.GetProperty("environment").GetProperty("name").GetString());
+        Assert.Equal("DEV", me.GetProperty("environment").GetProperty("kind").GetString());
         Assert.Equal(me.GetProperty("permissions").GetArrayLength(), me.GetProperty("permissionsByLegalEntity").GetProperty("*").GetArrayLength());
     }
 

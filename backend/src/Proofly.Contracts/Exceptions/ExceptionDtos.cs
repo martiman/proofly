@@ -28,7 +28,7 @@ public sealed record TimelineEventDto(string Id, DateTimeOffset At, ActorDto Act
 public sealed record ApprovalDto(
     string Id, string ObjectType, string ObjectId, string? RunId, int ProposalVersion, UserRefDto Proposer, UserRefDto? Approver,
     string RequiredRole, string Status, string? Decision, string? Rationale, IReadOnlyList<string> EvidenceRefs,
-    string PolicyVersion, DateTimeOffset ProposedAt, DateTimeOffset? DecidedAt, bool CanDecide);
+    string PolicyVersion, DateTimeOffset ProposedAt, DateTimeOffset? DecidedAt, bool CanDecide, string? Kind = null);
 
 /// <summary>ExceptionDetail = ExceptionSummary + detail members (flattened allOf).</summary>
 public sealed record ExceptionDetailDto(
@@ -40,3 +40,5 @@ public sealed record ExceptionDetailDto(
     IReadOnlyList<TimelineEventDto> Timeline, IReadOnlyList<string> States,
     IReadOnlyList<string> RelatedTransactionIds, IReadOnlyList<string> RelatedAccountIds, string ApprovalPolicy,
     ApprovalDto? PendingApproval, IReadOnlyList<ApprovalDto> Approvals, IReadOnlyList<string> AllowedActions);
+
+public sealed record AssignableUserDto(string Id, string Name, IReadOnlyList<string> Roles);

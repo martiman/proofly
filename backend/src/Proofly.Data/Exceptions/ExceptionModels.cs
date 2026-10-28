@@ -61,7 +61,7 @@ public sealed record ApprovalRow(
     string Id, string ObjectType, string ObjectId, string? RunId, int ProposalVersion,
     string ProposerId, string ProposerName, string? ApproverId, string? ApproverName,
     string RequiredRole, string Status, string? Decision, string? Rationale, IReadOnlyList<string> EvidenceRefs,
-    string PolicyVersion, DateTimeOffset ProposedAt, DateTimeOffset? DecidedAt);
+    string PolicyVersion, DateTimeOffset ProposedAt, DateTimeOffset? DecidedAt, string? Kind = null);
 
 public sealed record ExceptionDetailData(
     ExceptionRow Row, string RunState, string RulesetVersion, string? DeliverySource,

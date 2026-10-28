@@ -173,6 +173,12 @@ public sealed class SignOffApiTests(AuthFixture f) : IClassFixture<AuthFixture>,
         Assert.Equal(0, await Audits("SIGN_OFF_SUBMITTED", run));
         var pack = await Json(await Analyst.GetAsync($"/api/v1/runs/{run}/sign-off"));
         Assert.Single(pack.GetProperty("blockers").EnumerateArray());
+        var details = pack.GetProperty("blockerDetails").EnumerateArray().ToList();
+        Assert.Single(details);
+        Assert.Equal("BLOCKING_EXCEPTION", details[0].GetProperty("code").GetString());
+        Assert.Equal($"B-{run}", details[0].GetProperty("exceptionId").GetString());
+        Assert.Equal("matching", details[0].GetProperty("control").GetString());
+        Assert.Equal(pack.GetProperty("blockers")[0].GetString(), details[0].GetProperty("message").GetString());
         Assert.Empty(pack.GetProperty("allowedActions").EnumerateArray());
 
         var noCompleteness = await Ready(completeness: false);

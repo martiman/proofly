@@ -71,6 +71,8 @@ export function useRunContext() {
   const legalEntityId = computed(() => run.value?.legalEntityId ?? entityId.value ?? entities.value[0]?.id ?? null)
   const businessDate = computed(() => run.value?.businessDate ?? null)
   const entity = computed(() => entities.value.find((x) => x.id === legalEntityId.value) ?? null)
+  /** Currencies the selected legal entity holds client funds in (LegalEntity.currencies). */
+  const currencies = computed<string[]>(() => entity.value?.currencies ?? [])
   const businessDates = computed(() => [...new Set(runs.value.map((r) => r.businessDate))].sort().reverse())
   const runsOfDate = computed(() => runs.value.filter((r) => r.businessDate === businessDate.value).sort(byNewest))
   /** No run exists for the selected entity (distinct from an error). */
@@ -113,6 +115,6 @@ export function useRunContext() {
 
   return {
     me, entities, runs, runId, run, legalEntityId, businessDate, loading, error, selectRun, reload,
-    entity, businessDates, runsOfDate, noRun, runsError, can, selectBusinessDate, selectEntity,
+    entity, currencies, businessDates, runsOfDate, noRun, runsError, can, selectBusinessDate, selectEntity,
   }
 }

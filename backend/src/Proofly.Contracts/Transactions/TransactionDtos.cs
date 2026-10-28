@@ -39,4 +39,5 @@ public sealed record AccountExceptionSummaryDto(
 
 public sealed record AccountLedgerViewDto(
     AccountDto Account, IReadOnlyList<LedgerEntryDto> Entries, PageInfoDto EntriesPage, IReadOnlyList<RollForwardLineDto> RollForward,
-    IReadOnlyList<TransactionDto> RelatedTransactions, IReadOnlyList<AccountExceptionSummaryDto> Exceptions);
+    IReadOnlyList<TransactionDto> RelatedTransactions, IReadOnlyList<AccountExceptionSummaryDto> Exceptions,
+    IReadOnlyList<string> AvailableCurrencies);

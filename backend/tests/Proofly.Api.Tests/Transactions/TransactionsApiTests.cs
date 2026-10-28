@@ -187,9 +187,13 @@ public class TransactionsApiTests(AuthFixture f) : IClassFixture<AuthFixture>, I
         Assert.Contains("currency", await ambiguous.Content.ReadAsStringAsync());
         var jpy = await Ok("/api/v1/runs/R1/accounts/ACC-MULTI/ledger?currency=JPY");
         Assert.Equal("JPY", jpy.GetProperty("account").GetProperty("currency").GetString());
+        // the other currencies of the account are listed, the shown one included, whichever one was requested
+        Assert.Equal(["GBP", "JPY"], jpy.GetProperty("availableCurrencies").EnumerateArray().Select(x => x.GetString()!).ToArray());
         Assert.Equal(HttpStatusCode.NotFound, (await Viewer.GetAsync("/api/v1/runs/R1/accounts/ACC-MULTI/ledger?currency=EUR")).StatusCode);
         // a single-currency account needs no currency
-        Assert.Equal("GBP", (await Ok("/api/v1/runs/R1/accounts/ACC-1/ledger")).GetProperty("account").GetProperty("currency").GetString());
+        var single = await Ok("/api/v1/runs/R1/accounts/ACC-1/ledger");
+        Assert.Equal("GBP", single.GetProperty("account").GetProperty("currency").GetString());
+        Assert.Equal(["GBP"], single.GetProperty("availableCurrencies").EnumerateArray().Select(x => x.GetString()!).ToArray());
     }
 
     [Fact]

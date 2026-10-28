@@ -14,7 +14,8 @@ foreach ($s in $services) {
   sc.exe failure $s.Name reset= 86400 actions= restart/5000/restart/5000/restart/30000 | Out-Null
   # Machine-level environment for the service only (REG_MULTI_SZ). Edit values before running; do not commit them.
   $env = @('DOTNET_ENVIRONMENT=Production', 'ASPNETCORE_ENVIRONMENT=Production',
-           "Evidence__Directory=$Root\evidence", 'Auth__Mode=Oidc')
+           "Evidence__Directory=$Root\evidence", 'Auth__Mode=Oidc',
+           'Environment__Name=CHANGE_ME customer production', 'Environment__Kind=PRODUCTION')  # Kind: DEV, TEST, PILOT or PRODUCTION
   # ConnectionStrings__Proofly (contains the password) must be added the same way, or use a secured appsettings.Production.json next to the exe.
   Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\$($s.Name)" -Name Environment -Type MultiString -Value $env
 }

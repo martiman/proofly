@@ -21,7 +21,7 @@ public sealed record TimelineEventDto(string Id, DateTimeOffset At, ActorDto Act
 public sealed record ApprovalDto(
     string Id, string ObjectType, string ObjectId, string? RunId, int ProposalVersion, UserRefDto Proposer, UserRefDto? Approver,
     string RequiredRole, string Status, string? Decision, string? Rationale, IReadOnlyList<string> EvidenceRefs,
-    string PolicyVersion, DateTimeOffset ProposedAt, DateTimeOffset? DecidedAt, bool CanDecide);
+    string PolicyVersion, DateTimeOffset ProposedAt, DateTimeOffset? DecidedAt, bool CanDecide, string? Kind = null);
 
 public sealed record SafeguardingAdjustmentDto(
     string Id, string RunId, string Currency, MoneyDto Amount, string Status, UserRefDto Owner, string Reason,

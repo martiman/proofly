@@ -52,7 +52,8 @@ internal static class RunsMapping
             e.Value is null ? null : Money(e.Value), e.LegalEntityId, e.BusinessDate, User(e.Owner), e.CreatedAt, e.AgeDays, e.DueAt, e.Blocking,
             e.SourceFile, e.SourceRowId, ETags.ForVersion(e.RowVersion))).ToList(),
         c.Safeguarding.Select(s => new SafeguardingCurrencyPositionDto(s.Currency, Money(s.Obligation), Money(s.EligibleBalance), Money(s.ApprovedAdjustments),
-            s.Result is null ? null : Money(s.Result), s.State, s.Qualifications, s.PreviousResult is null ? null : Money(s.PreviousResult), s.ExceptionIds, s.Stale, s.ExceptionCount)).ToList());
+            s.Result is null ? null : Money(s.Result), s.State, s.Qualifications, s.PreviousResult is null ? null : Money(s.PreviousResult), s.ExceptionIds, s.Stale, s.ExceptionCount)).ToList(),
+        c.BlockingCount, c.OpenExceptionsTotal);
 }
 
 internal sealed class RunsEndpoints(IRunReadRepository repo) : IEndpointModule

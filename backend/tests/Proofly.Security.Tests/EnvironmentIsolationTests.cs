@@ -17,6 +17,7 @@ public sealed class EnvironmentIsolationTests : IClassFixture<SecDb>
     [
         ("ConnectionStrings:Proofly", "Host=db.internal;Port=5432;Database=proofly;Username=proofly;Password=prod-secret-pw;SSL Mode=Require"),
         ("Auth:Mode", "Oidc"), ("Evidence:Directory", "/var/lib/proofly/evidence"),
+        ("Environment:Name", "Acme production"), ("Environment:Kind", "PRODUCTION"),
     ];
 
     private static IReadOnlyList<string> Prod(params (string, string?)[] overrides)

@@ -111,5 +111,5 @@ public static class ExceptionMapping
     private static ApprovalDto ToApproval(ApprovalRow a, bool canDecide) => new(
         a.Id, a.ObjectType, a.ObjectId, a.RunId, a.ProposalVersion, new UserRefDto(a.ProposerId, a.ProposerName),
         a.ApproverId is null ? null : new UserRefDto(a.ApproverId, a.ApproverName ?? a.ApproverId),
-        a.RequiredRole, a.Status, a.Decision, a.Rationale, a.EvidenceRefs, a.PolicyVersion, a.ProposedAt, a.DecidedAt, canDecide);
+        a.RequiredRole, a.Status, a.Decision, a.Rationale, a.EvidenceRefs, a.PolicyVersion, a.ProposedAt, a.DecidedAt, canDecide, a.Kind);
 }

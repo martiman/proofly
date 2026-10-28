@@ -31,6 +31,7 @@ internal sealed class MatchingEndpoints(IMatchingRepository repo) : IEndpointMod
     {
         app.MapGet("/api/v1/runs/{runId}/matching/workbench", GetWorkbench);
         app.MapGet("/api/v1/runs/{runId}/match-groups", ListGroups);
+        app.MapGet("/api/v1/runs/{runId}/matching/unmatched", ListUnmatched);
     }
 
     internal static MatchGroupDto Map(MatchGroupRow g, HttpContext ctx, RunScope scope)
@@ -68,6 +69,26 @@ internal sealed class MatchingEndpoints(IMatchingRepository repo) : IEndpointMod
         return Results.Ok(new PageDto<MatchGroupDto>(result.Items.Select(g => Map(g, ctx, scope)).ToList(), result.Page));
     }
 
+    private static readonly HashSet<string> Pairs = ["BANK_TRANSFER", "DIRECT_DEBIT", "CARD", "BANK_EVIDENCE", "LEDGER_ENTRY"];
+
+    private async Task<IResult> ListUnmatched(string runId, HttpContext ctx, CancellationToken ct)
+    {
+        await Authorize(runId, ctx, ct);
+        var q = ctx.Request.Query;
+        string? One(string k) => q.TryGetValue(k, out var v) && v.Count > 0 && v[0] is { Length: > 0 } s ? s : null;
+        var pair = One("pair");
+        if (pair is not null && !Pairs.Contains(pair)) { throw ProblemException.Validation("pair", "pair must be a transaction kind (BANK_TRANSFER, DIRECT_DEBIT, CARD, BANK_EVIDENCE, LEDGER_ENTRY)."); }
+        var currency = One("currency");
+        if (currency is not null && (currency.Length != 3 || !currency.All(c => c is >= 'A' and <= 'Z'))) { throw ProblemException.Validation("currency", "currency must be an ISO 4217 code."); }
+        var filter = new UnmatchedFilter(pair, currency, One("search"));
+        var page = PageRequest.From(ctx);
+        var cur = page.Decode<UnmatchedCursorState>();
+        var fetched = await repo.ListUnmatchedAsync(runId, page.Limit + 1, ct, filter, cur);
+        var total = page.IncludeTotal ? (int)await repo.CountUnmatchedAsync(runId, filter, ct) : (int?)null;
+        var result = Paging.Create(fetched, page, c => new UnmatchedCursorState(c.GroupId, c.CandidateId), total);
+        return Results.Ok(new PageDto<MatchCandidateDto>(result.Items.Select(Map).ToList(), result.Page));
+    }
+
     private async Task<IResult> GetWorkbench(string runId, HttpContext ctx, CancellationToken ct)
     {
         var scope = await Authorize(runId, ctx, ct);
@@ -84,7 +105,12 @@ internal sealed class MatchingEndpoints(IMatchingRepository repo) : IEndpointMod
         {
             groups.Add(Map(await repo.GetGroupAsync(runId, groupId, ct) ?? throw new ProblemException(ProblemTypes.NotFound), ctx, scope));
         }
-        var unmatched = await repo.ListUnmatchedAsync(runId, MatchingRepository.UnmatchedLimit, ct);
+        var limit = MatchingRepository.DefaultInlineUnmatched;
+        if (q.TryGetValue("unmatchedLimit", out var ul) && ul.Count > 0 && (!int.TryParse(ul[0], out limit) || limit is < 1 or > MatchingRepository.UnmatchedLimit))
+        {
+            throw ProblemException.Validation("unmatchedLimit", $"unmatchedLimit must be an integer from 1 to {MatchingRepository.UnmatchedLimit}.");
+        }
+        var unmatched = await repo.ListUnmatchedAsync(runId, limit, ct);
         var stats = await repo.GetStatsAsync(runId, ct);
         return Results.Ok(new MatchingWorkbenchDto(focus, groups, unmatched.Select(Map).ToList(), Map(stats)));
     }

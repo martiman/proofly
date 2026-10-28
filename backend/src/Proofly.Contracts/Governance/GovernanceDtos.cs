@@ -18,6 +18,12 @@ public sealed record SettingsDto(LegalEntityDto LegalEntity, IReadOnlyList<RuleC
 
 public sealed record ApprovalDto(string Id, string ObjectType, string ObjectId, string? RunId, int ProposalVersion, UserRefDto Proposer, UserRefDto? Approver,
     string RequiredRole, string Status, string? Decision, string? Rationale, IReadOnlyList<string> EvidenceRefs, string PolicyVersion,
-    DateTimeOffset ProposedAt, DateTimeOffset? DecidedAt, bool CanDecide);
+    DateTimeOffset ProposedAt, DateTimeOffset? DecidedAt, bool CanDecide, string? Kind = null);
 
-public sealed record EvidencePackDto(string? Id, string RunId, DateTimeOffset? GeneratedAt, string Status, IReadOnlyList<string> Contents, string? Sha256, long? SizeBytes, string? FailureReason);
+public sealed record EvidencePackDto(string? Id, string RunId, DateTimeOffset? GeneratedAt, string Status, IReadOnlyList<string> Contents, string? Sha256, long? SizeBytes, string? FailureReason,
+    EvidenceManifestDto? Manifest = null, AuditChainDto? AuditChain = null);
+
+public sealed record EvidenceManifestFileDto(string Path, string Sha256, long SizeBytes);
+public sealed record EvidenceManifestDto(string SchemaVersion, string ResultHash, IReadOnlyList<EvidenceManifestFileDto> Files, UserRefDto? GeneratedBy, DateTimeOffset GeneratedAt);
+public sealed record AuditChainBreakDto(string ChainId, long ChainSeq, long EventId, string Problem);
+public sealed record AuditChainDto(bool Valid, long EventsChecked, AuditChainBreakDto? FirstBreak);

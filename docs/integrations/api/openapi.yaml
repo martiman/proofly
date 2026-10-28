@@ -286,7 +286,7 @@ paths:
       tags: [Exceptions]
       operationId: getExceptionsSummary
       summary: Server-side totals and per-currency aggregates for the queue
-      description: Accepts the same filters as `listExceptions` (omitted here for brevity in the schema; see that operation) and aggregates over the full filtered set, not the current page.
+      description: Accepts exactly the filters of `listExceptions` (all of them except sort and paging) and is built from the same parser and SQL predicate, so `total` always equals the `listExceptions` total for the same query. Aggregates cover the full filtered set, not a page. Invalid filters are rejected with 422.
       x-required-permission: exception.view
       parameters:
         - {name: severity, in: query, style: form, explode: false, schema: {type: array, items: {$ref: '#/components/schemas/Severity'}}}
@@ -294,14 +294,24 @@ paths:
         - {name: status, in: query, style: form, explode: false, schema: {type: array, items: {$ref: '#/components/schemas/ExceptionStatus'}}}
         - {name: ownerId, in: query, schema: {type: string}}
         - {name: unassigned, in: query, schema: {type: boolean}}
+        - {name: blocking, in: query, schema: {type: boolean}}
+        - {name: legalEntityId, in: query, schema: {type: string}}
         - {name: currency, in: query, schema: {$ref: '#/components/schemas/Currency'}}
-        - {name: savedViewId, in: query, schema: {type: string}}
+        - {name: valueMin, in: query, description: "Absolute value lower bound (decimal string); requires currency", schema: {$ref: '#/components/schemas/DecimalString'}}
+        - {name: valueMax, in: query, description: "Absolute value upper bound (decimal string); requires currency", schema: {$ref: '#/components/schemas/DecimalString'}}
+        - {name: businessDateFrom, in: query, schema: {type: string, format: date}}
+        - {name: businessDateTo, in: query, schema: {type: string, format: date}}
+        - {name: ageDaysMin, in: query, schema: {type: integer, minimum: 0}}
+        - {name: ageDaysMax, in: query, schema: {type: integer, minimum: 0}}
+        - {name: dueBefore, in: query, schema: {type: string, format: date-time}}
+        - {name: savedViewId, in: query, description: "Apply a saved view's filters (explicit params override)", schema: {type: string}}
         - {$ref: '#/components/parameters/Search'}
       responses:
         '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/ExceptionsSummary'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
   /runs/{runId}/exceptions/bulk-assign:
     parameters: [{$ref: '#/components/parameters/RunId'}]
     post:
@@ -379,6 +389,19 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '412': {$ref: '#/components/responses/PreconditionFailed'}
         '428': {$ref: '#/components/responses/PreconditionRequired'}
+  /legal-entities/{legalEntityId}/assignable-users:
+    parameters: [{name: legalEntityId, in: path, required: true, schema: {type: string}}]
+    get:
+      tags: [Exceptions]
+      operationId: listAssignableUsers
+      summary: Users an exception of this legal entity can be assigned to
+      description: Active users who hold `exception.investigate` for the legal entity (directly or through an all-entities role), ordered by name. Requires `exception.assign` for the entity (404 when the entity is outside the caller's scope). Not a settings or user-administration view; it carries only id, name and roles.
+      x-required-permission: exception.assign
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/AssignableUser'}}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
   /exceptions/{exceptionId}:
     parameters: [{$ref: '#/components/parameters/ExceptionId'}]
     get:
@@ -554,8 +577,30 @@ paths:
       parameters:
         - {name: transactionId, in: query, description: "Transaction id (TRF-/DD-/CRD-/BNK-/LED- + n)", schema: {type: string}}
         - {name: exceptionId, in: query, schema: {type: string}}
+        - {name: unmatchedLimit, in: query, description: "Maximum number of entries in `unmatched` (default 50, max 200). The true population is `stats.unmatchedCount`; page the rest with `listUnmatchedRecords`.", schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
       responses:
         '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/MatchingWorkbench'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+  /runs/{runId}/matching/unmatched:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    get:
+      tags: [Matching]
+      operationId: listUnmatchedRecords
+      summary: Unmatched population of the run, paged
+      description: Candidates of UNMATCHED match groups ordered by match group, then candidate. The first `unmatchedLimit` entries are also inlined in the workbench. `page.total` (includeTotal) counts the filtered set; unfiltered it equals `stats.unmatchedCount`.
+      x-required-permission: matching.view
+      parameters:
+        - {name: pair, in: query, description: "Candidate kind (TransactionKind) to keep, e.g. BANK_TRANSFER or BANK_EVIDENCE.", schema: {$ref: '#/components/schemas/TransactionKind'}}
+        - {name: currency, in: query, schema: {$ref: '#/components/schemas/Currency'}}
+        - {name: search, in: query, description: "Case-insensitive substring of the reference, source row key or source name, or an exact transaction id (e.g. TRF-4).", schema: {type: string, maxLength: 200}}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/IncludeTotal'}
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/MatchCandidatePage'}}}}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
@@ -1190,11 +1235,18 @@ components:
         - approval.view
     Me:
       type: object
-      required: [id, name, email, roles, legalEntityIds, permissions]
+      required: [id, name, email, roles, legalEntityIds, permissions, environment]
       properties:
         id: {type: string}
         name: {type: string}
         email: {type: string, format: email}
+        environment:
+          type: object
+          description: "Deployment label from configuration (`Environment:Name`, `Environment:Kind`). Defaults to the host environment name and DEV outside Production; both are required in Production."
+          required: [name, kind]
+          properties:
+            name: {type: string}
+            kind: {type: string, enum: [DEV, TEST, PILOT, PRODUCTION]}
         roles: {type: array, items: {$ref: '#/components/schemas/Role'}}
         legalEntityIds: {type: array, items: {type: string}}
         permissions:
@@ -1268,9 +1320,11 @@ components:
             id: {type: string}
     ControlRoom:
       type: object
-      required: [run, summary, evidenceReadiness, controlAreas, attentionQueue, safeguarding]
+      required: [run, summary, evidenceReadiness, controlAreas, attentionQueue, safeguarding, blockingCount, openExceptionsTotal]
       properties:
         run: {$ref: '#/components/schemas/Run'}
+        blockingCount: {type: integer, description: "Unresolved blocking exceptions of the run (the sign-off gate's definition: blocking and not RESOLVED, ACCEPTED_DIFFERENCE or FALSE_POSITIVE)."}
+        openExceptionsTotal: {type: integer, description: "All unresolved exceptions of the run (blocking or not); `attentionQueue` shows the top 10 of them."}
         summary: {type: array, items: {$ref: '#/components/schemas/DailySummaryItem'}}
         evidenceReadiness: {type: array, items: {$ref: '#/components/schemas/SourceDelivery'}}
         controlAreas: {type: array, items: {$ref: '#/components/schemas/ControlAreaSummary'}}
@@ -1407,6 +1461,13 @@ components:
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/ExceptionSummary'}}
         page: {$ref: '#/components/schemas/PageInfo'}
+    AssignableUser:
+      type: object
+      required: [id, name, roles]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        roles: {type: array, items: {$ref: '#/components/schemas/Role'}, description: "The user's roles that apply to the legal entity (direct or all-entities)."}
     ExceptionsSummary:
       type: object
       required: [total, byCurrency, bySeverity, byStatus]
@@ -1529,12 +1590,13 @@ components:
         text: {type: string}
     Approval:
       type: object
-      required: [id, objectType, objectId, proposalVersion, proposer, status, policyVersion, requiredRole, proposedAt]
+      required: [id, objectType, objectId, kind, proposalVersion, proposer, status, policyVersion, requiredRole, proposedAt]
       properties:
         id: {type: string}
         objectType: {$ref: '#/components/schemas/ApprovalObjectType'}
         objectId: {type: string}
         runId: {type: [string, 'null']}
+        kind: {oneOf: [{$ref: '#/components/schemas/ResolutionKind'}, {type: 'null'}], description: "EXCEPTION_RESOLUTION approvals: the proposed resolution kind (RESOLVED, ACCEPTED_DIFFERENCE, FALSE_POSITIVE). Null for every other object type."}
         proposalVersion: {type: integer}
         proposer: {$ref: '#/components/schemas/UserRef'}
         approver: {oneOf: [{$ref: '#/components/schemas/UserRef'}, {type: 'null'}]}
@@ -1684,13 +1746,19 @@ components:
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/MatchGroup'}}
         page: {$ref: '#/components/schemas/PageInfo'}
+    MatchCandidatePage:
+      type: object
+      required: [items, page]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/MatchCandidate'}}
+        page: {$ref: '#/components/schemas/PageInfo'}
     MatchingWorkbench:
       type: object
       required: [focusTransactionId, groups, unmatched, stats]
       properties:
         focusTransactionId: {type: [string, 'null'], description: "The transaction the workbench is centred on; null when the run has no group to focus. A transaction (or exception) that exists but is in no group yields focus = that transaction (null for an exception without a transaction) and groups = []."}
         groups: {type: array, items: {$ref: '#/components/schemas/MatchGroup'}}
-        unmatched: {type: array, items: {$ref: '#/components/schemas/MatchCandidate'}}
+        unmatched: {type: array, items: {$ref: '#/components/schemas/MatchCandidate'}, description: "At most `unmatchedLimit` (default 50, max 200) unmatched candidates; `stats.unmatchedCount` is the true total and `listUnmatchedRecords` pages the rest."}
         stats:
           type: object
           required: [autoMatchRate, openGroups, unmatchedCount, unmatchedByCurrency]
@@ -1753,9 +1821,10 @@ components:
         exceptionIds: {type: array, items: {type: string}}
     AccountLedgerView:
       type: object
-      required: [account, entries, rollForward, relatedTransactions, exceptions]
+      required: [account, entries, rollForward, relatedTransactions, exceptions, availableCurrencies]
       properties:
         account: {$ref: '#/components/schemas/Account'}
+        availableCurrencies: {type: array, items: {$ref: '#/components/schemas/Currency'}, description: "Every currency this account holds in the run (the shown one included), sorted; pass one as `currency` to switch."}
         entries: {type: array, items: {$ref: '#/components/schemas/LedgerEntry'}}
         entriesPage: {$ref: '#/components/schemas/PageInfo'}
         rollForward: {type: array, items: {type: object, required: [label, amount], properties: {label: {type: string}, amount: {$ref: '#/components/schemas/Money'}}}}
@@ -1882,7 +1951,7 @@ components:
         blocking: {type: integer}
     RunSignOff:
       type: object
-      required: [run, checklist, openMatters, changesSincePreparation, attestationText, canSignOff, blockers, evidencePackId]
+      required: [run, checklist, openMatters, changesSincePreparation, attestationText, canSignOff, blockers, blockerDetails, evidencePackId]
       properties:
         run: {$ref: '#/components/schemas/Run'}
         checklist: {type: array, items: {$ref: '#/components/schemas/ChecklistItem'}}
@@ -1894,7 +1963,18 @@ components:
         attestationText: {type: string}
         attestationTextHash: {type: string}
         canSignOff: {type: boolean, description: "Server-evaluated for the current caller (blockers, scope, separation of duties)"}
-        blockers: {type: array, items: {type: string}}
+        blockers: {type: array, items: {type: string}, description: "Human-readable messages, same order as `blockerDetails`."}
+        blockerDetails:
+          type: array
+          description: Structured form of `blockers` (same length and order).
+          items:
+            type: object
+            required: [code, message, exceptionId, control]
+            properties:
+              code: {type: string, enum: [RUN_STATE, NO_RESULT_HASH, COMPLETENESS_MISSING, COMPLETENESS_NOT_PASSED, BLOCKING_EXCEPTION]}
+              message: {type: string}
+              exceptionId: {type: [string, 'null'], description: "Set for BLOCKING_EXCEPTION."}
+              control: {oneOf: [{$ref: '#/components/schemas/ControlArea'}, {type: 'null'}], description: "Control of the blocking exception, or data_completeness for the completeness codes."}
         evidencePackId: {type: [string, 'null']}
         approval: {oneOf: [{$ref: '#/components/schemas/Approval'}, {type: 'null'}]}
         history: {type: array, items: {$ref: '#/components/schemas/TimelineEvent'}}
@@ -1924,7 +2004,7 @@ components:
         page: {$ref: '#/components/schemas/PageInfo'}
     EvidencePack:
       type: object
-      required: [id, runId, generatedAt, status, contents]
+      required: [id, runId, generatedAt, status, contents, manifest, auditChain]
       properties:
         id: {type: [string, 'null'], description: "Null while NOT_GENERATED (no pack exists yet)."}
         runId: {type: string}
@@ -1934,6 +2014,42 @@ components:
         sha256: {type: [string, 'null']}
         sizeBytes: {type: [integer, 'null']}
         failureReason: {type: [string, 'null'], description: "Why generation failed; present only for FAILED."}
+        manifest: {oneOf: [{$ref: '#/components/schemas/EvidenceManifest'}, {type: 'null'}], description: "Structured form of the pack's manifest.json. Null unless status is GENERATED (and for packs generated before manifests were persisted)."}
+        auditChain: {oneOf: [{$ref: '#/components/schemas/AuditChainVerification'}, {type: 'null'}], description: "Result of the audit hash-chain verification run while the pack was built. Null unless status is GENERATED (and for older packs)."}
+    EvidenceManifest:
+      type: object
+      required: [schemaVersion, resultHash, files, generatedBy, generatedAt]
+      properties:
+        schemaVersion: {type: string}
+        resultHash: {type: string, description: "SHA-256 binding all listed files."}
+        files:
+          type: array
+          description: Every file of the pack except manifest.json itself, sorted by path.
+          items:
+            type: object
+            required: [path, sha256, sizeBytes]
+            properties:
+              path: {type: string}
+              sha256: {type: string}
+              sizeBytes: {type: integer}
+        generatedBy: {oneOf: [{$ref: '#/components/schemas/UserRef'}, {type: 'null'}]}
+        generatedAt: {type: string, format: date-time}
+    AuditChainVerification:
+      type: object
+      required: [valid, eventsChecked, firstBreak]
+      properties:
+        valid: {type: boolean}
+        eventsChecked: {type: integer}
+        firstBreak:
+          oneOf:
+            - type: object
+              required: [chainId, chainSeq, eventId, problem]
+              properties:
+                chainId: {type: string}
+                chainSeq: {type: integer}
+                eventId: {type: integer}
+                problem: {type: string}
+            - type: 'null'
     RuleConfig:
       type: object
       required: [ruleId, control, version, description, tolerance, severity, effectiveFrom]

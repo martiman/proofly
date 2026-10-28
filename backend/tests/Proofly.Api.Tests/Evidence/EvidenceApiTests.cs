@@ -93,7 +93,10 @@ public class EvidenceApiTests(EvFixture f) : IClassFixture<EvFixture>
         Assert.Equal(1, await f.Scalar<long>($"SELECT count(*) FROM audit_events WHERE event_type='EVIDENCE_PACK_GENERATED' AND subject_id='{id}' AND actor_id='local-approver'"));
 
         var get = await As(Role.Viewer).GetAsync("/api/v1/runs/R1/evidence-pack");
-        Assert.Equal("GENERATING", JsonDocument.Parse(await get.Content.ReadAsStringAsync()).RootElement.GetProperty("status").GetString());
+        var generating = JsonDocument.Parse(await get.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("GENERATING", generating.GetProperty("status").GetString());
+        Assert.Equal(JsonValueKind.Null, generating.GetProperty("manifest").ValueKind);
+        Assert.Equal(JsonValueKind.Null, generating.GetProperty("auditChain").ValueKind);
 
         // A second request while generating is a 409; an idempotent replay returns the original response.
         Assert.Equal(HttpStatusCode.Conflict, (await As(Role.Approver).SendAsync(Post("R1"))).StatusCode);
@@ -142,6 +145,25 @@ public class EvidenceApiTests(EvFixture f) : IClassFixture<EvFixture>
         var status = JsonDocument.Parse(await As(Role.Viewer).GetStringAsync("/api/v1/runs/R9/evidence-pack")).RootElement;
         Assert.Equal("GENERATED", status.GetProperty("status").GetString());
         Assert.Equal(bytes.Length, status.GetProperty("sizeBytes").GetInt64());
+        // Structured manifest and audit-chain verification (contract batch 3) equal what is inside the zip.
+        var manifest = status.GetProperty("manifest");
+        Assert.Equal("1", manifest.GetProperty("schemaVersion").GetString());
+        Assert.Equal(64, manifest.GetProperty("resultHash").GetString()!.Length);
+        Assert.Equal("local-approver", manifest.GetProperty("generatedBy").GetProperty("id").GetString());
+        var listed = manifest.GetProperty("files").EnumerateArray().Select(x => x.GetProperty("path").GetString()!).ToArray();
+        Assert.Equal(listed.Order(StringComparer.Ordinal).ToArray(), listed);
+        Assert.Contains("audit/chain_verification.json", listed);
+        using (var zip = new System.IO.Compression.ZipArchive(new MemoryStream(bytes)))
+        {
+            var inZip = JsonDocument.Parse(new StreamReader(zip.GetEntry("manifest.json")!.Open()).ReadToEnd()).RootElement;
+            Assert.Equal(inZip.GetProperty("resultHash").GetString(), manifest.GetProperty("resultHash").GetString());
+            Assert.Equal(inZip.GetProperty("files").GetArrayLength(), listed.Length);
+            Assert.Equal(listed.Length + 1, zip.Entries.Count);
+        }
+        var chain = status.GetProperty("auditChain");
+        Assert.True(chain.GetProperty("valid").GetBoolean());
+        Assert.True(chain.GetProperty("eventsChecked").GetInt64() >= 0);
+        Assert.Equal(JsonValueKind.Null, chain.GetProperty("firstBreak").ValueKind);
         Assert.Equal(1, await f.Scalar<long>($"SELECT count(*) FROM audit_events WHERE event_type='EVIDENCE_PACK_DOWNLOADED' AND subject_id='{id}' AND actor_id='local-viewer' AND request_id='{rid}'"));
 
         await As(Role.Viewer).GetAsync("/api/v1/runs/R9/evidence-pack/download");

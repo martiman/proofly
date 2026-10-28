@@ -150,7 +150,8 @@ public sealed class ApprovalRepository(NpgsqlDataSource ds) : IApprovalRepositor
               FROM visible v
             )
             SELECT x.id, x.object_type, x.object_id, x.run_id, x.proposal_version, x.proposer_user_id, p.name, x.approver_user_id, ap.name,
-                   x.required_role, x.status, x.decision, x.rationale, x.evidence_refs::text, x.policy_version, x.proposed_at, x.decided_at, x.can_decide
+                   x.required_role, x.status, x.decision, x.rationale, x.evidence_refs::text, x.policy_version, x.proposed_at, x.decided_at, x.can_decide,
+                   (SELECT rp.kind FROM resolution_proposals rp WHERE x.object_type = 'EXCEPTION_RESOLUTION' AND rp.id = x.object_id)
             FROM x JOIN users p ON p.id = x.proposer_user_id LEFT JOIN users ap ON ap.id = x.approver_user_id
             WHERE (@type::text IS NULL OR x.object_type = @type)
               AND (NOT @mine OR x.can_decide)
@@ -173,7 +174,8 @@ public sealed class ApprovalRepository(NpgsqlDataSource ds) : IApprovalRepositor
             items.Add(new(r.GetString(0), r.GetString(1), r.GetString(2), r.IsDBNull(3) ? null : r.GetString(3), r.GetInt32(4),
                 new(r.GetString(5), r.GetString(6)), r.IsDBNull(7) ? null : new(r.GetString(7), r.GetString(8)),
                 r.GetString(9), r.GetString(10), r.IsDBNull(11) ? null : r.GetString(11), r.IsDBNull(12) ? null : r.GetString(12), refs,
-                r.GetString(14), r.GetFieldValue<DateTimeOffset>(15), r.IsDBNull(16) ? null : r.GetFieldValue<DateTimeOffset>(16), r.GetBoolean(17)));
+                r.GetString(14), r.GetFieldValue<DateTimeOffset>(15), r.IsDBNull(16) ? null : r.GetFieldValue<DateTimeOffset>(16), r.GetBoolean(17),
+                r.IsDBNull(18) ? null : r.GetString(18)));
         }
         var more = items.Count > q.Limit;
         if (more) { items.RemoveAt(items.Count - 1); }
@@ -197,7 +199,7 @@ public sealed class EvidencePackRepository(NpgsqlDataSource ds) : IEvidencePackR
         }
 
         await using (var cmd = new NpgsqlCommand("""
-            SELECT id, status, sha256, size_bytes, contents::text, failure_reason, created_at
+            SELECT id, status, sha256, size_bytes, contents::text, failure_reason, created_at, manifest::text, audit_chain::text
             FROM evidence_packs WHERE run_id = @r ORDER BY created_at DESC, id DESC LIMIT 1
             """, conn))
         {
@@ -208,7 +210,8 @@ public sealed class EvidencePackRepository(NpgsqlDataSource ds) : IEvidencePackR
                 var status = r.GetString(1) switch { "READY" => "GENERATED", "GENERATING" => "GENERATING", _ => "FAILED" };
                 var contents = JsonSerializer.Deserialize<string[]>(r.GetString(4)) ?? [];
                 return new(r.GetString(0), runId, status == "GENERATED" ? r.GetFieldValue<DateTimeOffset>(6) : null, status,
-                    r.IsDBNull(2) ? null : r.GetString(2).Trim(), r.IsDBNull(3) ? null : r.GetInt64(3), contents, r.IsDBNull(5) ? null : r.GetString(5));
+                    r.IsDBNull(2) ? null : r.GetString(2).Trim(), r.IsDBNull(3) ? null : r.GetInt64(3), contents, r.IsDBNull(5) ? null : r.GetString(5),
+                    status == "GENERATED" && !r.IsDBNull(7) ? r.GetString(7) : null, status == "GENERATED" && !r.IsDBNull(8) ? r.GetString(8) : null);
             }
         }
         // No pack row yet: report the generation job (if one was enqueued) so the client can tell GENERATING / FAILED from NOT_GENERATED.

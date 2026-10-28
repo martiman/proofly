@@ -14,7 +14,8 @@ public sealed record EvidencePackRequest(string RunId, string? GeneratedByUserId
 
 public sealed record EvidencePackFile(string Path, string Sha256, long SizeBytes);
 
-public sealed record EvidencePackBuild(byte[] Bytes, IReadOnlyList<EvidencePackFile> Files, string ResultHash);
+/// <summary><see cref="ManifestJson"/> and <see cref="AuditChainJson"/> are the wire-shaped (camelCase) structures persisted with the pack and returned by getEvidencePack.</summary>
+public sealed record EvidencePackBuild(byte[] Bytes, IReadOnlyList<EvidencePackFile> Files, string ResultHash, string ManifestJson = "null", string AuditChainJson = "null");
 
 /// <summary>Thrown when the run does not exist; the pack cannot be built.</summary>
 public sealed class EvidencePackRunNotFoundException(string runId) : Exception($"Run '{runId}' does not exist.");
@@ -207,7 +208,22 @@ public sealed class EvidencePackBuilder(NpgsqlDataSource dataSource, IAuditVerif
                 await s.WriteAsync(bytes, ct);
             }
         }
-        return new EvidencePackBuild(ms.ToArray(), all, resultHash);
+
+        var manifestJson = JsonSerializer.Serialize(new
+        {
+            schemaVersion = SchemaVersion,
+            resultHash,
+            files = listed.Select(f => new { path = f.Path, sha256 = f.Sha256, sizeBytes = f.SizeBytes }).ToList(),
+            generatedBy = req.GeneratedByUserId is null ? null : new { id = req.GeneratedByUserId, name = generatorName ?? req.GeneratedByUserId },
+            generatedAt = Ts(req.GeneratedAt),
+        });
+        var chainJson = JsonSerializer.Serialize(new
+        {
+            valid = verification.IsValid,
+            eventsChecked = verification.EventsChecked,
+            firstBreak = verification.FirstBreak is { } fb ? new { chainId = fb.ChainId, chainSeq = fb.ChainSeq, eventId = fb.EventId, problem = fb.Problem } : null,
+        });
+        return new EvidencePackBuild(ms.ToArray(), all, resultHash, manifestJson, chainJson);
     }
 
     private static string Sha(byte[] b) => Convert.ToHexString(SHA256.HashData(b)).ToLowerInvariant();

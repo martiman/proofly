@@ -19,7 +19,7 @@ import {
 
 type Item = Schema<'ExceptionSummary'>
 const router = useRouter()
-const { runId, run, me } = useRunContext()
+const { runId, run, me, currencies } = useRunContext()
 
 const f = reactive<QueueFilters>(emptyFilters())
 const activeViewId = ref<string>()
@@ -204,7 +204,7 @@ const tableChange = (_p: unknown, _f: unknown, s: unknown) => onTable(_p, _f, s 
       <a-select v-model:value="f.severity" mode="multiple" allow-clear placeholder="Severity" :options="opts(SEVERITIES)" :max-tag-count="1" class="w140" />
       <a-select v-model:value="f.status" mode="multiple" allow-clear placeholder="Status" :options="opts(STATUSES)" :max-tag-count="1" class="w160" />
       <a-select v-model:value="f.control" mode="multiple" allow-clear placeholder="Control" :options="opts(CONTROLS)" :max-tag-count="1" class="w160" />
-      <a-select v-model:value="f.currency" allow-clear placeholder="Currency" :options="(run ? ['EUR', 'GBP', 'JPY', 'USD'] : []).map((c) => ({ value: c, label: c }))" class="w100" />
+      <a-select v-model:value="f.currency" allow-clear placeholder="Currency" :options="currencies.map((c) => ({ value: c, label: c }))" class="w100" />
       <a-select v-model:value="f.ownerId" allow-clear placeholder="Owner" :options="ownerOptions" :disabled="f.unassigned" class="w150" />
       <a-checkbox v-model:checked="f.unassigned">Unassigned</a-checkbox>
       <a-checkbox v-model:checked="f.blocking">Blocking</a-checkbox>

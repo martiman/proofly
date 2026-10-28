@@ -172,6 +172,8 @@ public class RunsApiTests(RunsFixture f) : IClassFixture<RunsFixture>
         Assert.Equal(["EUR", "GBP"], sg.Select(s => s.GetProperty("currency").GetString()!));
         Assert.Equal("-100.00", sg[1].GetProperty("result").GetProperty("amount").GetString());
         Assert.Equal(["E-1", "E-2"], Ids(room.GetProperty("attentionQueue")));
+        Assert.Equal(2, room.GetProperty("openExceptionsTotal").GetInt32());
+        Assert.True(room.GetProperty("blockingCount").GetInt32() <= room.GetProperty("openExceptionsTotal").GetInt32());
         Assert.Equal("\"v1\"", room.GetProperty("attentionQueue")[0].GetProperty("etag").GetString());
         Assert.Equal(JsonValueKind.Null, room.GetProperty("attentionQueue")[1].GetProperty("value").ValueKind);
         Assert.Contains(room.GetProperty("controlAreas").EnumerateArray(), a => a.GetProperty("area").GetString() == "safeguarding" && a.GetProperty("state").GetString() == "BLOCKED");
@@ -185,6 +187,8 @@ public class RunsApiTests(RunsFixture f) : IClassFixture<RunsFixture>
         {
             Assert.Equal(0, room.GetProperty(p).GetArrayLength());
         }
+        Assert.Equal(0, room.GetProperty("blockingCount").GetInt32());
+        Assert.Equal(0, room.GetProperty("openExceptionsTotal").GetInt32());
     }
 
     [Theory]

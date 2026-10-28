@@ -87,27 +87,27 @@ public sealed class SignOffRepository(NpgsqlDataSource db, IAuditWriter audit) :
     }
 
     /// <summary>Why the run cannot be signed off right now (empty = nothing blocks). Strict = the run must already be READY_FOR_SIGN_OFF.</summary>
-    private static async Task<List<string>> BlockersAsync(NpgsqlConnection c, NpgsqlTransaction? tx, string runId, RunLock run, bool strict, CancellationToken ct)
+    private static async Task<List<SignOffBlocker>> BlockersAsync(NpgsqlConnection c, NpgsqlTransaction? tx, string runId, RunLock run, bool strict, CancellationToken ct)
     {
-        var blockers = new List<string>();
+        var blockers = new List<SignOffBlocker>();
         var stateOk = run.State == "READY_FOR_SIGN_OFF"
             || (!strict && run.State == "REVIEW_REQUIRED" && run.SignOffState is "RETURNED" or "PREPARATION_INCOMPLETE");
-        if (!stateOk) { blockers.Add($"The run is {run.State}; it must be READY_FOR_SIGN_OFF."); }
-        if (run.ResultHash is null) { blockers.Add("The run has no result hash; it has not finished processing."); }
+        if (!stateOk) { blockers.Add(new("RUN_STATE", $"The run is {run.State}; it must be READY_FOR_SIGN_OFF.", null, null)); }
+        if (run.ResultHash is null) { blockers.Add(new("NO_RESULT_HASH", "The run has no result hash; it has not finished processing.", null, null)); }
 
         await using (var cmd = Cmd(c, tx, "SELECT state, blocking_finding_count FROM run_control_results WHERE run_id=@r AND control='data_completeness'", ("r", runId)))
         await using (var r = await cmd.ExecuteReaderAsync(ct))
         {
-            if (!await r.ReadAsync(ct)) { blockers.Add("The data completeness result is missing."); }
+            if (!await r.ReadAsync(ct)) { blockers.Add(new("COMPLETENESS_MISSING", "The data completeness result is missing.", null, "data_completeness")); }
             else
             {
                 var state = r.GetString(0);
                 var blocking = r.GetInt32(1);
-                if (!(state == "PASSED" || (state == "QUALIFIED" && blocking == 0))) { blockers.Add($"Data completeness is {state}; it must be PASSED or QUALIFIED without blocking findings."); }
+                if (!(state == "PASSED" || (state == "QUALIFIED" && blocking == 0))) { blockers.Add(new("COMPLETENESS_NOT_PASSED", $"Data completeness is {state}; it must be PASSED or QUALIFIED without blocking findings.", null, "data_completeness")); }
             }
         }
 
-        foreach (var (id, status) in await UnresolvedBlockingExceptions.ListAsync(c, tx, runId, ct)) { blockers.Add($"Blocking exception {id} is unresolved ({status})."); }
+        foreach (var (id, status, control) in await UnresolvedBlockingExceptions.ListAsync(c, tx, runId, ct)) { blockers.Add(new("BLOCKING_EXCEPTION", $"Blocking exception {id} is unresolved ({status}).", id, control)); }
         return blockers;
     }
 
@@ -251,7 +251,7 @@ public sealed class SignOffRepository(NpgsqlDataSource db, IAuditWriter audit) :
             if (so.SubmittedExceptionStateHash != state2) { changes.Add("An exception changed state since submission."); }
         }
 
-        List<string> blockers = [];
+        List<SignOffBlocker> blockers = [];
         if (so?.State is not ("SIGNED_OFF" or "SUPERSEDED" or "INVALIDATED") && run.State != "SUPERSEDED")
         {
             var lockLike = new RunLock(run.LegalEntityId, run.BusinessDate, run.State, run.SignOffState, 0, resultHash, run.RulesetVersion);
@@ -286,8 +286,8 @@ public sealed class SignOffRepository(NpgsqlDataSource db, IAuditWriter audit) :
             while (await r.ReadAsync(ct)) { history.Add(new SignOffHistoryRow(r.GetInt64(0), r.GetFieldValue<DateTimeOffset>(1), r.GetString(2), N(r, 3), r.GetString(4), r.GetString(5), N(r, 6))); }
         }
 
-        return new SignOffPackRows(run, so, checklist, open, byCategory.Sum(x => x.Total), byCategory, qualifications, changes, blockers, text, textHash,
-            so?.EvidencePackId ?? await LatestEvidencePackAsync(c, null, runId, ct), approval, history, changes.Count > 0);
+        return new SignOffPackRows(run, so, checklist, open, byCategory.Sum(x => x.Total), byCategory, qualifications, changes, blockers.Select(b => b.Message).ToList(), text, textHash,
+            so?.EvidencePackId ?? await LatestEvidencePackAsync(c, null, runId, ct), approval, history, changes.Count > 0, blockers);
     }
 
     /// <summary>Ids of the first open exceptions of one control in open-matter order (a checklist item lists at most <paramref name="limit"/>).</summary>
@@ -317,7 +317,7 @@ public sealed class SignOffRepository(NpgsqlDataSource db, IAuditWriter audit) :
 
     private static SignOffResult VersionMismatch() => new(SignOffStatus.VersionMismatch, "The sign-off changed since it was read; re-read it and retry.");
 
-    private static string Join(IEnumerable<string> blockers) => string.Join(" ", blockers);
+    private static string Join(IEnumerable<SignOffBlocker> blockers) => string.Join(" ", blockers.Select(b => b.Message));
 
     public async Task<SignOffResult> SubmitAsync(string runId, string? requiredApproverId, string? note, SignOffCommandContext ctx, CancellationToken ct = default)
     {

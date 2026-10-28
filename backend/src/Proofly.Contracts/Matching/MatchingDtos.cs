@@ -10,7 +10,7 @@ public sealed record MatchCandidateDto(
 public sealed record MatchApprovalDto(
     string Id, string ObjectType, string ObjectId, string? RunId, int ProposalVersion, UserRefDto Proposer, UserRefDto? Approver,
     string RequiredRole, string Status, string? Decision, string? Rationale, IReadOnlyList<string> EvidenceRefs,
-    string PolicyVersion, DateTimeOffset ProposedAt, DateTimeOffset? DecidedAt, bool CanDecide = false);
+    string PolicyVersion, DateTimeOffset ProposedAt, DateTimeOffset? DecidedAt, bool CanDecide = false, string? Kind = null);
 
 public sealed record MatchGroupDto(
     string Id, string Status, string Cardinality, IReadOnlyList<MatchCandidateDto> Left, IReadOnlyList<MatchCandidateDto> Right, MoneyDto? Difference,

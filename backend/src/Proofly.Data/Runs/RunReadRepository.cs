@@ -139,7 +139,15 @@ public sealed class RunReadRepository(NpgsqlDataSource dataSource, TimeProvider 
         var attention = await AttentionAsync(run.Id, ct);
         var safeguarding = await SafeguardingAsync(run, previousId, ct);
         var summary = await SummaryAsync(run, previousId, deliveries, safeguarding, ct);
-        return new ControlRoomRows(run, summary, deliveries, areas, attention, safeguarding);
+        int blocking, open;
+        await using (var cmd = dataSource.CreateCommand($"SELECT count(*) FILTER (WHERE blocking), count(*) FROM exceptions WHERE run_id = @r AND {OpenStatus}"))
+        {
+            cmd.Parameters.AddWithValue("r", run.Id);
+            await using var rd = await cmd.ExecuteReaderAsync(ct);
+            await rd.ReadAsync(ct);
+            (blocking, open) = ((int)rd.GetInt64(0), (int)rd.GetInt64(1));
+        }
+        return new ControlRoomRows(run, summary, deliveries, areas, attention, safeguarding, blocking, open);
     }
 
     private async Task<string?> PreviousRunIdAsync(RunRow run, CancellationToken ct)

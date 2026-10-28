@@ -121,6 +121,9 @@ internal sealed class TransactionEndpoints(ITransactionReadRepository repo) : IE
             throw ProblemException.Validation("currency", $"Account {accountId} holds several currencies ({string.Join(", ", found.Select(a => a.Currency))}); specify currency.");
         }
         var acc = found[0];
+        // Every currency the account holds in this run (the requested one included), sorted; lets the UI offer a currency switch.
+        var allHeld = currencyParam is null ? found : await repo.FindAccountAsync(runId, accountId, null, ctx.RequestAborted);
+        var availableCurrencies = allHeld.Select(a => a.Currency).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
         var entries = await repo.ListLedgerEntriesAsync(runId, acc.AccountId, acc.Currency, page.Decode<LedgerCursor>(), page.Limit, ctx.RequestAborted);
         var next = entries.HasMore ? Cursors.Encode(new LedgerCursor(entries.Rows[^1].Timestamp, entries.Rows[^1].InternalId)) : null;
 
@@ -148,7 +151,8 @@ internal sealed class TransactionEndpoints(ITransactionReadRepository repo) : IE
             exceptions.Select(e => new AccountExceptionSummaryDto(e.Id, e.RunId, e.Title, e.Control, e.ReasonCode, e.Severity, e.Status,
                 e.ValueAmount is { } v ? Money(v, e.ValueCurrency!) : null, e.LegalEntityId, e.BusinessDate,
                 e.OwnerId is null ? null : new UserRefDto(e.OwnerId, e.OwnerName ?? e.OwnerId), e.CreatedAt, e.DueAt, e.Blocking,
-                e.SourceFile, e.SourceRowId, ETags.ForVersion(e.Version))).ToList()));
+                e.SourceFile, e.SourceRowId, ETags.ForVersion(e.Version))).ToList(),
+            availableCurrencies));
     }
 }
 

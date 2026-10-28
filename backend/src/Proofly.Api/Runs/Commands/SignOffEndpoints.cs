@@ -170,7 +170,7 @@ internal sealed class SignOffEndpoints(ISignOffRepository repo) : IEndpointModul
             p.OpenMatters.Select(ExceptionMapping.ToSummary).ToList(), p.OpenMattersTotal, p.OpenMattersByCategory.Select(x => new OpenMatterCategoryDto(x.Control, x.Total, x.Blocking)).ToList(), p.Qualifications, p.ChangesSincePreparation, p.AttestationText, p.AttestationTextHash,
             allowed.Contains("APPROVE"), p.Blockers, p.EvidencePackId, approval,
             p.History.Select(h => new TimelineEventDto("h-" + h.Id, h.At, new ActorDto(h.ActorType, h.ActorId, h.ActorName), h.Type == "RUN_SIGNED_OFF" ? "APPROVAL" : "STATUS_CHANGE", HistoryText(h))).ToList(),
-            allowed);
+            allowed, (p.BlockerDetails ?? []).Select(b => new SignOffBlockerDto(b.Code, b.Message, b.ExceptionId, b.Control)).ToList());
     }
 
     private static string HistoryText(SignOffHistoryRow h) =>

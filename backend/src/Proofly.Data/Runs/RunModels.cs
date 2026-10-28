@@ -48,4 +48,5 @@ public sealed record SafeguardingRow(
 
 public sealed record ControlRoomRows(
     RunRow Run, IReadOnlyList<DailySummaryRow> Summary, IReadOnlyList<DeliveryRow> EvidenceReadiness, IReadOnlyList<ControlAreaRow> ControlAreas,
-    IReadOnlyList<AttentionRow> AttentionQueue, IReadOnlyList<SafeguardingRow> Safeguarding);
+    IReadOnlyList<AttentionRow> AttentionQueue, IReadOnlyList<SafeguardingRow> Safeguarding,
+    int BlockingCount = 0, int OpenExceptionsTotal = 0);

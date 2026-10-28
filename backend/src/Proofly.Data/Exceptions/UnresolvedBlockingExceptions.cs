@@ -21,14 +21,14 @@ public static class UnresolvedBlockingExceptions
         return (bool)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
-    /// <summary>The same set as <see cref="HasAsync"/> as (id, status), ordered by id (ordinal).</summary>
-    public static async Task<IReadOnlyList<(string Id, string Status)>> ListAsync(NpgsqlConnection conn, NpgsqlTransaction? tx, string runId, CancellationToken ct = default)
+    /// <summary>The same set as <see cref="HasAsync"/> as (id, status, control), ordered by id (ordinal).</summary>
+    public static async Task<IReadOnlyList<(string Id, string Status, string Control)>> ListAsync(NpgsqlConnection conn, NpgsqlTransaction? tx, string runId, CancellationToken ct = default)
     {
-        await using var cmd = new NpgsqlCommand($"SELECT id, status FROM exceptions WHERE {Predicate} ORDER BY id COLLATE \"C\"", conn, tx);
+        await using var cmd = new NpgsqlCommand($"SELECT id, status, control FROM exceptions WHERE {Predicate} ORDER BY id COLLATE \"C\"", conn, tx);
         cmd.Parameters.AddWithValue("r", runId);
-        var list = new List<(string, string)>();
+        var list = new List<(string, string, string)>();
         await using var r = await cmd.ExecuteReaderAsync(ct);
-        while (await r.ReadAsync(ct)) { list.Add((r.GetString(0), r.GetString(1))); }
+        while (await r.ReadAsync(ct)) { list.Add((r.GetString(0), r.GetString(1), r.GetString(2))); }
         return list;
     }
 }

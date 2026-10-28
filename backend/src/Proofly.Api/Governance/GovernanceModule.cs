@@ -82,7 +82,9 @@ internal sealed class GovernanceEndpoints : IEndpointModule
         {
             var caller = ctx.GetCaller();
             var p = await repo.GetForRunAsync(runId, Scope(caller), ct) ?? throw new ProblemException(ProblemTypes.NotFound);
-            return Results.Ok(new EvidencePackDto(p.Id, p.RunId, p.GeneratedAt, p.Status, p.Contents, p.Sha256, p.SizeBytes, p.FailureReason));
+            return Results.Ok(new EvidencePackDto(p.Id, p.RunId, p.GeneratedAt, p.Status, p.Contents, p.Sha256, p.SizeBytes, p.FailureReason,
+                p.ManifestJson is null ? null : System.Text.Json.JsonSerializer.Deserialize<EvidenceManifestDto>(p.ManifestJson, Platform.Json.WireJson.Options),
+                p.AuditChainJson is null ? null : System.Text.Json.JsonSerializer.Deserialize<AuditChainDto>(p.AuditChainJson, Platform.Json.WireJson.Options)));
         });
     }
 
@@ -92,5 +94,5 @@ internal sealed class GovernanceEndpoints : IEndpointModule
 
     private static ApprovalDto Map(ApprovalRow a) => new(a.Id, a.ObjectType, a.ObjectId, a.RunId, a.ProposalVersion,
         new UserRefDto(a.Proposer.Id, a.Proposer.Name), a.Approver is null ? null : new UserRefDto(a.Approver.Id, a.Approver.Name),
-        a.RequiredRole, a.Status, a.Decision, a.Rationale, a.EvidenceRefs, a.PolicyVersion, a.ProposedAt, a.DecidedAt, a.CanDecide);
+        a.RequiredRole, a.Status, a.Decision, a.Rationale, a.EvidenceRefs, a.PolicyVersion, a.ProposedAt, a.DecidedAt, a.CanDecide, a.Kind);
 }

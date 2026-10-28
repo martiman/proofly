@@ -94,15 +94,38 @@ public class StartupSelfCheckTests
     [Fact]
     public void Valid_production_config_passes()
     {
-        var errors = StartupSelfCheck.Validate(Cfg(("ConnectionStrings:Proofly", "Host=db"), ("Auth:Mode", "Oidc"), ("Evidence:Directory", "/e")), true, _ => true);
+        var errors = StartupSelfCheck.Validate(Cfg(("ConnectionStrings:Proofly", "Host=db"), ("Auth:Mode", "Oidc"), ("Evidence:Directory", "/e"), ("Environment:Name", "Acme prod"), ("Environment:Kind", "PRODUCTION")), true, _ => true);
         Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void Production_requires_the_environment_label()
+    {
+        var errors = StartupSelfCheck.Validate(Cfg(("ConnectionStrings:Proofly", "Host=db"), ("Auth:Mode", "Oidc"), ("Evidence:Directory", "/e")), true, _ => true);
+        Assert.Contains(errors, e => e.Contains("Environment:Name"));
+        Assert.Contains(errors, e => e.Contains("Environment:Kind"));
+    }
+
+    [Theory]
+    [InlineData("dev")]
+    [InlineData("STAGING")]
+    public void An_invalid_environment_kind_is_rejected_everywhere(string kind)
+    {
+        Assert.Contains(StartupSelfCheck.Validate(Cfg(("ConnectionStrings:Proofly", "Host=db"), ("Environment:Kind", kind)), false), e => e.Contains("Environment:Kind"));
+    }
+
+    [Fact]
+    public void Environment_label_is_optional_outside_production()
+    {
+        Assert.Empty(StartupSelfCheck.Validate(Cfg(("ConnectionStrings:Proofly", "Host=db")), false));
+        Assert.Empty(StartupSelfCheck.Validate(Cfg(("ConnectionStrings:Proofly", "Host=db"), ("Environment:Kind", "PILOT")), false));
     }
 
     [Fact]
     public void Production_reports_every_problem()
     {
         var errors = StartupSelfCheck.Validate(Cfg(("Auth:Mode", "Local")), true, _ => true);
-        Assert.Equal(3, errors.Count);
+        Assert.Equal(5, errors.Count);
         Assert.Contains(errors, e => e.Contains("ConnectionStrings:Proofly"));
         Assert.Contains(errors, e => e.Contains("Auth:Mode=Local"));
         Assert.Contains(errors, e => e.Contains("Evidence:Directory"));

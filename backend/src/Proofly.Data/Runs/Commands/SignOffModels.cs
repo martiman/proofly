@@ -52,4 +52,8 @@ public sealed record SignOffPackRows(
     RunRow Run, SignOffRow? SignOff, IReadOnlyList<ChecklistRow> Checklist, IReadOnlyList<ExceptionRow> OpenMatters, int OpenMattersTotal,
     IReadOnlyList<OpenMatterCategoryRow> OpenMattersByCategory, IReadOnlyList<string> Qualifications,
     IReadOnlyList<string> ChangesSincePreparation, IReadOnlyList<string> Blockers, string AttestationText, string AttestationTextHash,
-    string? EvidencePackId, SignOffApprovalRow? Approval, IReadOnlyList<SignOffHistoryRow> History, bool StaleSinceSubmission);
+    string? EvidencePackId, SignOffApprovalRow? Approval, IReadOnlyList<SignOffHistoryRow> History, bool StaleSinceSubmission,
+    IReadOnlyList<SignOffBlocker>? BlockerDetails = null);
+
+/// <summary>Structured sign-off blocker. Code: RUN_STATE, NO_RESULT_HASH, COMPLETENESS_MISSING, COMPLETENESS_NOT_PASSED, BLOCKING_EXCEPTION.</summary>
+public sealed record SignOffBlocker(string Code, string Message, string? ExceptionId, string? Control);

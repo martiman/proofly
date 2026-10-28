@@ -170,7 +170,7 @@ public sealed class EvidencePackJobHandler(NpgsqlDataSource ds, EvidencePackBuil
             await using var tx = await conn.BeginTransactionAsync(ct);
             await using (var upd = new NpgsqlCommand("""
                 UPDATE evidence_packs SET status = 'READY', sha256 = @sha, size_bytes = @size, storage_ref = @ref,
-                       contents = @contents, failure_reason = NULL WHERE id = @id
+                       contents = @contents, failure_reason = NULL, manifest = @manifest, audit_chain = @chain WHERE id = @id
                 """, conn, tx))
             {
                 upd.Parameters.AddWithValue("id", payload.PackId);
@@ -178,6 +178,8 @@ public sealed class EvidencePackJobHandler(NpgsqlDataSource ds, EvidencePackBuil
                 upd.Parameters.AddWithValue("size", obj.Length);
                 upd.Parameters.AddWithValue("ref", $"{obj.Sha256[..2]}/{obj.Sha256}");
                 upd.Parameters.Add(new NpgsqlParameter("contents", NpgsqlDbType.Jsonb) { Value = JsonSerializer.Serialize(build.Files.Select(f => f.Path)) });
+                upd.Parameters.Add(new NpgsqlParameter("manifest", NpgsqlDbType.Jsonb) { Value = build.ManifestJson });
+                upd.Parameters.Add(new NpgsqlParameter("chain", NpgsqlDbType.Jsonb) { Value = build.AuditChainJson });
                 await upd.ExecuteNonQueryAsync(ct);
             }
             await audit.AppendAsync(tx, new AuditEventInput("EVIDENCE_PACK_GENERATED", AuditActor.System("evidence-pack-worker"), "EVIDENCE_PACK", payload.PackId,

@@ -22,6 +22,8 @@ public static class StartupSelfCheck
 
         if (isProduction) { ProductionIsolation(configuration, errors); }
 
+        EnvironmentLabel(configuration, isProduction, errors);
+
         var mode = configuration["Auth:Mode"];
         if (isProduction && string.Equals(mode, "Local", StringComparison.OrdinalIgnoreCase))
         {
@@ -44,6 +46,23 @@ public static class StartupSelfCheck
             errors.Add("Observability:Metrics:Enabled must be true or false.");
         }
         return errors;
+    }
+
+    public const string EnvironmentNameKey = "Environment:Name";
+    public const string EnvironmentKindKey = "Environment:Kind";
+    public static readonly IReadOnlyList<string> EnvironmentKinds = ["DEV", "TEST", "PILOT", "PRODUCTION"];
+
+    /// <summary>The environment label shown in the UI. Required in Production (never guessed); optional elsewhere, but a given kind must be valid.</summary>
+    private static void EnvironmentLabel(IConfiguration configuration, bool isProduction, List<string> errors)
+    {
+        var name = configuration[EnvironmentNameKey];
+        var kind = configuration[EnvironmentKindKey];
+        if (isProduction && string.IsNullOrWhiteSpace(name)) { errors.Add($"{EnvironmentNameKey} is not configured."); }
+        if (isProduction && string.IsNullOrWhiteSpace(kind)) { errors.Add($"{EnvironmentKindKey} is not configured (one of {string.Join(", ", EnvironmentKinds)})."); }
+        else if (!string.IsNullOrWhiteSpace(kind) && !EnvironmentKinds.Contains(kind, StringComparer.Ordinal))
+        {
+            errors.Add($"{EnvironmentKindKey} must be one of {string.Join(", ", EnvironmentKinds)}.");
+        }
     }
 
     /// <summary>
