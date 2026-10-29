@@ -2,7 +2,7 @@
 
 This directory contains a deterministic, entirely synthetic input package for Proofly's proposed oMVP controls. It is intended for importer development, demonstrations, control-rule tests and repeatable acceptance scenarios. It contains no production or personal data.
 
-The package represents legal entity `LE-CZ-001` for business date `2026-10-27`. All timestamps carry an explicit Central European offset in the CSV files. Monetary values use decimal notation and are accompanied by a currency code.
+The package represents UK legal entity `LE-UK-001` (London) for business date `2026-10-27`. All timestamps carry an explicit UK offset in the CSV files; British Summer Time ended on 2026-10-25, so every timestamp uses GMT (`+00:00`). Monetary values use decimal notation and are accompanied by a currency code. GBP is the primary currency; EUR and USD are secondary.
 
 ## Files
 

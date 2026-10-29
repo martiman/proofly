@@ -22,7 +22,7 @@ The end-to-end operating workflow is defined in [Daily Control Cycle](workflows/
 
 ## oMVP product sections
 
-The first product uses seven primary sections:
+The first product covers seven areas:
 
 1. Daily Control Room;
 2. Exceptions;
@@ -32,7 +32,7 @@ The first product uses seven primary sections:
 6. Sources; and
 7. Configuration and Access.
 
-Matching, account-ledger and evidence views open contextually from these sections rather than appearing as separate primary navigation items. See [Product Screens](screens/README.md).
+They are reached through a navigation dock with four destinations (Today, Exceptions, Safeguarding, Sources), search, and the account menu. Sign-off is part of Today, Transactions open from search, and Configuration and Access opens from the account menu. Matching, account-ledger and evidence views open contextually rather than appearing as separate primary navigation items. See [Product Screens](screens/README.md).
 
 ## Target operating envelope
 

@@ -35,6 +35,7 @@ Proposed functions:
 
 - register expected sources, delivery windows, business calendars and owners;
 - ingest banking transactions, card transaction events, card settlement statements, transfer instructions, direct-debit records, internal ledger entries and balance snapshots;
+- accept provider-specific feeds, such as FIS card-processor files, through source adapters that map them to the common delivery contract without making the provider layout the canonical model;
 - preserve the original source object and calculate a content fingerprint;
 - validate schema, encoding, required fields, currencies, dates and decimal precision;
 - detect missing files, missing business dates, sequence gaps, duplicates and unexpected record-count or value changes;

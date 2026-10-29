@@ -15,15 +15,25 @@ Every operational screen should combine:
 
 ## Proposed navigation
 
-### oMVP sections
+### Navigation dock
 
-- [Daily Control Room](daily-control-room.md) - `/control-room`
-- [Exceptions Queue](exceptions-queue.md) and [Exception Detail](exception-detail.md) - `/exceptions`
-- [Transaction Explorer](transaction-explorer.md) - `/transactions`
-- [Safeguarding Position](safeguarding-position.md) - `/safeguarding`
-- [Run Sign-off](run-sign-off.md) - `/runs/:runId/sign-off`
-- [Sources](sources.md) - `/sources`
-- [Configuration and Access](configuration-access.md) - `/settings`
+The shell has no sidebar and no top bar. A floating dock at the bottom centre offers four destinations and search. Only the current destination shows its name. A single dot marks a destination that needs the user, without counters.
+
+| Dock destination | Screens | Route |
+| --- | --- | --- |
+| Today | [Daily Control Room](daily-control-room.md), then [Run Sign-off](run-sign-off.md) when the run is ready | `/control-room`, `/runs/:runId/sign-off` |
+| Exceptions | [Exceptions Queue](exceptions-queue.md) and [Exception Detail](exception-detail.md) | `/exceptions` |
+| Safeguarding | [Safeguarding Position](safeguarding-position.md) | `/safeguarding` |
+| Sources | [Sources](sources.md) | `/sources` |
+
+Reached without a dock destination:
+
+- [Transaction Explorer](transaction-explorer.md) (`/transactions`) opens from search, from an exception or from an account.
+- [Configuration and Access](configuration-access.md) (`/settings`) opens from the account menu, available to authorised roles.
+
+### Search and commands
+
+Search opens with ⌘K and is the main way to reach a transaction, client, account, exception, source reference or action. Results are grouped by type, and actions such as assigning an owner or requesting evidence are offered for the selected item. Results respect role permissions before the search is executed.
 
 ### Contextual views
 
@@ -37,12 +47,11 @@ Routes are proposed information architecture, not an implementation contract.
 
 The desktop-first application should provide:
 
-- primary navigation grouped into Daily Work and Administration;
-- legal entity, business date, currency and run-version context selectors;
-- global search for transaction, client, account, exception and source reference;
-- notifications for assigned work and approval requests;
-- a visible environment and data-freshness indicator; and
-- user identity, role and active permission context.
+- the navigation dock and search described above;
+- legal entity, business date and run-version context shown as one quiet line and changeable from it, with currency chosen where it matters;
+- an attention dot on dock destinations and the account menu for assigned work and approval requests;
+- a visible environment and data-freshness indicator, whose placement is still to be designed (the simplified mock-ups omit it); and
+- user identity, role and active permission context in the account menu.
 
 Mobile layouts may support status review and approvals later, but detailed financial investigation should be designed for a desktop viewport first.
 
@@ -59,7 +68,7 @@ Mobile layouts may support status review and approvals later, but detailed finan
 
 ## Initial MVP screen set
 
-The first usable release includes the seven oMVP sections listed above. Matching, account-ledger and evidence exploration begin as contextual views rather than separate primary navigation items.
+The first usable release includes the four dock destinations, Transaction Explorer through search and Configuration and Access through the account menu. Matching, account-ledger and evidence exploration begin as contextual views rather than separate primary navigation items.
 
 AI assistance, MCP access, agent workflows and external model integrations are outside the oMVP scope.
 

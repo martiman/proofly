@@ -24,7 +24,7 @@ Shows expected, received, late, missing, rejected and superseded deliveries for 
 
 Recommended columns:
 
-- source and source owner;
+- source, provider (for example FIS) and source owner;
 - expected delivery time;
 - received timestamp;
 - business date;

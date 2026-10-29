@@ -43,6 +43,8 @@ Expected banking, card, transfer, direct-debit, ledger and balance deliveries ar
 
 A repeated identical delivery is treated idempotently. A corrected delivery creates a new delivery version and does not overwrite the original.
 
+Provider feeds, such as the FIS card-processor files, follow the same rules. Each feed is registered as its own expected delivery with an owner, delivery window and schema version. The source adapter maps the provider layout to the common contract and the original file is preserved unchanged. A missing or late FIS delivery qualifies the card controls in the same way as any other mandatory source.
+
 ### 3. Establish completeness
 
 Proofly checks expected deliveries, schemas, required fields, duplicates, sequences and source totals. Each mandatory source receives a completeness result.

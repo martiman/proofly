@@ -199,6 +199,30 @@ Control totals: batch count, gross, fees, adjustments and net value by currency.
 
 Card transaction events should link to settlement batches through the processor settlement identifier. Settlement batches should then link to the destination bank movement. This preserves the many-to-one relationship without representing a batch as an individual card transaction.
 
+## Provider feeds: FIS card processor
+
+**Status: Proposed.** FIS has been named as a provider whose files Proofly should load. The exact file layouts have not been agreed or reviewed.
+
+Working assumption, to be confirmed per feed: FIS supplies the card transaction events and the card settlement batches described above. Each feed is registered as its own source with its own owner, expected-delivery window and schema version.
+
+Rules for provider feeds:
+
+- A source adapter maps the FIS layout to the common delivery contract. The FIS layout is not the canonical model.
+- The original FIS file is preserved unchanged with its content fingerprint. Mapping failures create data-quality exceptions and never alter the source value.
+- The `processor` field of a settlement record identifies FIS. Card events use tokenised card references only.
+- Control totals come from the FIS manifest or trailer when one exists. Otherwise the delivery is marked as having no source control total.
+- A corrected FIS file is a new delivery that identifies the one it supersedes.
+- Card events link to settlement batches through the settlement identifier assigned by FIS.
+
+Open items before implementation:
+
+- which FIS files are in scope: card events, settlements or both;
+- file format, delimiter, encoding, decimal and date rules;
+- delivery channel, delivery window and business-date rule;
+- availability of control totals and sequence numbers;
+- correction and re-delivery semantics; and
+- source-owner approval of the versioned schema.
+
 ## Validation outcomes
 
 Each source record becomes accepted, rejected or accepted with a non-blocking warning. Every rejected record retains its source location and stable reason code.
