@@ -43,10 +43,10 @@ public class MatchingApiTests(MatchingFixture f) : IClassFixture<MatchingFixture
         var body = await Json(res);
         var items = body.GetProperty("items");
         Assert.Equal(5, items.GetArrayLength());
-        var g3 = items[2];
+        var g3 = items[3];
         Assert.Equal("G-003", g3.GetProperty("id").GetString());
         Assert.Equal("VALUE_MISMATCH", g3.GetProperty("status").GetString());
-        Assert.Equal("2.500000", g3.GetProperty("difference").GetProperty("amount").GetString());
+        Assert.Equal("2.50", g3.GetProperty("difference").GetProperty("amount").GetString());
         Assert.Equal("JPY", g3.GetProperty("difference").GetProperty("currency").GetString());
         Assert.Equal("rule-ref@2.1", g3.GetProperty("ruleVersion").GetString());
         Assert.Equal("0.01 GBP", g3.GetProperty("tolerance").GetString());
@@ -58,11 +58,11 @@ public class MatchingApiTests(MatchingFixture f) : IClassFixture<MatchingFixture
         Assert.Equal(JsonValueKind.Null, items[1].GetProperty("ruleVersion").ValueKind);
         Assert.Equal(JsonValueKind.Null, items[1].GetProperty("tolerance").ValueKind);
         Assert.Equal(JsonValueKind.Null, items[1].GetProperty("rationale").ValueKind);
-        Assert.Equal(["EX-X"], items[4].GetProperty("exceptionIds").EnumerateArray().Select(e => e.GetString()!).ToArray()); // explicit match_group_exceptions link
-        Assert.Equal("49997.500000", g3.GetProperty("right")[0].GetProperty("amount").GetProperty("amount").GetString());
+        Assert.Equal(["EX-X"], items[2].GetProperty("exceptionIds").EnumerateArray().Select(e => e.GetString()!).ToArray()); // explicit match_group_exceptions link
+        Assert.Equal("49997.50", g3.GetProperty("right")[0].GetProperty("amount").GetProperty("amount").GetString());
         Assert.Equal(["EX-3"], g3.GetProperty("exceptionIds").EnumerateArray().Select(e => e.GetString()!).ToArray());
         Assert.Equal(JsonValueKind.Null, items[1].GetProperty("difference").ValueKind);
-        var g4 = items[3];
+        var g4 = items[0];
         Assert.True(g4.GetProperty("manual").GetBoolean());
         Assert.Equal("AP-1", g4.GetProperty("approval").GetProperty("id").GetString());
         Assert.False(body.GetProperty("page").GetProperty("hasMore").GetBoolean());
@@ -86,7 +86,7 @@ public class MatchingApiTests(MatchingFixture f) : IClassFixture<MatchingFixture
             pages++;
         } while (cursor is not null);
         Assert.Equal(3, pages);
-        Assert.Equal(["G-001", "G-002", "G-003", "G-004", "G-005"], seen);
+        Assert.Equal(["G-004", "G-002", "G-005", "G-003", "G-001"], seen); // pending first, matched last
     }
 
     [Fact]
@@ -111,14 +111,15 @@ public class MatchingApiTests(MatchingFixture f) : IClassFixture<MatchingFixture
         Assert.Equal(HttpStatusCode.OK, res.StatusCode);
         var wb = await Json(res);
         var groups = wb.GetProperty("groups");
-        Assert.Equal("G-002", groups[0].GetProperty("id").GetString());
+        Assert.Equal("G-004", groups[0].GetProperty("id").GetString()); // the pending manual proposal is the default focus
+        Assert.Single(groups.EnumerateArray()); // and appears once
         Assert.StartsWith("TRF-", wb.GetProperty("focusTransactionId").GetString());
         var stats = wb.GetProperty("stats");
         Assert.Equal("0.2", stats.GetProperty("autoMatchRate").GetString());
         Assert.Equal((4, 2), (stats.GetProperty("openGroups").GetInt32(), stats.GetProperty("unmatchedCount").GetInt32()));
         Assert.Equal(["EUR", "GBP"], stats.GetProperty("unmatchedByCurrency").EnumerateArray().Select(c => c.GetProperty("currency").GetString()!).ToArray());
-        Assert.Equal("250.000000", stats.GetProperty("unmatchedByCurrency")[0].GetProperty("value").GetProperty("amount").GetString());
-        Assert.Equal(["250.000000", "10.250000"], wb.GetProperty("unmatched").EnumerateArray().Select(u => u.GetProperty("amount").GetProperty("amount").GetString()!).ToArray());
+        Assert.Equal("250.00", stats.GetProperty("unmatchedByCurrency")[0].GetProperty("value").GetProperty("amount").GetString());
+        Assert.Equal(["250.00", "10.25"], wb.GetProperty("unmatched").EnumerateArray().Select(u => u.GetProperty("amount").GetProperty("amount").GetString()!).ToArray());
     }
 
     [Fact]
@@ -148,7 +149,8 @@ public class MatchingApiTests(MatchingFixture f) : IClassFixture<MatchingFixture
         var b9 = "BNK-" + (long)(await q.ExecuteScalarAsync())!;
         var ungrouped = await Json(await Viewer.GetAsync("/api/v1/runs/R-M1/matching/workbench?transactionId=" + b9));
         Assert.Equal(b9, ungrouped.GetProperty("focusTransactionId").GetString());
-        Assert.Equal(0, ungrouped.GetProperty("groups").GetArrayLength());
+        // no group holds the record, so only the pending manual proposal (G-004) is listed
+        Assert.Equal(["G-004"], ungrouped.GetProperty("groups").EnumerateArray().Select(g => g.GetProperty("id").GetString()!).ToArray());
 
         // An exception with no candidate and no group link: no focus, no group.
         await using (var ins = f.Db.CreateCommand("INSERT INTO exceptions (id, run_id, legal_entity_id, business_date, title, control, reason_code, severity, due_at) VALUES ('EX-LOOSE','R-M1','LE-M1','2026-03-02','Loose','matching','X','LOW',now()) ON CONFLICT DO NOTHING"))
@@ -157,7 +159,7 @@ public class MatchingApiTests(MatchingFixture f) : IClassFixture<MatchingFixture
         }
         var loose = await Json(await Viewer.GetAsync("/api/v1/runs/R-M1/matching/workbench?exceptionId=EX-LOOSE"));
         Assert.Equal(JsonValueKind.Null, loose.GetProperty("focusTransactionId").ValueKind);
-        Assert.Equal(0, loose.GetProperty("groups").GetArrayLength());
+        Assert.Equal(["G-004"], loose.GetProperty("groups").EnumerateArray().Select(g => g.GetProperty("id").GetString()!).ToArray());
     }
 
     [Fact]

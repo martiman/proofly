@@ -69,6 +69,7 @@ internal sealed class MatchingEndpoints(IMatchingRepository repo) : IEndpointMod
         return Results.Ok(new PageDto<MatchGroupDto>(result.Items.Select(g => Map(g, ctx, scope)).ToList(), result.Page));
     }
 
+    private const int PendingInWorkbench = 50;
     private static readonly HashSet<string> Pairs = ["BANK_TRANSFER", "DIRECT_DEBIT", "CARD", "BANK_EVIDENCE", "LEDGER_ENTRY"];
 
     private async Task<IResult> ListUnmatched(string runId, HttpContext ctx, CancellationToken ct)
@@ -104,6 +105,11 @@ internal sealed class MatchingEndpoints(IMatchingRepository repo) : IEndpointMod
         if (groupId is not null)
         {
             groups.Add(Map(await repo.GetGroupAsync(runId, groupId, ct) ?? throw new ProblemException(ProblemTypes.NotFound), ctx, scope));
+        }
+        // Pending manual proposals are always visible: the focus first, then the other groups awaiting a decision.
+        foreach (var pending in await repo.ListPendingGroupsAsync(runId, PendingInWorkbench, ct))
+        {
+            if (pending.Id != groupId) { groups.Add(Map(pending, ctx, scope)); }
         }
         var limit = MatchingRepository.DefaultInlineUnmatched;
         if (q.TryGetValue("unmatchedLimit", out var ul) && ul.Count > 0 && (!int.TryParse(ul[0], out limit) || limit is < 1 or > MatchingRepository.UnmatchedLimit))

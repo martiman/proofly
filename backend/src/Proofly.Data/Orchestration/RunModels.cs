@@ -58,7 +58,7 @@ public sealed record ControlOutcome(
 public sealed record RecordLink(string Table, long DbId);
 
 public sealed record ExceptionDraft(
-    string Id, Finding Finding, string Title, DateTimeOffset DueAt, string? DeliveryId, string? SourceFile, string? SourceRowId,
+    string Id, Finding Finding, string Title, string Description, DateTimeOffset DueAt, string? DeliveryId, string? SourceFile, string? SourceRowId,
     IReadOnlyList<RecordLink> Links, string RuleId, string? Tolerance, string ExpectedEffect, string CalculationJson);
 
 public sealed record MatchCandidateDraft(string Kind, string Side, string Table, long DbId, Money Amount, bool Selected);

@@ -20,7 +20,7 @@ const { runId } = ctx
 const res = useResource(() => runId.value, (id, signal) => getRunSignOff(id, { openMattersLimit: 20 }, { signal }))
 const override = ref<Pack | null>(null) // the response of the last command is the new pack (and its ETag is cached)
 const data = computed<Pack | undefined>(() => override.value ?? res.data.value)
-async function reload() { override.value = null; problem.value = null; await res.reload(); if (drill.value) await matters.reload() }
+async function reload() { recentSuccess.value = false; override.value = null; problem.value = null; await res.reload(); if (drill.value) await matters.reload() }
 
 const allowed = computed(() => data.value?.allowedActions)
 const q = computed(() => (runId.value ? { run: runId.value } : {}))
@@ -61,6 +61,8 @@ const reprocessCmd = useCommand(async (b: { reason: string }, o) => {
   return requestRunReprocess(runId.value!, b, o)
 })
 const packCmd = useCommand((_: null, o) => generateEvidencePack(runId.value!, o))
+const recentSuccess = ref(false) // a command just succeeded: the state changed, so "nothing allowed" is expected, not a restriction
+const cannotAct = computed(() => !!allowed.value && allowed.value.length === 0 && !recentSuccess.value)
 const busy = computed(() => [submitCmd, returnCmd, approveCmd, reprocessCmd, packCmd].some((c) => c.pending.value))
 
 function open(k: Kind) { modal.value = k; reason.value = ''; note.value = ''; attested.value = false; problem.value = null }
@@ -87,6 +89,7 @@ async function confirm() {
       await ctx.reload()
     } else { const p = await packCmd.run(null); message.success(`Evidence pack ${p.id} ${p.status.toLowerCase().replace('_', ' ')}`); await reload() }
     modal.value = null
+    recentSuccess.value = true
     if (k !== 'REPROCESS' && k !== 'PACK') message.success(`${titles[k]}: done`)
   } catch (e) {
     problem.value = mapCommandError(e)
@@ -224,7 +227,7 @@ async function download() {
             <a-descriptions-item label="Evidence pack">{{ data.evidencePackId ?? 'Not generated' }}</a-descriptions-item>
             <a-descriptions-item v-if="data.approval" label="Approval">{{ data.approval.status }} · {{ data.approval.proposer.name }}</a-descriptions-item>
           </a-descriptions>
-          <a-alert v-if="!can(allowed, 'APPROVE')" type="info" show-icon class="gap" message="Sign-off is not available to you for this run in its current state." />
+          <a-alert v-if="cannotAct" type="info" show-icon class="gap" message="Sign-off is not available to you for this run in its current state." />
         </div>
 
         <div v-if="data.history?.length" class="card block">

@@ -13,7 +13,7 @@ namespace Proofly.Data.Orchestration;
 /// that is not configured keeps its code default. A stored value that does not parse is an error (the run fails
 /// visibly), never silently replaced.
 /// <list type="table">
-/// <item><term>MATCH-AMOUNT-TOLERANCE</term><description>tolerance "amount CCY" -> Matching amount tolerance for that currency; severity -> value mismatch severity</description></item>
+/// <item><term>MATCH-AMOUNT-TOLERANCE, MATCH-AMOUNT-TOLERANCE-&lt;CCY&gt;</term><description>tolerance "amount CCY" -> Matching amount tolerance for that currency (one rule per currency); severity -> value mismatch severity</description></item>
 /// <item><term>MATCH-UNMATCHED</term><description>severity -> unmatched severity</description></item>
 /// <item><term>MATCH-AMBIGUOUS</term><description>severity -> ambiguous-candidates severity</description></item>
 /// <item><term>LEDGER-BALANCE-TOLERANCE</term><description>tolerance amount -> independent ledger balance tolerance</description></item>
@@ -35,8 +35,9 @@ public static class RulesetParameters
         foreach (var item in doc.RootElement.EnumerateArray().OrderBy(i => Str(i, "id"), StringComparer.Ordinal))
         {
             if (Str(item, "kind") != "rule" || !item.TryGetProperty("payload", out var p) || p.ValueKind != JsonValueKind.Object) continue;
-            var id = Str(item, "id");
-            switch (id)
+            var id = Str(item, "id") ?? "";
+            // One tolerance carries one currency ("0.01 GBP"): per-currency rules use the id prefix, e.g. MATCH-AMOUNT-TOLERANCE-EUR.
+            switch (id.StartsWith("MATCH-AMOUNT-TOLERANCE-", StringComparison.Ordinal) ? "MATCH-AMOUNT-TOLERANCE" : id)
             {
                 case "MATCH-AMOUNT-TOLERANCE":
                     if (Tolerance(id, p) is { } t)

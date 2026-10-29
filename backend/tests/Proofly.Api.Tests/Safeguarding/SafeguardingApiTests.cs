@@ -92,10 +92,10 @@ public class SafeguardingApiTests(SafeguardingApiFixture f) : IClassFixture<Safe
         var pos = body.GetProperty("positions");
         Assert.Equal(["EUR", "GBP", "JPY"], pos.EnumerateArray().Select(p => p.GetProperty("currency").GetString()!).ToArray());
         var gbp = pos.EnumerateArray().Single(p => p.GetProperty("currency").GetString() == "GBP");
-        Assert.Equal("1000.250000", gbp.GetProperty("obligation").GetProperty("amount").GetString());
-        Assert.Equal("-99.750000", gbp.GetProperty("result").GetProperty("amount").GetString());
+        Assert.Equal("1000.25", gbp.GetProperty("obligation").GetProperty("amount").GetString());
+        Assert.Equal("-99.75", gbp.GetProperty("result").GetProperty("amount").GetString());
         Assert.Equal("SHORTFALL", gbp.GetProperty("state").GetString());
-        Assert.Equal("-50.000000", gbp.GetProperty("previousResult").GetProperty("amount").GetString());
+        Assert.Equal("-50.00", gbp.GetProperty("previousResult").GetProperty("amount").GetString());
         Assert.Equal(["EX-1", "EX-2"], Strs(gbp.GetProperty("exceptionIds")));
         Assert.Equal(JsonValueKind.Null, pos.EnumerateArray().Single(p => p.GetProperty("currency").GetString() == "JPY").GetProperty("previousResult").ValueKind);
 
@@ -109,7 +109,7 @@ public class SafeguardingApiTests(SafeguardingApiFixture f) : IClassFixture<Safe
 
         var drivers = body.GetProperty("changeAnalysis").EnumerateArray().ToArray();
         Assert.Contains(drivers, d => d.GetProperty("currency").GetString() == "GBP" && d.GetProperty("label").GetString() == "Eligible balances"
-            && d.GetProperty("change").GetProperty("amount").GetString() == "-49.500000");
+            && d.GetProperty("change").GetProperty("amount").GetString() == "-49.50");
         Assert.DoesNotContain(drivers, d => d.GetProperty("currency").GetString() == "JPY");
     }
 

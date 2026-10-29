@@ -16,8 +16,14 @@ export function useCommand<A, R>(fn: (arg: A, options: CommandOptions) => Promis
   const result = ref<R>()
   let key: string | undefined
   let lastInput: string | undefined
+  let inflight: Promise<R> | undefined
 
-  async function run(arg: A, options: Omit<CommandOptions, 'idempotencyKey'> = {}): Promise<R> {
+  function run(arg: A, options: Omit<CommandOptions, 'idempotencyKey'> = {}): Promise<R> {
+    if (inflight) return inflight // submit lock: a re-entrant call joins the running request, no second request
+    inflight = exec(arg, options).finally(() => { inflight = undefined })
+    return inflight
+  }
+  async function exec(arg: A, options: Omit<CommandOptions, 'idempotencyKey'>): Promise<R> {
     const input = JSON.stringify(arg) ?? ''
     if (key === undefined || input !== lastInput) key = uuid()
     lastInput = input

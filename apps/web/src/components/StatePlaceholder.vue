@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ExclamationCircleOutlined, InboxOutlined, LockOutlined } from '@ant-design/icons-vue'
 const props = defineProps<{ state: 'loading' | 'empty' | 'error' | 'forbidden'; message?: string }>()
 const defaults = {
   loading: 'Loading…', empty: 'Nothing to show.', error: 'Something went wrong.',
@@ -6,11 +7,18 @@ const defaults = {
 }
 </script>
 <template>
-  <div class="card ph">
+  <div class="card ph" :data-state="props.state">
     <a-spin v-if="state === 'loading'" />
-    <a-result v-else-if="state === 'forbidden'" status="403" :sub-title="message ?? defaults.forbidden" />
-    <a-result v-else-if="state === 'error'" status="error" :sub-title="message ?? defaults.error"><template #extra><slot name="action" /></template></a-result>
-    <a-empty v-else :description="message ?? defaults.empty"><slot name="action" /></a-empty>
+    <template v-else>
+      <component :is="state === 'forbidden' ? LockOutlined : state === 'error' ? ExclamationCircleOutlined : InboxOutlined" class="ic" :class="state" />
+      <span class="msg">{{ message ?? defaults[state] }}</span>
+      <slot name="action" />
+    </template>
   </div>
 </template>
-<style scoped>.ph { display: flex; justify-content: center; padding: 40px 16px; }</style>
+<style scoped>
+.ph { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 24px 16px; flex-wrap: wrap; }
+.ic { font-size: 48px; color: var(--ink-3); }
+.ic.error { color: var(--fail); }
+.msg { font-size: 13px; color: var(--ink-2); }
+</style>

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { configureApi } from '../../../api/client/http'
 import { staticTokenProvider } from '../../../api/client/auth'
 import { decideResolution, getException } from '../../../api/services'
-import { classifyFailure, decisionBody, allows, proposalKindLabel } from '../logic'
+import { classifyFailure, decisionBody, allows, proposalKindLabel, evidenceRefOptions } from '../logic'
 
 const P = 'https://proofly.example/problems/'
 const prob = (status: number, slug: string, extra = {}) =>
@@ -53,5 +53,16 @@ describe('proposalIdOf', () => {
   it('uses the proposal id (objectId), not the approval id', async () => {
     const { proposalIdOf } = await import('../logic')
     expect(proposalIdOf({ id: 'AP-1', objectId: 'RP-9' })).toBe('RP-9')
+  })
+})
+
+describe('evidenceRefOptions', () => {
+  it('offers only record-backed nodes, sends recordId and shows a human label', () => {
+    const o = evidenceRefOptions([
+      { id: 'dlv-EXC-1', kind: 'DELIVERY', label: 'Delivery', recordId: null },
+      { id: 'n1', kind: 'INSTRUCTION', label: 'Transfer', recordId: 'transfer_instructions:12', sourceRowId: 'SRC-T-009' },
+      { id: 'n2', kind: 'INSTRUCTION', label: 'Dup', recordId: 'transfer_instructions:12', sourceRowId: 'SRC-T-009' },
+    ])
+    expect(o).toEqual([{ value: 'transfer_instructions:12', label: 'transfer_instructions:12 (row SRC-T-009) · Transfer' }])
   })
 })

@@ -4,7 +4,7 @@ namespace Proofly.Contracts.Exceptions;
 
 /// <summary>Contract schema ExceptionSummary. Enum-typed fields carry the contract wire names.</summary>
 public record ExceptionSummaryDto(
-    string Id, string RunId, string Title, string Control, string ReasonCode, string Severity, string Status, MoneyDto? Value,
+    string Id, string RunId, string Title, string Description, string Control, string ReasonCode, string Severity, string Status, MoneyDto? Value,
     string LegalEntityId, string BusinessDate, UserRefDto? Owner, DateTimeOffset CreatedAt, int AgeDays, DateTimeOffset DueAt,
     bool Blocking, string? SourceFile, string? SourceRowId, string Etag);
 

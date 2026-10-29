@@ -143,21 +143,27 @@ public sealed class AdjustmentCommands(NpgsqlDataSource db, IAuditWriter audit) 
         await using var conn = await db.OpenConnectionAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
 
-        string runId, entity, status, proposer, runState, signOff, adjCurrency; int version;
+        string runId, entity, status, proposer, runState, signOff, adjCurrency; int version; DateOnly businessDate;
         await using (var c = new NpgsqlCommand(
-            @"SELECT a.run_id, r.legal_entity_id, a.status, a.proposed_by_user_id, a.version, r.state, r.sign_off_state, a.currency::text
+            @"SELECT a.run_id, r.legal_entity_id, a.status, a.proposed_by_user_id, a.version, r.state, r.sign_off_state, a.currency::text, r.business_date
               FROM safeguarding_adjustments a JOIN runs r ON r.id=a.run_id WHERE a.id=@id FOR UPDATE OF a", conn, tx))
         {
             c.Parameters.AddWithValue("id", cmd.AdjustmentId);
             await using var rd = await c.ExecuteReaderAsync(ct);
             if (!await rd.ReadAsync(ct)) { return new(CommandOutcome.NotFound); }
             runId = rd.GetString(0); entity = rd.GetString(1); status = rd.GetString(2); proposer = rd.GetString(3); version = rd.GetInt32(4);
-            runState = rd.GetString(5); signOff = rd.GetString(6); adjCurrency = rd.GetString(7);
+            runState = rd.GetString(5); signOff = rd.GetString(6); adjCurrency = rd.GetString(7); businessDate = DateOnly.FromDateTime(rd.GetDateTime(8));
         }
         if (version != cmd.ExpectedVersion) { return new(CommandOutcome.PreconditionFailed); }
         if (status != "PROPOSED") { return new(CommandOutcome.InvalidState, Detail: $"Only a PROPOSED adjustment can be decided; this one is {status}."); }
         if (proposer == cmd.UserId) { return new(CommandOutcome.SeparationOfDuties, Detail: "The proposer cannot decide their own adjustment."); }
-        if (runState == "SUPERSEDED") { return new(CommandOutcome.RunSuperseded, Detail: "The run is superseded by a newer version; its adjustments are frozen."); }
+ // An adjustment belongs to (legal entity, business date): when the run it was created in has been superseded, the decision applies to the current version.
+        if (runState == "SUPERSEDED")
+        {
+            var current = await CurrentRunAsync(conn, tx, entity, businessDate, ct);
+            if (current is null) { return new(CommandOutcome.RunSuperseded, Detail: "The run is superseded by a newer version; its adjustments are frozen."); }
+            (runId, runState, signOff) = current.Value;
+        }
         if (runState is "SIGNED_OFF" || signOff == "SIGNED_OFF") { return new(CommandOutcome.RunLocked, Detail: $"The run is {runState}/{signOff}; its adjustments are frozen."); }
 
         string approvalId; int proposalVersion; int approvalRowVersion;
@@ -199,6 +205,17 @@ public sealed class AdjustmentCommands(NpgsqlDataSource db, IAuditWriter audit) 
         return new(CommandOutcome.Ok, cmd.AdjustmentId, runId);
     }
 
+    /// <summary>The newest run version of the legal entity and business date that is not superseded, or null.</summary>
+    private static async Task<(string Id, string State, string SignOff)?> CurrentRunAsync(NpgsqlConnection conn, NpgsqlTransaction tx, string entity, DateOnly date, CancellationToken ct)
+    {
+        await using var c = new NpgsqlCommand(
+            "SELECT id, state, sign_off_state FROM runs WHERE legal_entity_id=@le AND business_date=@d AND state <> 'SUPERSEDED' ORDER BY run_version DESC LIMIT 1", conn, tx);
+        c.Parameters.AddWithValue("le", entity);
+        c.Parameters.Add(new NpgsqlParameter("d", NpgsqlDbType.Date) { Value = date });
+        await using var rd = await c.ExecuteReaderAsync(ct);
+        return await rd.ReadAsync(ct) ? (rd.GetString(0), rd.GetString(1), rd.GetString(2)) : null;
+    }
+
     /// <summary>The stored position of the run no longer includes this adjustment; flag it until the run is reprocessed.</summary>
     private static async Task MarkStaleAsync(NpgsqlConnection conn, NpgsqlTransaction tx, string runId, string currency, CancellationToken ct)
     {
@@ -212,8 +229,9 @@ public sealed class AdjustmentCommands(NpgsqlDataSource db, IAuditWriter audit) 
     {
         var due = new List<string>();
         await using (var c = db.CreateCommand(
-            @"SELECT a.id FROM safeguarding_adjustments a JOIN runs r ON r.id=a.run_id
-              WHERE a.status='APPROVED' AND a.expires_on < @d AND r.state NOT IN ('SIGNED_OFF','SUPERSEDED') AND r.sign_off_state <> 'SIGNED_OFF' ORDER BY a.id"))
+            @"SELECT DISTINCT a.id FROM safeguarding_adjustments a JOIN runs r0 ON r0.id=a.run_id
+              JOIN runs r ON r.legal_entity_id=r0.legal_entity_id AND r.business_date=r0.business_date AND r.state <> 'SUPERSEDED'
+              WHERE a.status='APPROVED' AND a.expires_on < @d AND r.state <> 'SIGNED_OFF' AND r.sign_off_state <> 'SIGNED_OFF' ORDER BY a.id"))
         {
             c.Parameters.Add(new NpgsqlParameter("d", NpgsqlDbType.Date) { Value = asOf });
             await using var rd = await c.ExecuteReaderAsync(ct);
@@ -225,21 +243,23 @@ public sealed class AdjustmentCommands(NpgsqlDataSource db, IAuditWriter audit) 
         {
             await using var conn = await db.OpenConnectionAsync(ct);
             await using var tx = await conn.BeginTransactionAsync(ct);
-            string runId, entity, currency; DateOnly exp;
+            string runId, entity, currency; DateOnly exp, businessDate;
             await using (var c = new NpgsqlCommand(
-                "SELECT a.run_id, r.legal_entity_id, a.expires_on, a.currency::text FROM safeguarding_adjustments a JOIN runs r ON r.id=a.run_id WHERE a.id=@id AND a.status='APPROVED' AND a.expires_on < @d FOR UPDATE OF a SKIP LOCKED", conn, tx))
+                "SELECT a.run_id, r.legal_entity_id, a.expires_on, a.currency::text, r.business_date FROM safeguarding_adjustments a JOIN runs r ON r.id=a.run_id WHERE a.id=@id AND a.status='APPROVED' AND a.expires_on < @d FOR UPDATE OF a SKIP LOCKED", conn, tx))
             {
                 c.Parameters.AddWithValue("id", id);
                 c.Parameters.Add(new NpgsqlParameter("d", NpgsqlDbType.Date) { Value = asOf });
                 await using var rd = await c.ExecuteReaderAsync(ct);
                 if (!await rd.ReadAsync(ct)) { continue; } // already expired or being handled elsewhere
-                runId = rd.GetString(0); entity = rd.GetString(1); exp = DateOnly.FromDateTime(rd.GetDateTime(2)); currency = rd.GetString(3);
+                runId = rd.GetString(0); entity = rd.GetString(1); exp = DateOnly.FromDateTime(rd.GetDateTime(2)); currency = rd.GetString(3); businessDate = DateOnly.FromDateTime(rd.GetDateTime(4));
             }
             await using (var c = new NpgsqlCommand("UPDATE safeguarding_adjustments SET status='EXPIRED' WHERE id=@id AND status='APPROVED'", conn, tx))
             {
                 c.Parameters.AddWithValue("id", id);
                 await c.ExecuteNonQueryAsync(ct);
             }
+            // The adjustment is carried across run versions: the position that goes stale is the current version's.
+            if (await CurrentRunAsync(conn, tx, entity, businessDate, ct) is { } cur) { runId = cur.Id; }
             await MarkStaleAsync(conn, tx, runId, currency, ct);
             await audit.AppendAsync(tx, new AuditEventInput("ADJUSTMENT_EXPIRED", AuditActor.System("safeguarding.adjustment.expire"), "ADJUSTMENT", id,
                 "Approved adjustment expired; the run's safeguarding position is stale until a manual reprocess",

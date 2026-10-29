@@ -115,6 +115,16 @@ internal sealed class TransactionEndpoints(ITransactionReadRepository repo) : IE
         var page = PageRequest.From(ctx);
         var currencyParam = Q(ctx, "currency");
         var found = await repo.FindAccountAsync(runId, accountId, currencyParam, ctx.RequestAborted);
+        if (found.Count == 0 && currencyParam is not null)
+        {
+            // The account exists but does not hold that currency: a field error that lists what it does hold (404 stays for an unknown account).
+            var held = await repo.FindAccountAsync(runId, accountId, null, ctx.RequestAborted);
+            if (held.Count > 0)
+            {
+                throw ProblemException.Validation("currency",
+                    $"Account {accountId} does not hold {currencyParam} in this run; available currencies: {string.Join(", ", held.Select(a => a.Currency).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))}.");
+            }
+        }
         if (found.Count == 0) { throw new ProblemException(ProblemTypes.NotFound); }
         if (found.Count > 1)
         {
@@ -148,7 +158,7 @@ internal sealed class TransactionEndpoints(ITransactionReadRepository repo) : IE
             new PageInfoDto(next, entries.HasMore),
             rollForward,
             related.Rows.Select(ToDto).ToList(),
-            exceptions.Select(e => new AccountExceptionSummaryDto(e.Id, e.RunId, e.Title, e.Control, e.ReasonCode, e.Severity, e.Status,
+            exceptions.Select(e => new AccountExceptionSummaryDto(e.Id, e.RunId, e.Title, e.Description, e.Control, e.ReasonCode, e.Severity, e.Status,
                 e.ValueAmount is { } v ? Money(v, e.ValueCurrency!) : null, e.LegalEntityId, e.BusinessDate,
                 e.OwnerId is null ? null : new UserRefDto(e.OwnerId, e.OwnerName ?? e.OwnerId), e.CreatedAt, e.DueAt, e.Blocking,
                 e.SourceFile, e.SourceRowId, ETags.ForVersion(e.Version))).ToList(),

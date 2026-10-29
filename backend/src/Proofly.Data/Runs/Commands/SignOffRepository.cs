@@ -136,13 +136,13 @@ public sealed class SignOffRepository(NpgsqlDataSource db, IAuditWriter audit) :
 
     private const string ExceptionColumns = """
         e.id, e.run_id, e.title, e.control, e.reason_code, e.severity, e.status, e.value_amount, e.value_currency, e.legal_entity_id, e.business_date,
-        e.owner_user_id, u.name, e.created_at, GREATEST(0, (now()::date - e.created_at::date))::int, e.due_at, e.blocking, e.source_file, e.source_row_id, e.version
+        e.owner_user_id, u.name, e.created_at, GREATEST(0, (now()::date - e.created_at::date))::int, e.due_at, e.blocking, e.source_file, e.source_row_id, e.version, COALESCE(e.description, e.title)
         """;
 
     private static ExceptionRow ReadException(NpgsqlDataReader r) =>
         new(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4), r.GetString(5), r.GetString(6),
             r.IsDBNull(7) ? null : r.GetDecimal(7), N(r, 8), r.GetString(9), DateOnly.FromDateTime(r.GetDateTime(10)), N(r, 11), N(r, 12),
-            r.GetFieldValue<DateTimeOffset>(13), r.GetInt32(14), r.GetFieldValue<DateTimeOffset>(15), r.GetBoolean(16), N(r, 17), N(r, 18), r.GetInt32(19));
+            r.GetFieldValue<DateTimeOffset>(13), r.GetInt32(14), r.GetFieldValue<DateTimeOffset>(15), r.GetBoolean(16), N(r, 17), N(r, 18), r.GetInt32(19), r.GetString(20));
 
     public Task<SignOffPackRows?> GetPackAsync(EntityScope scope, string runId, CancellationToken ct = default) => GetPackAsync(scope, runId, OpenMattersDefaultLimit, ct);
 
@@ -177,7 +177,7 @@ public sealed class SignOffRepository(NpgsqlDataSource db, IAuditWriter audit) :
             cmd.Parameters.Add(new NpgsqlParameter("c4", NpgsqlTypes.NpgsqlDbType.Text) { Value = after?.Id ?? "" });
             cmd.Parameters.AddWithValue("lim", limit + 1);
             await using var r = await cmd.ExecuteReaderAsync(ct);
-            while (await r.ReadAsync(ct)) { items.Add(new OpenMatterItem(ReadException(r), new OpenMatterCursor(r.GetInt32(20), r.GetInt32(21), r.GetDecimal(22), r.GetString(0)))); }
+            while (await r.ReadAsync(ct)) { items.Add(new OpenMatterItem(ReadException(r), new OpenMatterCursor(r.GetInt32(21), r.GetInt32(22), r.GetDecimal(23), r.GetString(0)))); }
         }
 
         int? total = null;

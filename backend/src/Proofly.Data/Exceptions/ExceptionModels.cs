@@ -31,7 +31,7 @@ public sealed record ExceptionRow(
     string Id, string RunId, string Title, string Control, string ReasonCode, string Severity, string Status,
     decimal? ValueAmount, string? ValueCurrency, string LegalEntityId, DateOnly BusinessDate,
     string? OwnerId, string? OwnerName, DateTimeOffset CreatedAt, int AgeDays, DateTimeOffset DueAt, bool Blocking,
-    string? SourceFile, string? SourceRowId, int Version)
+    string? SourceFile, string? SourceRowId, int Version, string Description = "")
 {
     /// <summary>Sort-key values of this row as text, in the order of the requested sort (cursor state).</summary>
     public IReadOnlyList<string> SortKeys { get; init; } = [];

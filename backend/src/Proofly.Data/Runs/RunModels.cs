@@ -40,7 +40,7 @@ public sealed record DeliveryRow(
 public sealed record AttentionRow(
     string Id, string RunId, string Title, string Control, string ReasonCode, string Severity, string Status, MoneyRow? Value, string LegalEntityId,
     DateOnly BusinessDate, UserRefRow? Owner, DateTimeOffset CreatedAt, int AgeDays, DateTimeOffset DueAt, bool Blocking, string? SourceFile,
-    string? SourceRowId, long RowVersion);
+    string? SourceRowId, long RowVersion, string Description = "");
 
 public sealed record SafeguardingRow(
     string Currency, MoneyRow Obligation, MoneyRow EligibleBalance, MoneyRow ApprovedAdjustments, MoneyRow? Result, string State,

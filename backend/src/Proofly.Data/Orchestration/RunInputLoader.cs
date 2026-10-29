@@ -13,7 +13,7 @@ namespace Proofly.Data.Orchestration;
 /// Loads the evidence of a run from the database inside the caller's transaction: the deliveries of the legal entity
 /// and business date that are ingested (or rejected at registration), the rejected rows of the non-superseded ones,
 /// the accepted canonical records of the deliveries that are RECEIVED, LATE or QUALIFIED (never superseded or rejected
-/// ones, so a correction replaces the delivery it corrects and a duplicate delivery adds nothing), and the run's adjustments.
+/// ones, so a correction replaces the delivery it corrects and a duplicate delivery adds nothing), and the adjustments of the legal entity and business date (created in this or an earlier run version; they stay valid across reprocessing).
 /// </summary>
 internal static class RunInputLoader
 {
@@ -118,7 +118,7 @@ internal static class RunInputLoader
         }
 
         var adjustments = new List<AdjustmentInput>();
-        await using (var c = Cmd("SELECT id, amount, currency::text, status, expires_on FROM safeguarding_adjustments WHERE run_id = @r ORDER BY id"))
+        await using (var c = Cmd("SELECT a.id, a.amount, a.currency::text, a.status, a.expires_on FROM safeguarding_adjustments a WHERE a.run_id IN (SELECT x.id FROM runs x JOIN runs t ON t.id=@r AND x.legal_entity_id=t.legal_entity_id AND x.business_date=t.business_date AND x.run_version<=t.run_version) ORDER BY a.id"))
         {
             c.Parameters.AddWithValue("r", runId);
             await using var r = await c.ExecuteReaderAsync(ct);

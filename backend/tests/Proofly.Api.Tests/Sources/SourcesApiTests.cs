@@ -58,7 +58,7 @@ public sealed class SourcesApiTests(AuthFixture f) : IClassFixture<AuthFixture>,
         var items = (await Json(res)).GetProperty("items");
         Assert.Equal(2, items.GetArrayLength());
         var d1 = items.EnumerateArray().Single(i => i.GetProperty("deliveryId").GetString() == "D1");
-        Assert.Equal(["EUR 20.123456", "GBP 150.500000", "JPY 3000.000000"], d1.GetProperty("declaredTotals").EnumerateArray().Select(m => m.GetProperty("currency").GetString() + " " + m.GetProperty("amount").GetString()).ToArray());
+        Assert.Equal(["EUR 20.123456", "GBP 150.50", "JPY 3000.00"], d1.GetProperty("declaredTotals").EnumerateArray().Select(m => m.GetProperty("currency").GetString() + " " + m.GetProperty("amount").GetString()).ToArray());
         Assert.Equal(5, d1.GetProperty("actualRecordCount").GetInt32());
         var d2 = items.EnumerateArray().Single(i => i.GetProperty("deliveryId").GetString() == "D2");
         Assert.Equal("D1", d2.GetProperty("correctionOfDeliveryId").GetString());

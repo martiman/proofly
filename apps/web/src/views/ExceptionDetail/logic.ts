@@ -26,3 +26,19 @@ export const proposalKindLabel = (kind: string | null | undefined) => (kind ? ki
 
 /** The decision endpoint is keyed by the proposal id (`objectId` of the approval), never by the approval id (`id`). */
 export const proposalIdOf = (approval: { id: string; objectId: string }): string => approval.objectId
+
+interface RefNode { id: string; kind: string; label: string; sourceRowId?: string | null; recordId?: string | null }
+/**
+ * Options for the propose-resolution evidence picker: only real evidence records (nodes carrying a recordId; graph node
+ * ids such as `dlv-EXC-…` are not evidence references). The value sent is the recordId, the label is human readable.
+ */
+export function evidenceRefOptions(nodes: readonly RefNode[]): { value: string; label: string }[] {
+  const seen = new Set<string>()
+  const out: { value: string; label: string }[] = []
+  for (const n of nodes) {
+    if (!n.recordId || seen.has(n.recordId)) continue
+    seen.add(n.recordId)
+    out.push({ value: n.recordId, label: `${n.recordId}${n.sourceRowId ? ` (row ${n.sourceRowId})` : ''} · ${n.label}` })
+  }
+  return out
+}

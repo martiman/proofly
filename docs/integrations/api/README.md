@@ -175,12 +175,21 @@ JSON columns the read side interprets. The control orchestration writes them; fi
 ```
 
 `approvedAdjustments` is a decimal string (a snapshot; when absent the live sum of APPROVED, unexpired
-adjustments is used). `obligationLines[].movementType` is optional. A `safeguarding_balances` row without a
+adjustments of the legal entity and business date, created in this or an earlier run version, is used). `obligationLines[].movementType` is optional. A `safeguarding_balances` row without a
 `balanceLines` entry is reported with `included: false` and reason `NOT_EVALUATED` (the control has not evaluated it).
 Amount, account, timestamp and evidence of a balance line come from `safeguarding_balances`, not from the detail.
 
 **`safeguarding_adjustments`**: `evidence_refs` (jsonb array, at least one entry, checked by the database) and
 `expires_on` (date; an APPROVED adjustment counts while `expires_on` is null or not before the business date).
+
+**Adjustments belong to (legal entity, business date), not to one run version.** `safeguarding_adjustments.run_id` is the
+provenance (the version it was created in). Run processing loads every adjustment of the run's legal entity and business date that was
+created in this or an earlier version, so an approved, unexpired adjustment stays valid after a reprocess and the new version's
+position `approvedAdjustments` includes it; the expiry rule and the `stale` flag are unchanged. A superseded or signed-off version is never
+recomputed: it keeps the snapshot it was calculated with (its position `approvedAdjustments`, its result hash and its evidence pack), and a
+version only lists adjustments created in itself or earlier versions. A pending proposal of a superseded version can still be decided; the
+decision flags the position of the current version `stale` (and is refused with `run-locked` when that version is signed off). An approved
+adjustment that expires flags the current version's position the same way.
 
 **`config_rules`** (`id`, `kind`, `name`, `config_version`, `enabled`, `payload`; disabled rows are not listed):
 
@@ -395,6 +404,21 @@ All changes are additive for a client that ignores unknown fields; new response 
 | K8 | `AccountLedgerView.availableCurrencies`: every currency the account holds in the run (the shown one included), sorted. |
 | K9 | `Me.environment {name, kind: DEV|TEST|PILOT|PRODUCTION}` from configuration `Environment:Name` / `Environment:Kind`. Outside Production the defaults are the host environment name and `DEV`; Production refuses to start without both (startup self-check), and a present `Kind` must be one of the four values in every environment. |
 | K10 | Not a contract change: `audit.view` (Evidence & Audit) is deliberately **not** in the ANALYST bundle; it is held by VIEWER, APPROVER and SECURITY_ADMIN. Analysts work exceptions and sign-off preparation; the audit trail is reviewed by independent roles. See the backend README. |
+
+## Changelog (backend fixes from web QA and end-to-end runs)
+
+Migration `0052`. Items L1-L8 change behaviour as described; none renames a field. Clients that compared money strings must compare decimals (L7).
+
+| # | Change |
+| --- | --- |
+| L1 | Safeguarding adjustments are tied to (legal entity, business date); `SafeguardingAdjustment.runId` is provenance only. Approved, unexpired adjustments carry into reprocessed run versions (see "Stored payload shapes"); `listAdjustments` of a run returns those created in it and in earlier versions of the same entity and date; `decideAdjustment` of a superseded run's pending proposal applies to the current version. The old signed-off version keeps its snapshot. |
+| L2 | `getMatchingWorkbench` always lists the pending manual proposals (`PENDING_APPROVAL`, at most 50) in `groups`; the pending group that contains the focused transaction or exception is the focus, and without a focus the first pending group is. `listMatchGroups` default order is PENDING_APPROVAL, then other non-MATCHED groups (status, id), then MATCHED, so "needs attention" comes first; the cursor follows that order. |
+| L3 | Dev seed (`Proofly.Benchmarks --seed-dev`) installs a baseline ruleset (`BaselineRuleset`): per-currency matching tolerances (`MATCH-AMOUNT-TOLERANCE`, `MATCH-AMOUNT-TOLERANCE-EUR`, `-JPY`), ledger tolerance, severities, one source configuration per data source (expected-by time, mandatory), the four-eyes approval policy and the freshness policy, and refreshes the `v1` ruleset snapshot. Control parameters accept several `MATCH-AMOUNT-TOLERANCE-<CCY>` rules (one tolerance carries one currency). |
+| L4 | `ExceptionSummary.title` is a short headline (at most 80 characters, e.g. "EUR balance difference on CA-004") and the new required `ExceptionSummary.description` is the longer text; both are written when the exception is created (`FindingText` in the controls project) and stored in `exceptions.title` / `exceptions.description`. `ExceptionDetail.description` is the stored description; `ExceptionDetail.summary` is the one-line explanation (the control's message) and never equals `description`. `description` also appears in the control room attention queue, the account ledger exceptions and the sign-off open matters (all typed ExceptionSummary). Existing rows were backfilled by migration `0052` (description = rule-trace message, title = reason label). |
+| L5 | `getAccountLedger` with a `currency` the account does not hold is `422` on `currency` (the detail lists the currencies it holds); 404 only for an unknown account. |
+| L6 | `listTransactions` order is (timestamp, numeric row id, id): DD-47 before DD-111; the cursor keeps the same key (old cursors stay valid). |
+| L7 | `DecimalString` serialisation rule: exact value, at least 2 fraction digits, trailing zeros beyond the second removed, never rounded (`0` -> `0.00`, `1081977.250000` -> `1081977.25`, `20.123456` unchanged). Applied in one place (`DecimalString.Normalize`, used by `MoneyDto` and the JSON decimal converter). **Behaviour change for a client comparing amount strings.** |
+| L8 | `ExceptionSummary` objects embedded elsewhere carry `description` too (see L4). |
 
 ## Lint
 

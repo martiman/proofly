@@ -286,7 +286,7 @@ public sealed class SafeguardingReadRepository(NpgsqlDataSource db) : ISafeguard
         if (includeTotal)
         {
             await using var c = db.CreateCommand(
-                $"SELECT count(*) FROM safeguarding_adjustments a JOIN runs r ON r.id=a.run_id WHERE a.run_id=@r AND (@status::text IS NULL OR a.status=@status) AND {ScopePredicate}");
+                $"SELECT count(*) FROM safeguarding_adjustments a JOIN runs r ON r.id=a.run_id WHERE a.run_id IN (SELECT x.id FROM runs x JOIN runs t ON t.id=@r AND x.legal_entity_id=t.legal_entity_id AND x.business_date=t.business_date AND x.run_version<=t.run_version) AND (@status::text IS NULL OR a.status=@status) AND {ScopePredicate}");
             c.Parameters.AddWithValue("r", runId);
             c.Parameters.Add(new NpgsqlParameter("status", NpgsqlDbType.Text) { Value = (object?)status ?? DBNull.Value });
             AddScope(c, scope);
@@ -304,7 +304,7 @@ public sealed class SafeguardingReadRepository(NpgsqlDataSource db) : ISafeguard
         await using (var c = db.CreateCommand(
             $@"SELECT a.id, a.run_id, a.currency, a.amount, a.status, a.proposed_by_user_id, u.name, a.reason, a.evidence_refs::text, a.expires_on, a.version, a.created_at
                FROM safeguarding_adjustments a JOIN runs r ON r.id=a.run_id JOIN users u ON u.id=a.proposed_by_user_id
-               WHERE a.run_id=@r AND (@status::text IS NULL OR a.status=@status) AND {ScopePredicate}
+               WHERE a.run_id IN (SELECT x.id FROM runs x JOIN runs t ON t.id=@r AND x.legal_entity_id=t.legal_entity_id AND x.business_date=t.business_date AND x.run_version<=t.run_version) AND (@status::text IS NULL OR a.status=@status) AND {ScopePredicate}
                  AND (@cat::timestamptz IS NULL OR (a.created_at, a.id) > (@cat, @cid))
                ORDER BY a.created_at, a.id LIMIT @lim"))
         {
@@ -377,9 +377,9 @@ public sealed class SafeguardingReadRepository(NpgsqlDataSource db) : ISafeguard
     {
         var map = new Dictionary<string, decimal>();
         await using var c = db.CreateCommand(
-            @"SELECT currency, SUM(amount) FROM safeguarding_adjustments
-              WHERE run_id=@r AND status='APPROVED' AND (expires_on IS NULL OR expires_on >= @bd)
-              GROUP BY currency");
+            @"SELECT a.currency, SUM(a.amount) FROM safeguarding_adjustments a
+              WHERE a.run_id IN (SELECT x.id FROM runs x JOIN runs t ON t.id=@r AND x.legal_entity_id=t.legal_entity_id AND x.business_date=t.business_date AND x.run_version<=t.run_version) AND a.status='APPROVED' AND (a.expires_on IS NULL OR a.expires_on >= @bd)
+              GROUP BY a.currency");
         c.Parameters.AddWithValue("r", run.RunId);
         c.Parameters.AddWithValue("bd", NpgsqlDbType.Date, run.BusinessDate);
         await using var rd = await c.ExecuteReaderAsync(ct);

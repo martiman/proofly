@@ -115,7 +115,7 @@ public class AdjustmentCommandApiTests(AdjCmdFixture f) : IClassFixture<AdjCmdFi
         Assert.NotNull(res.Headers.ETag);
         var body = await Json(res);
         Assert.Equal("PROPOSED", body.GetProperty("status").GetString());
-        Assert.Equal("-25.500000", body.GetProperty("amount").GetProperty("amount").GetString());
+        Assert.Equal("-25.50", body.GetProperty("amount").GetProperty("amount").GetString());
         Assert.Equal("PENDING", body.GetProperty("approval").GetProperty("status").GetString());
         var id = body.GetProperty("id").GetString();
         Assert.Equal(1, await Count($"SELECT count(*) FROM audit_events WHERE event_type='ADJUSTMENT_PROPOSED' AND subject_id='{id}' AND reason='Timing difference' AND chain_id='LE-1'"));

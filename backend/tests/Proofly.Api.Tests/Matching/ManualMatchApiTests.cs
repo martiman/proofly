@@ -81,7 +81,7 @@ public class ManualMatchApiTests(ManualMatchFixture f) : IClassFixture<ManualMat
         var list = await Json(await Viewer.GetAsync("/api/v1/runs/R-M1/match-groups?status=PENDING_APPROVAL"));
         var grp = list.GetProperty("items").EnumerateArray().Single(x => x.GetProperty("id").GetString() == g);
         Assert.Equal("1:1", grp.GetProperty("cardinality").GetString());
-        Assert.Equal("0.500000", grp.GetProperty("difference").GetProperty("amount").GetString()); // 250 - 249.5, recorded not repaired
+        Assert.Equal("0.50", grp.GetProperty("difference").GetProperty("amount").GetString()); // 250 - 249.5, recorded not repaired
         Assert.True(grp.GetProperty("manual").GetBoolean());
         Assert.Equal("MANUAL_MATCH", grp.GetProperty("approval").GetProperty("objectType").GetString());
         Assert.Equal("PENDING", grp.GetProperty("approval").GetProperty("status").GetString());

@@ -37,7 +37,7 @@ public sealed class DecimalStringConverter : JsonConverter<decimal>
     }
 
     public override void Write(Utf8JsonWriter writer, decimal value, JsonSerializerOptions options) =>
-        writer.WriteStringValue(value.ToString(CultureInfo.InvariantCulture));
+        writer.WriteStringValue(Proofly.Contracts.Common.DecimalString.Normalize(value));
 }
 
 public sealed class WireEnumConverterFactory : JsonConverterFactory

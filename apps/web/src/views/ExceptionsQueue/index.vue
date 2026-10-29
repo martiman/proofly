@@ -105,6 +105,7 @@ function removeView() {
 // ---- filters ----
 function resetFilters() { Object.assign(f, emptyFilters()); activeViewId.value = undefined }
 const filtersActive = computed(() => JSON.stringify({ ...f, sort: '' }) !== JSON.stringify({ ...emptyFilters(), sort: '' }))
+const moreActive = computed(() => [f.unassigned, f.blocking, !!f.valueMin, !!f.valueMax, f.ageDaysMin != null, f.ageDaysMax != null].filter(Boolean).length)
 const sortedBy = (field: string) => sortOrderFor(f.sort, field)
 function onTable(_p: unknown, _flt: unknown, s: { field?: string; order?: 'ascend' | 'descend' | null }) { f.sort = sortFromTable(s.field, s.order) }
 
@@ -197,26 +198,31 @@ const tableChange = (_p: unknown, _f: unknown, s: unknown) => onTable(_p, _f, s 
 
   <!-- filter and saved views bar -->
   <section class="card pad filters">
-    <div class="frow">
-      <a-select v-model:value="f.severity" mode="multiple" allow-clear placeholder="Severity" :options="opts(SEVERITIES)" :max-tag-count="1" class="w140" />
-      <a-select v-model:value="f.status" mode="multiple" allow-clear placeholder="Status" :options="opts(STATUSES)" :max-tag-count="1" class="w160" />
-      <a-select v-model:value="f.control" mode="multiple" allow-clear placeholder="Control" :options="opts(CONTROLS)" :max-tag-count="1" class="w160" />
-      <a-select v-model:value="f.currency" allow-clear placeholder="Currency" :options="currencies.map((c) => ({ value: c, label: c }))" class="w100" />
-      <a-select v-model:value="f.ownerId" allow-clear placeholder="Owner" :options="ownerOptions" :disabled="f.unassigned" class="w150" />
-      <a-checkbox v-model:checked="f.unassigned">Unassigned</a-checkbox>
-      <a-checkbox v-model:checked="f.blocking">Blocking</a-checkbox>
-    </div>
-    <div class="frow">
-      <a-input v-model:value="f.valueMin" placeholder="Value min" class="w110" :status="filterErrors.valueMin ? 'error' : undefined" />
-      <a-input v-model:value="f.valueMax" placeholder="Value max" class="w110" :status="filterErrors.valueMax ? 'error' : undefined" />
-      <a-input-number v-model:value="f.ageDaysMin" :min="0" placeholder="Age ≥ days" class="w120" />
-      <a-input-number v-model:value="f.ageDaysMax" :min="0" placeholder="Age ≤ days" class="w120" />
-      <a-input-search v-model:value="f.search" placeholder="Search id, title, reason…" allow-clear class="w240" />
-      <a-button v-if="filtersActive" type="link" @click="resetFilters">Clear filters</a-button>
+    <div class="frow one">
+      <a-select v-model:value="f.severity" mode="multiple" allow-clear placeholder="Severity" :options="opts(SEVERITIES)" :max-tag-count="1" size="small" class="w130" />
+      <a-select v-model:value="f.status" mode="multiple" allow-clear placeholder="Status" :options="opts(STATUSES)" :max-tag-count="1" size="small" class="w140" />
+      <a-select v-model:value="f.control" mode="multiple" allow-clear placeholder="Control" :options="opts(CONTROLS)" :max-tag-count="1" size="small" class="w140" />
+      <a-select v-model:value="f.currency" allow-clear placeholder="Currency" :options="currencies.map((c) => ({ value: c, label: c }))" size="small" class="w100" />
+      <a-select v-model:value="f.ownerId" allow-clear placeholder="Owner" :options="ownerOptions" :disabled="f.unassigned" size="small" class="w140" />
+      <a-input-search v-model:value="f.search" placeholder="Search id, title, reason…" allow-clear size="small" class="w200" />
+      <a-popover trigger="click" placement="bottomLeft">
+        <template #content>
+          <div class="more">
+            <a-checkbox v-model:checked="f.unassigned">Unassigned</a-checkbox>
+            <a-checkbox v-model:checked="f.blocking">Blocking</a-checkbox>
+            <a-input v-model:value="f.valueMin" placeholder="Value min" :status="filterErrors.valueMin ? 'error' : undefined" />
+            <a-input v-model:value="f.valueMax" placeholder="Value max" :status="filterErrors.valueMax ? 'error' : undefined" />
+            <a-input-number v-model:value="f.ageDaysMin" :min="0" placeholder="Age ≥ days" class="full" />
+            <a-input-number v-model:value="f.ageDaysMax" :min="0" placeholder="Age ≤ days" class="full" />
+          </div>
+        </template>
+        <a-button size="small" data-test="more-filters">More filters<template v-if="moreActive"> ({{ moreActive }})</template></a-button>
+      </a-popover>
+      <a-button v-if="filtersActive" type="link" size="small" @click="resetFilters">Clear</a-button>
       <span class="gap" />
-      <a-select :value="activeViewId" allow-clear placeholder="Saved views" :options="viewOptions" class="w180" @change="applyView" />
-      <a-button v-if="activeViewId" danger @click="removeView">Delete view</a-button>
-      <a-button :disabled="!!Object.keys(filterErrors).length" @click="saveOpen = true">Save view</a-button>
+      <a-select :value="activeViewId" allow-clear placeholder="Saved views" :options="viewOptions" size="small" class="w160" @change="applyView" />
+      <a-button v-if="activeViewId" danger size="small" @click="removeView">Delete view</a-button>
+      <a-button size="small" :disabled="!!Object.keys(filterErrors).length" @click="saveOpen = true">Save view</a-button>
     </div>
     <div v-for="(m, k) in filterErrors" :key="k" class="ferr">{{ m }}</div>
     <div v-if="views.error.value" class="ferr">Saved views unavailable: {{ describeError(views.error.value) }}</div>
@@ -286,6 +292,9 @@ const tableChange = (_p: unknown, _f: unknown, s: unknown) => onTable(_p, _f, s 
 .mt { margin-top: 12px; }
 .pad { padding: 16px; }
 .cards { display: grid; grid-template-columns: 1.4fr repeat(4, 1fr) repeat(3, .8fr); gap: 12px; margin-bottom: 16px; }
+@media (max-width: 1399px) { .cards { grid-template-columns: repeat(4, 1fr); } }
+.more { display: flex; flex-direction: column; gap: 8px; width: 200px; }
+.w130 { width: 130px }
 .kpi { padding: 12px 14px; }
 .k { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); }
 .n { font-size: 26px; font-weight: 600; margin: 2px 0; }

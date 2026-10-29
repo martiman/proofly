@@ -33,8 +33,10 @@ public class MatchingRepositoryTests(SchemaFixture f) : IClassFixture<SchemaFixt
     [Fact]
     public async Task Lists_groups_with_sides_rule_tolerance_exceptions_and_approval()
     {
-        var groups = await Repo.ListGroupsAsync("R-M1", null, 10, null, default);
-        Assert.Equal(["G-001", "G-002", "G-003", "G-004", "G-005"], groups.Select(g => g.Id));
+        var listed = await Repo.ListGroupsAsync("R-M1", null, 10, null, default);
+        // Default order: PENDING_APPROVAL first, MATCHED last, the rest by status then id.
+        Assert.Equal(["G-004", "G-002", "G-005", "G-003", "G-001"], listed.Select(g => g.Id));
+        var groups = listed.OrderBy(g => g.Id, StringComparer.Ordinal).ToList();
 
         var g1 = groups[0];
         Assert.Equal("rule-ref@2.1", g1.RuleVersion);
@@ -87,8 +89,9 @@ public class MatchingRepositoryTests(SchemaFixture f) : IClassFixture<SchemaFixt
 
         var page1 = await Repo.ListGroupsAsync("R-M1", null, 2, null, default);
         Assert.Equal(3, page1.Count); // limit + 1 signals more
+        Assert.Equal(["G-004", "G-002", "G-005"], page1.Select(g => g.Id));
         var page2 = await Repo.ListGroupsAsync("R-M1", null, 2, "G-002", default);
-        Assert.Equal(["G-003", "G-004", "G-005"], page2.Select(g => g.Id));
+        Assert.Equal(["G-005", "G-003", "G-001"], page2.Select(g => g.Id));
         Assert.Equal(2, await Repo.CountGroupsAsync("R-M1", "UNMATCHED", default));
         Assert.Equal(5, await Repo.CountGroupsAsync("R-M1", null, default));
     }
@@ -106,7 +109,7 @@ public class MatchingRepositoryTests(SchemaFixture f) : IClassFixture<SchemaFixt
     {
         var (g, focus, fail) = await Repo.ResolveFocusAsync("R-M1", null, null, default);
         Assert.Equal(FocusFailure.None, fail);
-        Assert.Equal("G-002", g); // G-001 is matched
+        Assert.Equal("G-004", g); // the pending manual proposal first (G-001 is matched, G-002 unmatched)
         Assert.StartsWith("TRF-", focus);
         Assert.Equal((null, null, FocusFailure.None), await Repo.ResolveFocusAsync("R-EMPTY", null, null, default)); // an empty run is not an error
     }

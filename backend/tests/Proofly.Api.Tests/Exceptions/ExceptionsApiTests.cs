@@ -115,7 +115,7 @@ public class ExceptionsApiTests(ExceptionsFixture f) : IClassFixture<ExceptionsF
         var page = await Json(res);
         Assert.Equal(["E-001", "E-006", "E-003", "E-002", "E-004", "E-007", "E-005"], Ids(page));
         var first = page.GetProperty("items")[0];
-        Assert.Equal("-100.500000", first.GetProperty("value").GetProperty("amount").GetString());
+        Assert.Equal("-100.50", first.GetProperty("value").GetProperty("amount").GetString());
         Assert.Equal("GBP", first.GetProperty("value").GetProperty("currency").GetString());
         Assert.Equal("Ada", first.GetProperty("owner").GetProperty("name").GetString());
         Assert.Equal("\"v1\"", first.GetProperty("etag").GetString());
@@ -222,7 +222,7 @@ public class ExceptionsApiTests(ExceptionsFixture f) : IClassFixture<ExceptionsF
         Assert.Equal([("NO_BANK_EVIDENCE", 4), ("LATE_DELIVERY", 1), ("LEDGER_GAP", 1), ("SETTLEMENT_SHORT", 1)], reasons);
         var sevCur = s.GetProperty("bySeverityCurrency").EnumerateArray()
             .Select(x => $"{x.GetProperty("severity").GetString()}/{x.GetProperty("currency").GetString()}/{x.GetProperty("count").GetInt32()}/{x.GetProperty("absoluteValue").GetProperty("amount").GetString()}").ToArray();
-        Assert.Equal(["CRITICAL/EUR/1/1500.750000", "CRITICAL/GBP/1/100.500000", "HIGH/EUR/1/2000.000000", "HIGH/JPY/1/50000.000000", "MEDIUM/GBP/1/30.250000", "LOW/GBP/1/10.000000"], sevCur);
+        Assert.Equal(["CRITICAL/EUR/1/1500.75", "CRITICAL/GBP/1/100.50", "HIGH/EUR/1/2000.00", "HIGH/JPY/1/50000.00", "MEDIUM/GBP/1/30.25", "LOW/GBP/1/10.00"], sevCur);
         // enum-keyed maps keep their wire names (no camel-casing of dictionary keys)
         Assert.Equal(["CRITICAL", "HIGH", "MEDIUM", "LOW"], s.GetProperty("bySeverity").EnumerateObject().Select(p => p.Name).ToArray());
         Assert.Contains("independent_ledger", s.GetProperty("byControl").EnumerateObject().Select(p => p.Name));
@@ -242,7 +242,10 @@ public class ExceptionsApiTests(ExceptionsFixture f) : IClassFixture<ExceptionsF
              trace.GetProperty("calculation").GetString(), trace.GetProperty("result").GetString()));
         Assert.Equal(["transferAmount", "bankAmount"], trace.GetProperty("inputs").EnumerateArray().Select(i => i.GetProperty("name").GetString()!).ToArray());
         Assert.Equal("Transfer is not backed by a bank booking", recorded.GetProperty("expectedEffect").GetString());
-        Assert.Equal("No bank booking within the window", recorded.GetProperty("description").GetString());
+        // summary is the one-line explanation (the control's message); description is the stored longer text (here the title, as the seeded row has none): never the same text.
+        Assert.Equal("No bank booking within the window", recorded.GetProperty("summary").GetString());
+        Assert.Equal("Small mismatch", recorded.GetProperty("description").GetString());
+        Assert.NotEqual(recorded.GetProperty("summary").GetString(), recorded.GetProperty("description").GetString());
 
         var derived = await Json(await Viewer.GetAsync("/api/v1/exceptions/E-001"));
         Assert.Equal(JsonValueKind.Null, derived.GetProperty("trace").GetProperty("tolerance").ValueKind); // not 'not recorded'

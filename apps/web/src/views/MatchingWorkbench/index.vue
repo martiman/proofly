@@ -29,14 +29,26 @@ watch(data, () => { selectedGroupId.value = null; picked.value = []; problem.val
 const pinned = ref<Group | null>(null)
 const group = computed<Group | null>(() => pinned.value ?? data.value?.groups.find((g) => g.id === selectedGroupId.value) ?? data.value?.groups[0] ?? null)
 
-const statusFilter = ref<Schema<'MatchStatus'> | undefined>()
-const groups = usePaged((q, signal) => listMatchGroups(runId.value!, { ...q, status: statusFilter.value }, { signal }), [runId, statusFilter], { limit: 10 })
+// Default: groups needing attention (almost all rows are matched). The API filters by one status, so 'OPEN' merges one request per not-matched status.
+const NOT_MATCHED: Schema<'MatchStatus'>[] = ['UNMATCHED', 'VALUE_MISMATCH', 'PENDING_APPROVAL']
+const statusFilter = ref<Schema<'MatchStatus'> | 'OPEN' | 'ALL'>('OPEN')
+const groups = usePaged(async (q, signal) => {
+  const rid = runId.value!
+  if (statusFilter.value === 'ALL') return listMatchGroups(rid, { ...q }, { signal })
+  if (statusFilter.value !== 'OPEN') return listMatchGroups(rid, { ...q, status: statusFilter.value }, { signal })
+  const pages = await Promise.all(NOT_MATCHED.map((status) => listMatchGroups(rid, { limit: q.limit, status }, { signal })))
+  return { items: pages.flatMap((p) => p.items), page: { hasMore: false, nextCursor: null } }
+}, [runId, statusFilter], { limit: 10 })
 
 const statusMap: Record<string, { label: string; s: Status }> = {
   MATCHED: { label: 'Matched automatically', s: 'pass' }, UNMATCHED: { label: 'Unmatched', s: 'fail' },
   VALUE_MISMATCH: { label: 'Value mismatch', s: 'warn' }, NOT_APPLICABLE: { label: 'Not applicable', s: 'neutral' },
   PENDING_APPROVAL: { label: 'Pending approval', s: 'info' },
 }
+const statusOptions = [
+  { value: 'OPEN', label: 'Not matched' }, { value: 'ALL', label: 'All' },
+  ...Object.entries(statusMap).map(([v, m]) => ({ value: v, label: m.label })),
+]
 const st = (s: string) => statusMap[s] ?? { label: s.replace(/_/g, ' ').toLowerCase(), s: 'neutral' as Status }
 const money = (m: Schema<'Money'> | null | undefined) => (m ? formatMoney(m.amount, m.currency) : '—')
 const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—')
@@ -183,8 +195,7 @@ const errStatus = computed(() => (isApiError(wb.error.value) ? wb.error.value.st
 
         <div class="card">
           <div class="ch"><span class="lbl">Match groups</span>
-            <a-select v-model:value="statusFilter" allow-clear size="small" class="aside" style="width: 180px" placeholder="All statuses"
-              :options="Object.entries(statusMap).map(([v, m]) => ({ value: v, label: m.label }))" />
+            <a-select v-model:value="statusFilter" size="small" class="aside" style="width: 180px" :options="statusOptions" />
           </div>
           <StatePlaceholder v-if="groups.placeholder.value" :state="groups.placeholder.value" :message="groups.placeholder.value === 'empty' ? 'No match groups.' : undefined"><template #action><a-button @click="groups.reload">Retry</a-button></template></StatePlaceholder>
           <a-table v-else size="small" :pagination="false" row-key="id" :data-source="groups.items.value" :loading="groups.loading.value" :custom-row="(g: Group) => ({ onClick: () => openGroup(g), style: 'cursor:pointer' })"

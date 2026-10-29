@@ -48,16 +48,16 @@ internal static class RunBulkPersistence
         foreach (var chunk in items.Chunk(Chunk))
         {
             var ids = await ReturnIds(tx, """
-                INSERT INTO exceptions (id, run_id, legal_entity_id, business_date, title, control, reason_code, severity, status, value_amount, value_currency,
+                INSERT INTO exceptions (id, run_id, legal_entity_id, business_date, title, description, control, reason_code, severity, status, value_amount, value_currency,
                                         owner_user_id, due_at, blocking, source_file, source_row_id, delivery_id, resolution_kind, resolution_reason, finding_key, predecessor_exception_id)
-                SELECT t.id, @r, @le, @d, t.title, t.control, t.rc, t.sev, t.st, t.va, t.vc, t.own, t.due, t.blk, t.sf, t.sr, t.del, t.rk, t.rr, t.fk, t.pred
-                FROM unnest(@id, @title, @control, @rc, @sev, @st, @va, @vc, @own, @due, @blk, @sf, @sr, @del, @rk, @rr, @fk, @pred)
-                     WITH ORDINALITY AS t(id, title, control, rc, sev, st, va, vc, own, due, blk, sf, sr, del, rk, rr, fk, pred, ord)
+                SELECT t.id, @r, @le, @d, t.title, t.descr, t.control, t.rc, t.sev, t.st, t.va, t.vc, t.own, t.due, t.blk, t.sf, t.sr, t.del, t.rk, t.rr, t.fk, t.pred
+                FROM unnest(@id, @title, @descr, @control, @rc, @sev, @st, @va, @vc, @own, @due, @blk, @sf, @sr, @del, @rk, @rr, @fk, @pred)
+                     WITH ORDINALITY AS t(id, title, descr, control, rc, sev, st, va, vc, own, due, blk, sf, sr, del, rk, rr, fk, pred, ord)
                 ORDER BY t.ord
                 ON CONFLICT (id) DO NOTHING RETURNING id
                 """, ct,
                 new NpgsqlParameter("r", runId), new NpgsqlParameter("le", p.LegalEntityId), new NpgsqlParameter("d", NpgsqlDbType.Date) { Value = p.BusinessDate },
-                Txt("id", chunk.Select(x => x.Draft.Id)), Txt("title", chunk.Select(x => x.Draft.Title)),
+                Txt("id", chunk.Select(x => x.Draft.Id)), Txt("title", chunk.Select(x => x.Draft.Title)), Txt("descr", chunk.Select(x => x.Draft.Description)),
                 Txt("control", chunk.Select(x => WireNames.ToLowerSnake(x.Draft.Finding.Area))), Txt("rc", chunk.Select(x => x.Draft.Finding.ReasonCode)),
                 Txt("sev", chunk.Select(x => WireNames.ToUpperSnake(x.Draft.Finding.Severity))), Txt("st", chunk.Select(x => x.Decision?.Status ?? "OPEN")),
                 Arr("va", NpgsqlDbType.Numeric, chunk.Select(x => x.Draft.Finding.Value?.Amount).ToArray()),

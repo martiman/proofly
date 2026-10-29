@@ -45,4 +45,4 @@ public sealed record LedgerEntryPage(IReadOnlyList<LedgerEntryRow> Rows, bool Ha
 public sealed record AccountExceptionRow(
     string Id, string RunId, string Title, string Control, string ReasonCode, string Severity, string Status, decimal? ValueAmount,
     string? ValueCurrency, string LegalEntityId, DateOnly BusinessDate, string? OwnerId, string? OwnerName, DateTimeOffset CreatedAt,
-    DateTimeOffset DueAt, bool Blocking, string? SourceFile, string? SourceRowId, int Version);
+    DateTimeOffset DueAt, bool Blocking, string? SourceFile, string? SourceRowId, int Version, string Description = "");

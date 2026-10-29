@@ -65,6 +65,11 @@ if (seedDev && await Scalar<long>("SELECT count(*) FROM runs") > 0)
     return 0;
 }
 if (!apiOnly) await Exec($"INSERT INTO legal_entities (id, name, base_currency, currencies) VALUES ('LE-BENCH','{(seedDev ? "Proofly Demo Ltd" : "Bench Ltd")}','GBP','{{EUR,JPY}}') ON CONFLICT DO NOTHING; INSERT INTO users (id, name, email) VALUES ('u-bench','Bench','bench@x.test') ON CONFLICT DO NOTHING");
+if (seedDev && !apiOnly)
+{
+    await Proofly.Data.Governance.BaselineRuleset.InstallAsync(ds); // before the run: it records ruleset v1 with these parameters
+    Console.WriteLine($"seed-dev: baseline ruleset installed ({Proofly.Data.Governance.BaselineRuleset.Entries.Count} config rows, ruleset v1)");
+}
 Task<long> DbSize() => Scalar<long>($"SELECT pg_database_size('{db}')");
 
 GenerationSummary summary = null!;

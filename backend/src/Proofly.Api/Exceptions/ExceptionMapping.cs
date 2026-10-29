@@ -14,7 +14,7 @@ public static class ExceptionMapping
     public static string Etag(int version) => ETags.ForVersion(version);
 
     public static ExceptionSummaryDto ToSummary(ExceptionRow r) => new(
-        r.Id, r.RunId, r.Title, r.Control, r.ReasonCode, r.Severity, r.Status, Money(r.ValueAmount, r.ValueCurrency),
+        r.Id, r.RunId, r.Title, r.Description, r.Control, r.ReasonCode, r.Severity, r.Status, Money(r.ValueAmount, r.ValueCurrency),
         r.LegalEntityId, r.BusinessDate.ToString("yyyy-MM-dd"), r.OwnerId is null ? null : new UserRefDto(r.OwnerId, r.OwnerName ?? r.OwnerId),
         r.CreatedAt, r.AgeDays, r.DueAt, r.Blocking, r.SourceFile, r.SourceRowId, Etag(r.Version));
 
@@ -83,8 +83,8 @@ public static class ExceptionMapping
         return new ExceptionDetailDto(
             s.Id, s.RunId, s.Title, s.Control, s.ReasonCode, s.Severity, s.Status, s.Value, s.LegalEntityId, s.BusinessDate, s.Owner,
             s.CreatedAt, s.AgeDays, s.DueAt, s.Blocking, s.SourceFile, s.SourceRowId, s.Etag,
-            d.Trace?.Description ?? r.Title,
-            d.Trace?.ExpectedEffect ?? (r.Blocking ? "Blocks run sign-off until resolved." : "Does not block run sign-off."), r.Title,
+            r.Description,
+            d.Trace?.ExpectedEffect ?? (r.Blocking ? "Blocks run sign-off until resolved." : "Does not block run sign-off."), d.Trace?.Description ?? r.Title,
             nodes, edges, trace, timeline, states,
             d.Evidence.Where(e => TransactionKinds.Contains(e.Kind.ToUpperInvariant())).Select(e => e.Ref).Distinct().ToList(),
             d.Evidence.Where(e => e.Kind.Equals("ACCOUNT", StringComparison.OrdinalIgnoreCase)).Select(e => e.Ref).Distinct().ToList(),

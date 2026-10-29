@@ -189,7 +189,13 @@ public class TransactionsApiTests(AuthFixture f) : IClassFixture<AuthFixture>, I
         Assert.Equal("JPY", jpy.GetProperty("account").GetProperty("currency").GetString());
         // the other currencies of the account are listed, the shown one included, whichever one was requested
         Assert.Equal(["GBP", "JPY"], jpy.GetProperty("availableCurrencies").EnumerateArray().Select(x => x.GetString()!).ToArray());
-        Assert.Equal(HttpStatusCode.NotFound, (await Viewer.GetAsync("/api/v1/runs/R1/accounts/ACC-MULTI/ledger?currency=EUR")).StatusCode);
+        // a currency the account does not hold is a field error on currency listing what it holds; an unknown account stays 404
+        var notHeld = await Viewer.GetAsync("/api/v1/runs/R1/accounts/ACC-MULTI/ledger?currency=EUR");
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, notHeld.StatusCode);
+        var notHeldBody = await notHeld.Content.ReadAsStringAsync();
+        Assert.Contains("currency", notHeldBody);
+        Assert.Contains("GBP, JPY", notHeldBody);
+        Assert.Equal(HttpStatusCode.NotFound, (await Viewer.GetAsync("/api/v1/runs/R1/accounts/NO-SUCH/ledger?currency=EUR")).StatusCode);
         // a single-currency account needs no currency
         var single = await Ok("/api/v1/runs/R1/accounts/ACC-1/ledger");
         Assert.Equal("GBP", single.GetProperty("account").GetProperty("currency").GetString());

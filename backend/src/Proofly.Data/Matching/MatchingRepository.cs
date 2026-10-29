@@ -9,10 +9,12 @@ namespace Proofly.Data.Matching;
 public interface IMatchingRepository
 {
     Task<RunScope?> GetRunScopeAsync(string runId, CancellationToken ct);
-    /// <summary>Keyset page ordered by group id; fetches up to <paramref name="limit"/> + 1 rows.</summary>
+    /// <summary>Keyset page ordered by (PENDING_APPROVAL first, MATCHED last, then status, then group id); fetches up to <paramref name="limit"/> + 1 rows.</summary>
     Task<IReadOnlyList<MatchGroupRow>> ListGroupsAsync(string runId, string? status, int limit, string? afterId, CancellationToken ct);
     Task<long> CountGroupsAsync(string runId, string? status, CancellationToken ct);
     Task<MatchGroupRow?> GetGroupAsync(string runId, string groupId, CancellationToken ct);
+    /// <summary>Groups awaiting a decision (PENDING_APPROVAL, manual proposals), oldest id first, at most <paramref name="limit"/>.</summary>
+    Task<IReadOnlyList<MatchGroupRow>> ListPendingGroupsAsync(string runId, int limit, CancellationToken ct);
     /// <summary>
     /// Resolves the focus (transaction, exception or first open group). A transaction/exception that exists but is in no group yields
     /// (null, transaction-or-null, None); one that does not exist in the run yields NotFound.
@@ -77,13 +79,22 @@ public sealed class MatchingRepository(NpgsqlDataSource db) : IMatchingRepositor
     public async Task<IReadOnlyList<MatchGroupRow>> ListGroupsAsync(string runId, string? status, int limit, string? afterId, CancellationToken ct)
     {
         await using var cmd = db.CreateCommand(GroupSelect + """
-             WHERE g.run_id = @r AND (@s::text IS NULL OR g.status = @s) AND (@after::text IS NULL OR g.id > @after)
-             ORDER BY g.id LIMIT @lim
+             WHERE g.run_id = @r AND (@s::text IS NULL OR g.status = @s)
+               AND (@after::text IS NULL OR ((CASE g.status WHEN 'PENDING_APPROVAL' THEN 0 WHEN 'MATCHED' THEN 2 ELSE 1 END), g.status, g.id) > (SELECT (CASE k.status WHEN 'PENDING_APPROVAL' THEN 0 WHEN 'MATCHED' THEN 2 ELSE 1 END), k.status, k.id FROM match_groups k WHERE k.id = @after))
+             ORDER BY (CASE g.status WHEN 'PENDING_APPROVAL' THEN 0 WHEN 'MATCHED' THEN 2 ELSE 1 END), g.status, g.id LIMIT @lim
             """);
         cmd.Parameters.AddWithValue("r", runId);
         cmd.Parameters.Add(new NpgsqlParameter("s", NpgsqlDbType.Text) { Value = (object?)status ?? DBNull.Value });
         cmd.Parameters.Add(new NpgsqlParameter("after", NpgsqlDbType.Text) { Value = (object?)afterId ?? DBNull.Value });
         cmd.Parameters.AddWithValue("lim", limit + 1);
+        return await ReadGroupsAsync(cmd, ct);
+    }
+
+    public async Task<IReadOnlyList<MatchGroupRow>> ListPendingGroupsAsync(string runId, int limit, CancellationToken ct)
+    {
+        await using var cmd = db.CreateCommand(GroupSelect + " WHERE g.run_id = @r AND g.status = 'PENDING_APPROVAL' ORDER BY g.id LIMIT @lim");
+        cmd.Parameters.AddWithValue("r", runId);
+        cmd.Parameters.AddWithValue("lim", limit);
         return await ReadGroupsAsync(cmd, ct);
     }
 
@@ -206,7 +217,7 @@ public sealed class MatchingRepository(NpgsqlDataSource db) : IMatchingRepositor
             }
             await using var cmd = db.CreateCommand("""
                 SELECT c.match_group_id FROM match_candidates c JOIN match_groups g ON g.id = c.match_group_id
-                WHERE g.run_id = @r AND c.record_table = @t AND c.record_id = @i ORDER BY c.match_group_id LIMIT 1
+                WHERE g.run_id = @r AND c.record_table = @t AND c.record_id = @i ORDER BY (g.status = 'PENDING_APPROVAL') DESC, c.match_group_id LIMIT 1
                 """);
             cmd.Parameters.AddWithValue("r", runId);
             cmd.Parameters.AddWithValue("t", table);
@@ -224,7 +235,7 @@ public sealed class MatchingRepository(NpgsqlDataSource db) : IMatchingRepositor
             // Candidates tied to the exception: by delivery/row, by explicit exception_links, or via a link to the whole group.
             await using var cmd = db.CreateCommand("""
                 SELECT x.match_group_id, x.record_table, x.record_id FROM (
-                    SELECT c.match_group_id, c.record_table, c.record_id, c.id AS cid
+                    SELECT c.match_group_id, c.record_table, c.record_id, c.id AS cid, g.status AS gstatus
                     FROM match_candidates c JOIN match_groups g ON g.id = c.match_group_id
                     LEFT JOIN LATERAL (
                         SELECT delivery_id, source_row_id AS row_key FROM transfer_instructions WHERE c.record_table = 'transfer_instructions' AND id = c.record_id
@@ -235,16 +246,16 @@ public sealed class MatchingRepository(NpgsqlDataSource db) : IMatchingRepositor
                     ) r ON true
                     JOIN exceptions e ON e.id = @e AND e.run_id = @r AND g.run_id = @r AND e.delivery_id = r.delivery_id AND e.source_row_id = r.row_key
                     UNION ALL
-                    SELECT c.match_group_id, c.record_table, c.record_id, c.id
+                    SELECT c.match_group_id, c.record_table, c.record_id, c.id, g.status
                     FROM exception_links l JOIN match_candidates c ON c.record_table = l.record_table AND c.record_id = l.record_id
                     JOIN match_groups g ON g.id = c.match_group_id AND g.run_id = @r
                     WHERE l.exception_id = @e
                     UNION ALL
-                    SELECT c.match_group_id, c.record_table, c.record_id, c.id
+                    SELECT c.match_group_id, c.record_table, c.record_id, c.id, g.status
                     FROM match_group_exceptions mge JOIN match_groups g ON g.id = mge.match_group_id AND g.run_id = @r
                     JOIN match_candidates c ON c.match_group_id = g.id
                     WHERE mge.exception_id = @e) x
-                ORDER BY x.match_group_id, x.cid LIMIT 1
+                ORDER BY (x.gstatus = 'PENDING_APPROVAL') DESC, x.match_group_id, x.cid LIMIT 1
                 """);
             cmd.Parameters.AddWithValue("r", runId);
             cmd.Parameters.AddWithValue("e", exceptionId);
@@ -254,7 +265,7 @@ public sealed class MatchingRepository(NpgsqlDataSource db) : IMatchingRepositor
         await using (var cmd = db.CreateCommand("""
             SELECT g.id, c.record_table, c.record_id FROM match_groups g
             LEFT JOIN LATERAL (SELECT record_table, record_id FROM match_candidates WHERE match_group_id = g.id ORDER BY id LIMIT 1) c ON true
-            WHERE g.run_id = @r AND g.status <> 'MATCHED' ORDER BY g.id LIMIT 1
+            WHERE g.run_id = @r AND g.status <> 'MATCHED' ORDER BY (g.status = 'PENDING_APPROVAL') DESC, g.id LIMIT 1
             """))
         {
             cmd.Parameters.AddWithValue("r", runId);

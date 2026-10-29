@@ -549,7 +549,10 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Normalised transactions */
+        /**
+         * Normalised transactions
+         * @description Ordered by transaction timestamp, then the numeric part of the transaction id (DD-47 before DD-111), then the id; the cursor carries the same key, so paging neither skips nor repeats a row.
+         */
         get: operations["listTransactions"];
         put?: never;
         post?: never;
@@ -613,7 +616,10 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Matching workbench focused on a transaction or an exception */
+        /**
+         * Matching workbench focused on a transaction or an exception
+         * @description `groups` always lists the groups awaiting a decision (PENDING_APPROVAL, i.e. manual proposals), at most 50, after the focus group. With `transactionId` or `exceptionId` the focus group is the pending manual group that contains the record when there is one, otherwise the first group that contains it; with neither, the first pending group, otherwise the first open (non-MATCHED) group. A focus group that is also pending is listed once.
+         */
         get: operations["getMatchingWorkbench"];
         put?: never;
         post?: never;
@@ -656,7 +662,10 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Match groups */
+        /**
+         * Match groups
+         * @description Default order (and cursor order): PENDING_APPROVAL first, other non-MATCHED groups next (by status, then id), MATCHED groups last, so the groups that need attention are on the first page. `status` filters to one status, in id order.
+         */
         get: operations["listMatchGroups"];
         put?: never;
         /** Propose a manual match (material manual matches require approval) */
@@ -727,7 +736,7 @@ export interface paths {
         };
         /**
          * Account ledger view with roll-forward, related transactions and exceptions
-         * @description An account may hold balances in several currencies. `currency` selects one; it may be omitted only when the account has exactly one currency in the run (otherwise 422 on `currency`).
+         * @description An account may hold balances in several currencies. `currency` selects one; it may be omitted only when the account has exactly one currency in the run (otherwise 422 on `currency`). A `currency` the account does not hold in the run is also 422 on `currency`, and the problem detail lists the currencies it does hold (`availableCurrencies` of the 200 response carries them when the account is shown). 404 is only for an unknown run or account.
          */
         get: operations["getAccountLedger"];
         put?: never;
@@ -797,7 +806,7 @@ export interface paths {
         };
         /**
          * Safeguarding adjustments of a run
-         * @description Oldest first (created time, then id). Cursor paged like every other list.
+         * @description Oldest first (created time, then id). Cursor paged like every other list. An adjustment belongs to (legal entity, business date), not to one run version, so the list of a run holds the adjustments created in this version and in every earlier version of the same legal entity and business date; `runId` of each is the version it was created in.
          */
         get: operations["listAdjustments"];
         put?: never;
@@ -822,7 +831,7 @@ export interface paths {
         put?: never;
         /**
          * Approve or reject an adjustment (not your own proposal)
-         * @description A stale `proposalVersion` returns 409 `stale-proposal`.
+         * @description A stale `proposalVersion` returns 409 `stale-proposal`. When the run the adjustment was created in has been superseded, the decision applies to the current version of the legal entity and business date (409 `run-locked` if that is signed off); the current position is flagged `stale` until it is reprocessed.
          */
         post: operations["decideAdjustment"];
         delete?: never;
@@ -1141,7 +1150,10 @@ export interface components {
         };
         /** @description Mandatory rationale recorded in the audit event. */
         Reason: string;
-        /** @example -50.00 */
+        /**
+         * @description Exact decimal, never rounded. Serialisation rule for every amount the API writes: at least 2 fraction digits, and trailing zeros beyond the second are dropped (0 -> 0.00, 1081977.250000 -> 1081977.25, 1.234500 -> 1.2345, 20.123456 stays). Clients must compare values as decimals, not as strings.
+         * @example -50.00
+         */
         DecimalString: string;
         /**
          * @description ISO 4217
@@ -1412,7 +1424,10 @@ export interface components {
             /** @example F-019 */
             id: string;
             runId: string;
+            /** @description Short human headline written when the exception is created, for example "EUR balance difference on CA-004". */
             title: string;
+            /** @description Longer text written with the exception: the control's message plus control, severity, value and the records involved. */
+            description: string;
             control: components["schemas"]["ControlArea"];
             reasonCode: string;
             severity: components["schemas"]["Severity"];
@@ -1585,8 +1600,10 @@ export interface components {
             page: components["schemas"]["PageInfo"];
         };
         ExceptionDetail: components["schemas"]["ExceptionSummary"] & {
+            /** @description Detailed text (same value as ExceptionSummary.description). */
             description: string;
             expectedEffect: string;
+            /** @description One-line explanation: the control's own message. Never the same text as `description`. */
             summary: string;
             evidenceNodes: components["schemas"]["EvidenceNode"][];
             evidenceEdges: components["schemas"]["EvidenceEdge"][];
@@ -1848,6 +1865,7 @@ export interface components {
             id: string;
             /** @description Strong ETag of the adjustment version (for example "v3"); send it as If-Match to decideAdjustment */
             etag: string;
+            /** @description Provenance: the run version the adjustment was created in. It stays valid in later versions of the same legal entity and business date. */
             runId: string;
             currency: components["schemas"]["Currency"];
             amount: components["schemas"]["Money"];
@@ -3481,6 +3499,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            422: components["responses"]["Unprocessable"];
         };
     };
     getSafeguardingPosition: {

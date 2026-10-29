@@ -29,7 +29,7 @@ public sealed class ExceptionReadRepository(NpgsqlDataSource db) : IExceptionRea
         e.id, e.run_id, e.title, e.control, e.reason_code, e.severity, e.status, e.value_amount, e.value_currency,
         e.legal_entity_id, e.business_date, e.owner_user_id, u.name, e.created_at,
         GREATEST(0, floor(extract(epoch FROM (@now - e.created_at)) / 86400))::int, e.due_at, e.blocking,
-        e.source_file, e.source_row_id, e.version
+        e.source_file, e.source_row_id, e.version, COALESCE(e.description, e.title)
         """;
     private const string From = "FROM exceptions e LEFT JOIN users u ON u.id = e.owner_user_id";
 
@@ -70,7 +70,7 @@ public sealed class ExceptionReadRepository(NpgsqlDataSource db) : IExceptionRea
             while (await r.ReadAsync(ct))
             {
                 var sortKeys = new string[keys.Count];
-                for (var i = 0; i < keys.Count; i++) { sortKeys[i] = r.GetString(20 + i); }
+                for (var i = 0; i < keys.Count; i++) { sortKeys[i] = r.GetString(21 + i); }
                 rows.Add(ReadRow(r) with { SortKeys = sortKeys });
             }
         }
@@ -154,7 +154,7 @@ public sealed class ExceptionReadRepository(NpgsqlDataSource db) : IExceptionRea
         r.IsDBNull(7) ? null : r.GetDecimal(7), r.IsDBNull(8) ? null : r.GetString(8), r.GetString(9),
         r.GetFieldValue<DateOnly>(10), r.IsDBNull(11) ? null : r.GetString(11), r.IsDBNull(12) ? null : r.GetString(12),
         r.GetFieldValue<DateTimeOffset>(13), r.GetInt32(14), r.GetFieldValue<DateTimeOffset>(15), r.GetBoolean(16),
-        r.IsDBNull(17) ? null : r.GetString(17), r.IsDBNull(18) ? null : r.GetString(18), r.GetInt32(19));
+        r.IsDBNull(17) ? null : r.GetString(17), r.IsDBNull(18) ? null : r.GetString(18), r.GetInt32(19), r.GetString(20));
 
     public async Task<ExceptionsSummaryData> SummaryAsync(string runId, IReadOnlyCollection<string>? entityScope, ExceptionFilter filter, DateTimeOffset now, CancellationToken ct = default)
     {
@@ -238,9 +238,9 @@ public sealed class ExceptionReadRepository(NpgsqlDataSource db) : IExceptionRea
             await using var r = await cmd.ExecuteReaderAsync(ct);
             if (!await r.ReadAsync(ct)) { return null; }
             row = ReadRow(r);
-            runState = r.GetString(20);
-            ruleset = r.GetString(21);
-            deliverySource = r.IsDBNull(22) ? null : r.GetString(22);
+            runState = r.GetString(21);
+            ruleset = r.GetString(22);
+            deliverySource = r.IsDBNull(23) ? null : r.GetString(23);
         }
 
         var evidence = new List<EvidenceRefRow>();

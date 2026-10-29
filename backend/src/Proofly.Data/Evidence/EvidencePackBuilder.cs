@@ -120,8 +120,8 @@ public sealed class EvidencePackBuilder(NpgsqlDataSource dataSource, IAuditVerif
             FROM safeguarding_positions WHERE run_id = @r ORDER BY currency
             """);
         await Add("safeguarding/adjustments", """
-            SELECT id AS adjustment_id, currency, amount, reason, status, proposed_by_user_id, expires_on, evidence_refs::text AS evidence_refs
-            FROM safeguarding_adjustments WHERE run_id = @r ORDER BY id
+            SELECT a.id AS adjustment_id, a.currency, a.amount, a.reason, a.status, a.proposed_by_user_id, a.expires_on, a.evidence_refs::text AS evidence_refs
+            FROM safeguarding_adjustments a WHERE a.run_id IN (SELECT x.id FROM runs x JOIN runs t ON t.id=@r AND x.legal_entity_id=t.legal_entity_id AND x.business_date=t.business_date AND x.run_version<=t.run_version) ORDER BY a.id
             """);
         await Add("audit/audit_events", """
             SELECT id AS event_id, occurred_at, event_type, actor_type, actor_id, actor_name, subject_kind, subject_id, summary, reason,

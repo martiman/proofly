@@ -33,7 +33,7 @@ public sealed record LedgerEntryDto(
 public sealed record RollForwardLineDto(string Label, MoneyDto Amount);
 
 public sealed record AccountExceptionSummaryDto(
-    string Id, string RunId, string Title, string Control, string ReasonCode, string Severity, string Status, MoneyDto? Value,
+    string Id, string RunId, string Title, string Description, string Control, string ReasonCode, string Severity, string Status, MoneyDto? Value,
     string LegalEntityId, DateOnly BusinessDate, UserRefDto? Owner, DateTimeOffset CreatedAt, DateTimeOffset DueAt, bool Blocking,
     string? SourceFile, string? SourceRowId, string Etag);
 

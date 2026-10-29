@@ -127,8 +127,7 @@ public static class RunEvaluator
                 ["text"] = f.Description,
                 ["result"] = f.Value is { } m ? m.ToString() : f.ReasonCode,
             };
-            var title = $"{Pretty(f.ReasonCode)}: {f.Description}";
-            exceptions.Add(new ExceptionDraft(ExceptionId(inputs.RunId, f.Key), f, title.Length <= 200 ? title : title[..200],
+            exceptions.Add(new ExceptionDraft(ExceptionId(inputs.RunId, f.Key), f, FindingText.Headline(f), FindingText.Detail(f),
                 new DateTimeOffset(date.AddDays(options.DueDays(f.Severity)).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero),
                 deliveryId, file, row, links, $"{area}.{f.ReasonCode}", tolerance,
                 f.Blocking ? "Blocks run sign-off until resolved or accepted with approval" : "Requires review; does not block run sign-off",
@@ -176,12 +175,6 @@ public static class RunEvaluator
 
         var hash = Hash(options.RulesetVersion, controls, results, matching.Groups, ledgerEval.Balances, safeguarding.Positions);
         return new RunEvaluation(options.RulesetVersion, controls, exceptions, groups, ledgerEval.Balances, positions, completeness.State, hash);
-    }
-
-    private static string Pretty(string code)
-    {
-        var s = code.Replace('_', ' ').ToLowerInvariant();
-        return char.ToUpperInvariant(s[0]) + s[1..];
     }
 
     private static string ToleranceText(MatchGroup g) =>

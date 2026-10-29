@@ -292,7 +292,7 @@ public sealed class RunReadRepository(NpgsqlDataSource dataSource, TimeProvider 
     {
         await using var cmd = dataSource.CreateCommand($"""
             SELECT e.id, e.run_id, e.title, e.control, e.reason_code, e.severity, e.status, e.value_amount, e.value_currency::text, e.legal_entity_id,
-                   e.business_date, e.owner_user_id, u.name, e.created_at, e.due_at, e.blocking, e.source_file, e.source_row_id, e.version
+                   e.business_date, e.owner_user_id, u.name, e.created_at, e.due_at, e.blocking, e.source_file, e.source_row_id, e.version, COALESCE(e.description, e.title)
             FROM exceptions e LEFT JOIN users u ON u.id = e.owner_user_id
             WHERE e.run_id = @r AND e.{OpenStatus}
             ORDER BY e.blocking DESC,
@@ -312,17 +312,18 @@ public sealed class RunReadRepository(NpgsqlDataSource dataSource, TimeProvider 
                 r.IsDBNull(7) ? null : new MoneyRow(r.GetDecimal(7), r.GetString(8)), r.GetString(9), DateOnly.FromDateTime(r.GetDateTime(10)),
                 r.IsDBNull(11) ? null : new UserRefRow(r.GetString(11), r.GetString(12)), created,
                 Math.Max(0, today.DayNumber - DateOnly.FromDateTime(created.UtcDateTime).DayNumber), r.GetFieldValue<DateTimeOffset>(14), r.GetBoolean(15),
-                r.IsDBNull(16) ? null : r.GetString(16), r.IsDBNull(17) ? null : r.GetString(17), r.GetInt32(18)));
+                r.IsDBNull(16) ? null : r.GetString(16), r.IsDBNull(17) ? null : r.GetString(17), r.GetInt32(18), r.GetString(19)));
         }
         return list;
     }
 
     private async Task<IReadOnlyList<SafeguardingRow>> SafeguardingAsync(RunRow run, string? previousId, CancellationToken ct)
     {
+        // The stored position snapshot is authoritative (a signed-off run is never recomputed); the live sum is the fallback for a position without one.
         var adjustments = new Dictionary<string, decimal>();
         await using (var c = dataSource.CreateCommand("""
-            SELECT currency::text, sum(amount) FROM safeguarding_adjustments
-            WHERE run_id = @r AND status = 'APPROVED' AND (expires_on IS NULL OR expires_on >= @bd) GROUP BY currency
+            SELECT a.currency::text, sum(a.amount) FROM safeguarding_adjustments a
+            WHERE a.run_id IN (SELECT x.id FROM runs x JOIN runs t ON t.id=@r AND x.legal_entity_id=t.legal_entity_id AND x.business_date=t.business_date AND x.run_version<=t.run_version) AND a.status = 'APPROVED' AND (a.expires_on IS NULL OR a.expires_on >= @bd) GROUP BY a.currency
             """))
         {
             c.Parameters.AddWithValue("r", run.Id);
@@ -358,7 +359,7 @@ public sealed class RunReadRepository(NpgsqlDataSource dataSource, TimeProvider 
         }
 
         await using var cmd = dataSource.CreateCommand("""
-            SELECT currency::text, obligation_amount, eligible_amount, difference_amount, state, detail::text, stale
+            SELECT currency::text, obligation_amount, eligible_amount, difference_amount, state, detail::text, stale, detail->>'approvedAdjustments'
             FROM safeguarding_positions WHERE run_id = @r ORDER BY currency
             """);
         cmd.Parameters.AddWithValue("r", run.Id);
@@ -368,7 +369,7 @@ public sealed class RunReadRepository(NpgsqlDataSource dataSource, TimeProvider 
         {
             var ccy = rd.GetString(0);
             list.Add(new SafeguardingRow(ccy, new MoneyRow(rd.GetDecimal(1), ccy), new MoneyRow(rd.GetDecimal(2), ccy),
-                new MoneyRow(adjustments.GetValueOrDefault(ccy), ccy), rd.IsDBNull(3) ? null : new MoneyRow(rd.GetDecimal(3), ccy), rd.GetString(4), Qualifications(rd.GetString(5)),
+                new MoneyRow(!rd.IsDBNull(7) && decimal.TryParse(rd.GetString(7), NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var snap) ? snap : adjustments.GetValueOrDefault(ccy), ccy), rd.IsDBNull(3) ? null : new MoneyRow(rd.GetDecimal(3), ccy), rd.GetString(4), Qualifications(rd.GetString(5)),
                 previous.TryGetValue(ccy, out var p) ? new MoneyRow(p, ccy) : null, exceptionIds.GetValueOrDefault(ccy) ?? [], rd.GetBoolean(6), exceptionCounts.GetValueOrDefault(ccy)));
         }
         return list;

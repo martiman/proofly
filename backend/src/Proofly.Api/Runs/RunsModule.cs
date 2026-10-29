@@ -48,7 +48,7 @@ internal static class RunsMapping
             d.State, d.AcceptedRecords, d.RejectedRecords, [], d.FindingIds, d.FindingCount)).ToList(),
         c.ControlAreas.Select(a => new ControlAreaSummaryDto(a.Area, a.Label, a.State, a.RecordCount, a.Value.Select(Money).ToList(), a.OpenExceptions,
             a.PreviousRecordCount, a.ChangeFromPrevious)).ToList(),
-        c.AttentionQueue.Select(e => new ControlRoomExceptionDto(e.Id, e.RunId, e.Title, e.Control, e.ReasonCode, e.Severity, e.Status,
+        c.AttentionQueue.Select(e => new ControlRoomExceptionDto(e.Id, e.RunId, e.Title, e.Description, e.Control, e.ReasonCode, e.Severity, e.Status,
             e.Value is null ? null : Money(e.Value), e.LegalEntityId, e.BusinessDate, User(e.Owner), e.CreatedAt, e.AgeDays, e.DueAt, e.Blocking,
             e.SourceFile, e.SourceRowId, ETags.ForVersion(e.RowVersion))).ToList(),
         c.Safeguarding.Select(s => new SafeguardingCurrencyPositionDto(s.Currency, Money(s.Obligation), Money(s.EligibleBalance), Money(s.ApprovedAdjustments),

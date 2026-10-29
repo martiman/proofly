@@ -60,15 +60,15 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
         string pageSql, aggBase;
         if (pageFirst)
         {
-            var cursor = after is null ? "" : (where.Length == 0 ? " WHERE" : " AND") + " (ts, id) > (@c_ts, @c_id)";
-            pageSql = "WITH " + TransactionSql.SrcCte + ", sel AS (SELECT * FROM src_run" + where + cursor + " ORDER BY ts, id LIMIT @lim), tx AS ("
-                + TransactionSql.Enrich("sel") + ") SELECT " + TransactionSql.TxColumns + " FROM tx ORDER BY ts, id";
+            var cursor = after is null ? "" : (where.Length == 0 ? " WHERE" : " AND") + " (ts, rid, id) > (@c_ts, @c_rid, @c_id)";
+            pageSql = "WITH " + TransactionSql.SrcCte + ", sel AS (SELECT * FROM src_run" + where + cursor + " ORDER BY ts, rid, id LIMIT @lim), tx AS ("
+                + TransactionSql.Enrich("sel") + ") SELECT " + TransactionSql.TxColumns + " FROM tx ORDER BY ts, rid, id";
             aggBase = "WITH " + TransactionSql.SrcCte + ", f AS (SELECT * FROM src_run" + where + ")";
         }
         else
         {
             var cte = "WITH " + TransactionSql.TxCte + ", f AS (SELECT * FROM tx" + where + ")";
-            pageSql = cte + " SELECT " + TransactionSql.TxColumns + " FROM f" + (after is null ? "" : " WHERE (ts, id) > (@c_ts, @c_id)") + " ORDER BY ts, id LIMIT @lim";
+            pageSql = cte + " SELECT " + TransactionSql.TxColumns + " FROM f" + (after is null ? "" : " WHERE (ts, rid, id) > (@c_ts, @c_rid, @c_id)") + " ORDER BY ts, rid, id LIMIT @lim";
             aggBase = cte;
         }
 
@@ -80,6 +80,8 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
             {
                 cmd.Parameters.Add(new NpgsqlParameter("c_ts", NpgsqlDbType.TimestampTz) { Value = after.Ts.UtcDateTime });
                 cmd.Parameters.AddWithValue("c_id", after.Id);
+                // Order is (timestamp, numeric row id, transaction id): DD-47 sorts before DD-111; the id breaks ties between tables.
+                cmd.Parameters.Add(new NpgsqlParameter("c_rid", NpgsqlDbType.Bigint) { Value = Proofly.Domain.Ids.TransactionIds.TryParse(after.Id, out _, out var cursorRid) ? cursorRid : 0L });
             }
             cmd.Parameters.AddWithValue("lim", limit + 1);
             await using var r = await cmd.ExecuteReaderAsync(ct);
@@ -337,7 +339,7 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
         if (exceptionIds.Count == 0) { return rows; }
         await using var cmd = db.CreateCommand("""
             SELECT e.id, e.run_id, e.title, e.control, e.reason_code, e.severity, e.status, e.value_amount, e.value_currency::text, e.legal_entity_id,
-                   e.business_date, e.owner_user_id, u.name, e.created_at, e.due_at, e.blocking, e.source_file, e.source_row_id, e.version
+                   e.business_date, e.owner_user_id, u.name, e.created_at, e.due_at, e.blocking, e.source_file, e.source_row_id, e.version, COALESCE(e.description, e.title)
               FROM exceptions e LEFT JOIN users u ON u.id = e.owner_user_id
              WHERE e.run_id = @run AND e.id = ANY(@ids) ORDER BY e.id
             """);
@@ -349,7 +351,7 @@ public sealed class TransactionReadRepository(NpgsqlDataSource db) : ITransactio
             rows.Add(new AccountExceptionRow(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4), r.GetString(5), r.GetString(6),
                 r.IsDBNull(7) ? null : r.GetDecimal(7), r.IsDBNull(8) ? null : r.GetString(8), r.GetString(9), DateOnly.FromDateTime(r.GetDateTime(10)),
                 r.IsDBNull(11) ? null : r.GetString(11), r.IsDBNull(12) ? null : r.GetString(12), r.GetFieldValue<DateTimeOffset>(13),
-                r.GetFieldValue<DateTimeOffset>(14), r.GetBoolean(15), r.IsDBNull(16) ? null : r.GetString(16), r.IsDBNull(17) ? null : r.GetString(17), r.GetInt32(18)));
+                r.GetFieldValue<DateTimeOffset>(14), r.GetBoolean(15), r.IsDBNull(16) ? null : r.GetString(16), r.IsDBNull(17) ? null : r.GetString(17), r.GetInt32(18), r.GetString(19)));
         }
         return rows;
     }

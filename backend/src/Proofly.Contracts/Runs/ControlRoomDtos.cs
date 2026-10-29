@@ -20,7 +20,7 @@ public sealed record ControlRoomDeliveryDto(
 
 /// <summary>ExceptionSummary as embedded in the control room (attention queue).</summary>
 public sealed record ControlRoomExceptionDto(
-    string Id, string RunId, string Title, string Control, string ReasonCode, string Severity, string Status, MoneyDto? Value, string LegalEntityId,
+    string Id, string RunId, string Title, string Description, string Control, string ReasonCode, string Severity, string Status, MoneyDto? Value, string LegalEntityId,
     DateOnly BusinessDate, UserRefDto? Owner, DateTimeOffset CreatedAt, int AgeDays, DateTimeOffset DueAt, bool Blocking, string? SourceFile, string? SourceRowId, string Etag);
 
 public sealed record SafeguardingCurrencyPositionDto(

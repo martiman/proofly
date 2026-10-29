@@ -10,7 +10,7 @@ import {
   addExceptionNote, assignException, decideResolution, getException, listAssignableUsers, proposeResolution,
   reopenException, requestExceptionEvidence, type Schema,
 } from '../../api/services'
-import { allows, classifyFailure, decisionBody, proposalIdOf, proposalKindLabel, type CommandFailure } from './logic'
+import { allows, classifyFailure, evidenceRefOptions, decisionBody, proposalIdOf, proposalKindLabel, type CommandFailure } from './logic'
 
 type Detail = Schema<'ExceptionDetail'>
 const route = useRoute()
@@ -77,7 +77,7 @@ const assign = (ownerId: string | null) => exec(() => assignCmd.run({ ownerId })
 const kind = ref<Schema<'ResolutionKind'>>('RESOLVED')
 const reason = ref('')
 const evidenceRefs = ref<string[]>([])
-const refOptions = computed(() => (ex.value?.evidenceNodes ?? []).map((n) => ({ value: n.recordId ?? n.id, label: `${n.recordId ?? n.id} · ${n.label}` })))
+const refOptions = computed(() => evidenceRefOptions(ex.value?.evidenceNodes ?? []))
 function propose() {
   Modal.confirm({
     title: `Propose "${label(kind.value)}"?`, content: `This creates an approval request (policy: ${ex.value?.approvalPolicy}). The original control result is retained.`, okText: 'Propose',
@@ -245,7 +245,7 @@ const reopen = () => Modal.confirm({
             </a-radio-group>
             <a-textarea v-model:value="reason" :rows="3" placeholder="Reason (mandatory, 3+ characters)" />
             <div v-if="fieldMsg('reason')" class="ferr">{{ fieldMsg('reason') }}</div>
-            <a-select v-model:value="evidenceRefs" mode="multiple" class="mt full" placeholder="Evidence (at least one)" :options="refOptions" />
+            <a-select v-model:value="evidenceRefs" mode="multiple" class="mt full" placeholder="Evidence records (at least one)" option-filter-prop="label" :options="refOptions" />
             <div v-if="fieldMsg('evidenceRefs')" class="ferr">{{ fieldMsg('evidenceRefs') }}</div>
             <p class="hint mt">Approval policy: {{ ex.approvalPolicy }}</p>
             <a-button type="primary" :loading="busy" :disabled="reason.trim().length < 3 || !evidenceRefs.length" @click="propose">Propose resolution</a-button>
