@@ -1,0 +1,1836 @@
+openapi: 3.1.0
+info:
+  title: Proofly Control API
+  version: 0.1.0-draft
+  summary: Backend contract for the Proofly web application (oMVP).
+  description: |
+    REST/JSON contract between the Proofly web app and the customer-hosted backend.
+    Conventions (money, pagination, errors, concurrency, idempotency, run scoping) are
+    described in `README.md` next to this file and are normative.
+
+    Key rules:
+    - Money is `{amount: decimal string, currency: ISO 4217}`; never a float.
+    - All control state is scoped to a **run version** (`runId`). A superseded run is read-only.
+    - Mutations carry `If-Match` (ETag of the target) and, for commands, `Idempotency-Key`.
+    - Material decisions require a non-empty `reason` and always write an audit event.
+    - Aggregates and totals are computed server-side.
+    - Errors are RFC 9457 `application/problem+json`.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host:
+        default: proofly.customer.internal
+tags:
+  - {name: Auth, description: "Current user, roles, scope and permissions"}
+  - {name: Runs, description: "Control runs and the control room"}
+  - {name: Sources, description: "Source deliveries, records, ingestion"}
+  - {name: Exceptions, description: "Exception queue and workflow commands"}
+  - {name: Transactions, description: "Normalised transactions and lineage"}
+  - {name: Matching, description: "Match groups and workbench"}
+  - {name: Accounts, description: "Accounts and independent ledger"}
+  - {name: Safeguarding, description: "Safeguarding position and adjustments"}
+  - {name: SignOff, description: "Run sign-off workflow"}
+  - {name: Audit, description: "Audit events and evidence packs"}
+  - {name: Settings, description: "Configuration, access and change approvals"}
+security:
+  - bearerAuth: []
+paths:
+  /me:
+    get:
+      tags: [Auth]
+      operationId: getMe
+      summary: Current user, roles, legal-entity scope and effective permissions
+      x-required-permission: auth.self
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/Me'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /legal-entities:
+    get:
+      tags: [Auth]
+      operationId: listLegalEntities
+      summary: Legal entities in the caller's scope
+      x-required-permission: run.view
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/LegalEntity'}}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /runs:
+    get:
+      tags: [Runs]
+      operationId: listRuns
+      summary: List runs (all versions) in scope
+      x-required-permission: run.view
+      parameters:
+        - {name: legalEntityId, in: query, schema: {type: string}}
+        - {name: businessDate, in: query, schema: {type: string, format: date}}
+        - {name: includeSuperseded, in: query, schema: {type: boolean, default: false}}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Cursor'}
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/RunPage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /runs/{runId}:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    get:
+      tags: [Runs]
+      operationId: getRun
+      summary: Get one run version
+      x-required-permission: run.view
+      responses:
+        '200': {description: "OK", headers: {ETag: {$ref: '#/components/headers/ETag'}}, content: {application/json: {schema: {$ref: '#/components/schemas/Run'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /runs/{runId}/control-room:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    get:
+      tags: [Runs]
+      operationId: getControlRoom
+      summary: Control room aggregate for a run
+      x-required-permission: run.view
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/ControlRoom'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /runs/{runId}/reprocess:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    post:
+      tags: [Runs]
+      operationId: requestRunReprocess
+      summary: Request reprocessing, creating a new run version that supersedes this one
+      x-required-permission: run.reprocess
+      x-audit-event: RUN_REPROCESS_REQUESTED
+      parameters: [{$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {$ref: '#/components/requestBodies/ReasonOnly'}
+      responses:
+        '202': {description: "Accepted; new run version is being created", content: {application/json: {schema: {$ref: '#/components/schemas/Run'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '412': {$ref: '#/components/responses/PreconditionFailed'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+  /runs/{runId}/compare:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    get:
+      tags: [Runs]
+      operationId: compareRuns
+      summary: Compare this run with another run version or the previous business date
+      x-required-permission: run.view
+      parameters:
+        - {name: against, in: query, required: true, description: "Run id to compare with", schema: {type: string}}
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/RunComparison'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /runs/{runId}/deliveries:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    get:
+      tags: [Sources]
+      operationId: listSourceDeliveries
+      summary: Source deliveries (incl. missing/expected) for a run
+      x-required-permission: source.view
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/SourceDelivery'}}}}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /deliveries/{deliveryId}:
+    parameters: [{$ref: '#/components/parameters/DeliveryId'}]
+    get:
+      tags: [Sources]
+      operationId: getSourceDelivery
+      summary: Delivery with fingerprint, duplicate and sequence checks
+      x-required-permission: source.view
+      responses:
+        '200': {description: "OK", headers: {ETag: {$ref: '#/components/headers/ETag'}}, content: {application/json: {schema: {$ref: '#/components/schemas/SourceDeliveryDetail'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /deliveries/{deliveryId}/processing-history:
+    parameters: [{$ref: '#/components/parameters/DeliveryId'}]
+    get:
+      tags: [Sources]
+      operationId: getDeliveryProcessingHistory
+      summary: Processing history of a delivery (ingestion attempts, validation, retries)
+      x-required-permission: source.view
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/ProcessingStep'}}}}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /deliveries/{deliveryId}/records:
+    parameters: [{$ref: '#/components/parameters/DeliveryId'}]
+    get:
+      tags: [Sources]
+      operationId: listDeliveryRecords
+      summary: Records of a delivery
+      x-required-permission: source.view
+      parameters:
+        - {name: accepted, in: query, schema: {type: boolean}}
+        - {$ref: '#/components/parameters/Search'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Cursor'}
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/SourceRecordPage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /deliveries/{deliveryId}/retry-ingestion:
+    parameters: [{$ref: '#/components/parameters/DeliveryId'}]
+    post:
+      tags: [Sources]
+      operationId: retryDeliveryIngestion
+      summary: Retry ingestion of a rejected or failed delivery
+      x-required-permission: source.retry
+      x-audit-event: DELIVERY_INGESTION_RETRIED
+      parameters: [{$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {$ref: '#/components/requestBodies/ReasonOnly'}
+      responses:
+        '202': {description: "Accepted", content: {application/json: {schema: {$ref: '#/components/schemas/SourceDeliveryDetail'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '412': {$ref: '#/components/responses/PreconditionFailed'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+  /deliveries/{deliveryId}/mark-superseded:
+    parameters: [{$ref: '#/components/parameters/DeliveryId'}]
+    post:
+      tags: [Sources]
+      operationId: markDeliverySuperseded
+      summary: Mark a delivery as superseded by a correction delivery
+      description: The original is never overwritten; this records the supersession link.
+      x-required-permission: source.supersede
+      x-audit-event: DELIVERY_SUPERSEDED
+      parameters: [{$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [supersededByDeliveryId, reason]
+              properties:
+                supersededByDeliveryId: {type: string}
+                reason: {$ref: '#/components/schemas/Reason'}
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/SourceDeliveryDetail'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '412': {$ref: '#/components/responses/PreconditionFailed'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+  /source-records/{recordId}:
+    get:
+      tags: [Sources]
+      operationId: getSourceRecord
+      summary: Evidence record preview (original fields, location, fingerprint)
+      x-required-permission: source.view
+      parameters: [{name: recordId, in: path, required: true, schema: {type: string}}]
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/SourceRecord'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /runs/{runId}/exceptions:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    get:
+      tags: [Exceptions]
+      operationId: listExceptions
+      summary: Exceptions queue with server-side filters
+      x-required-permission: exception.view
+      parameters:
+        - {name: severity, in: query, style: form, explode: false, schema: {type: array, items: {$ref: '#/components/schemas/Severity'}}}
+        - {name: control, in: query, style: form, explode: false, schema: {type: array, items: {$ref: '#/components/schemas/ControlArea'}}}
+        - {name: status, in: query, style: form, explode: false, schema: {type: array, items: {$ref: '#/components/schemas/ExceptionStatus'}}}
+        - {name: ownerId, in: query, schema: {type: string}}
+        - {name: unassigned, in: query, schema: {type: boolean}}
+        - {name: blocking, in: query, schema: {type: boolean}}
+        - {name: legalEntityId, in: query, schema: {type: string}}
+        - {name: currency, in: query, schema: {$ref: '#/components/schemas/Currency'}}
+        - {name: valueMin, in: query, description: "Absolute value lower bound (decimal string); requires currency", schema: {$ref: '#/components/schemas/DecimalString'}}
+        - {name: valueMax, in: query, description: "Absolute value upper bound (decimal string); requires currency", schema: {$ref: '#/components/schemas/DecimalString'}}
+        - {name: businessDateFrom, in: query, schema: {type: string, format: date}}
+        - {name: businessDateTo, in: query, schema: {type: string, format: date}}
+        - {name: ageDaysMin, in: query, schema: {type: integer, minimum: 0}}
+        - {name: ageDaysMax, in: query, schema: {type: integer, minimum: 0}}
+        - {name: dueBefore, in: query, schema: {type: string, format: date-time}}
+        - {name: savedViewId, in: query, description: "Apply a saved view's filters (explicit params override)", schema: {type: string}}
+        - {name: sort, in: query, description: 'Comma list, prefix - for desc. Default: -severity,dueAt,id', schema: {type: string, default: '-severity,dueAt,id'}}
+        - {$ref: '#/components/parameters/Search'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/IncludeTotal'}
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/ExceptionPage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+  /runs/{runId}/exceptions/summary:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    get:
+      tags: [Exceptions]
+      operationId: getExceptionsSummary
+      summary: Server-side totals and per-currency aggregates for the queue
+      description: Accepts the same filters as `listExceptions` (omitted here for brevity in the schema; see that operation) and aggregates over the full filtered set, not the current page.
+      x-required-permission: exception.view
+      parameters:
+        - {name: severity, in: query, style: form, explode: false, schema: {type: array, items: {$ref: '#/components/schemas/Severity'}}}
+        - {name: control, in: query, style: form, explode: false, schema: {type: array, items: {$ref: '#/components/schemas/ControlArea'}}}
+        - {name: status, in: query, style: form, explode: false, schema: {type: array, items: {$ref: '#/components/schemas/ExceptionStatus'}}}
+        - {name: ownerId, in: query, schema: {type: string}}
+        - {name: unassigned, in: query, schema: {type: boolean}}
+        - {name: currency, in: query, schema: {$ref: '#/components/schemas/Currency'}}
+        - {name: savedViewId, in: query, schema: {type: string}}
+        - {$ref: '#/components/parameters/Search'}
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/ExceptionsSummary'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /runs/{runId}/exceptions/bulk-assign:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    post:
+      tags: [Exceptions]
+      operationId: bulkAssignExceptions
+      summary: Assign several exceptions to one owner
+      description: Per-item results; each item is checked against its own ETag. Partial success returns 207.
+      x-required-permission: exception.assign
+      x-audit-event: EXCEPTION_ASSIGNED
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items, ownerId]
+              properties:
+                ownerId: {type: string}
+                note: {type: string, maxLength: 2000}
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 200
+                  items:
+                    type: object
+                    required: [exceptionId, etag]
+                    properties:
+                      exceptionId: {type: string}
+                      etag: {type: string}
+      responses:
+        '200': {description: "All assigned", content: {application/json: {schema: {$ref: '#/components/schemas/BulkResult'}}}}
+        '207': {description: "Partial success", content: {application/json: {schema: {$ref: '#/components/schemas/BulkResult'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+  /exception-views:
+    get:
+      tags: [Exceptions]
+      operationId: listExceptionViews
+      summary: Saved queue views of the current user (and shared views)
+      x-required-permission: exception.view
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/SavedView'}}}}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+    post:
+      tags: [Exceptions]
+      operationId: createExceptionView
+      summary: Save a queue view
+      x-required-permission: exception.view
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/SavedViewInput'}}}
+      responses:
+        '201': {description: "Created", content: {application/json: {schema: {$ref: '#/components/schemas/SavedView'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+  /exception-views/{viewId}:
+    parameters: [{name: viewId, in: path, required: true, schema: {type: string}}]
+    delete:
+      tags: [Exceptions]
+      operationId: deleteExceptionView
+      summary: Delete a saved view (personal preference; not a material decision)
+      x-required-permission: exception.view
+      parameters: [{$ref: '#/components/parameters/IfMatch'}]
+      responses:
+        '204': {description: "Deleted"}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '412': {$ref: '#/components/responses/PreconditionFailed'}
+  /exceptions/{exceptionId}:
+    parameters: [{$ref: '#/components/parameters/ExceptionId'}]
+    get:
+      tags: [Exceptions]
+      operationId: getException
+      summary: Exception detail with evidence graph, rule trace, timeline and approvals
+      x-required-permission: exception.view
+      responses:
+        '200': {description: "OK", headers: {ETag: {$ref: '#/components/headers/ETag'}}, content: {application/json: {schema: {$ref: '#/components/schemas/ExceptionDetail'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /exceptions/{exceptionId}/assign:
+    parameters: [{$ref: '#/components/parameters/ExceptionId'}]
+    post:
+      tags: [Exceptions]
+      operationId: assignException
+      summary: Assign or reassign an exception owner
+      x-required-permission: exception.assign
+      x-audit-event: EXCEPTION_ASSIGNED
+      parameters: [{$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ownerId]
+              properties:
+                ownerId: {type: [string, 'null'], description: "Null unassigns"}
+                note: {type: string, maxLength: 2000}
+      responses: &exceptionCommandResponses
+        '200': {description: "OK; returns updated exception", headers: {ETag: {$ref: '#/components/headers/ETag'}}, content: {application/json: {schema: {$ref: '#/components/schemas/ExceptionDetail'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '412': {$ref: '#/components/responses/PreconditionFailed'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+  /exceptions/{exceptionId}/notes:
+    parameters: [{$ref: '#/components/parameters/ExceptionId'}]
+    post:
+      tags: [Exceptions]
+      operationId: addExceptionNote
+      summary: Add a note (immutable timeline entry)
+      x-required-permission: exception.investigate
+      x-audit-event: NOTE_ADDED
+      parameters: [{$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [text], properties: {text: {type: string, minLength: 1, maxLength: 4000}}}}}
+      responses: *exceptionCommandResponses
+  /exceptions/{exceptionId}/request-evidence:
+    parameters: [{$ref: '#/components/parameters/ExceptionId'}]
+    post:
+      tags: [Exceptions]
+      operationId: requestExceptionEvidence
+      summary: Request additional evidence; moves status to WAITING_FOR_DATA
+      x-required-permission: exception.investigate
+      x-audit-event: EVIDENCE_REQUESTED
+      parameters: [{$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: {type: string, minLength: 1, maxLength: 4000}
+                requestedFrom: {type: string, description: "Free text or source name"}
+      responses: *exceptionCommandResponses
+  /exceptions/{exceptionId}/resolution-proposals:
+    parameters: [{$ref: '#/components/parameters/ExceptionId'}]
+    post:
+      tags: [Exceptions]
+      operationId: proposeResolution
+      summary: Propose a resolution; creates an approval request
+      description: |
+        Moves status to PENDING_APPROVAL. The original control result is retained.
+        The approval policy (by severity/blocking) determines the required approver role.
+      x-required-permission: exception.propose
+      x-audit-event: RESOLUTION_PROPOSED
+      parameters: [{$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/ResolutionProposalInput'}}}
+      responses: *exceptionCommandResponses
+  /exceptions/{exceptionId}/resolution-proposals/{proposalId}/decision:
+    parameters:
+      - {$ref: '#/components/parameters/ExceptionId'}
+      - {name: proposalId, in: path, required: true, schema: {type: string}}
+    post:
+      tags: [Exceptions]
+      operationId: decideResolution
+      summary: Approve or reject a resolution proposal
+      description: Separation of duties — the proposer cannot decide (403 `separation-of-duties`). `If-Match` must be the ETag of the exception and a stale proposal version returns 409.
+      x-required-permission: exception.approve
+      x-audit-event: RESOLUTION_DECIDED
+      parameters: [{$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/DecisionInput'}}}
+      responses: *exceptionCommandResponses
+  /exceptions/{exceptionId}/reopen:
+    parameters: [{$ref: '#/components/parameters/ExceptionId'}]
+    post:
+      tags: [Exceptions]
+      operationId: reopenException
+      summary: Reopen a closed exception
+      x-required-permission: exception.reopen
+      x-audit-event: EXCEPTION_REOPENED
+      parameters: [{$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {$ref: '#/components/requestBodies/ReasonOnly'}
+      responses: *exceptionCommandResponses
+  /runs/{runId}/transactions:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    get:
+      tags: [Transactions]
+      operationId: listTransactions
+      summary: Normalised transactions
+      x-required-permission: transaction.view
+      parameters:
+        - {name: kind, in: query, schema: {$ref: '#/components/schemas/TransactionKind'}}
+        - {name: matchStatus, in: query, schema: {$ref: '#/components/schemas/MatchStatus'}}
+        - {name: accountId, in: query, schema: {type: string}}
+        - {name: currency, in: query, schema: {$ref: '#/components/schemas/Currency'}}
+        - {name: hasException, in: query, schema: {type: boolean}}
+        - {name: timestampFrom, in: query, schema: {type: string, format: date-time}}
+        - {name: timestampTo, in: query, schema: {type: string, format: date-time}}
+        - {$ref: '#/components/parameters/Search'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/IncludeTotal'}
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/TransactionPage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /runs/{runId}/transactions/{transactionId}:
+    parameters: [{$ref: '#/components/parameters/RunId'}, {$ref: '#/components/parameters/TransactionId'}]
+    get:
+      tags: [Transactions]
+      operationId: getTransaction
+      summary: Transaction detail
+      x-required-permission: transaction.view
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/Transaction'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /runs/{runId}/transactions/{transactionId}/lineage:
+    parameters: [{$ref: '#/components/parameters/RunId'}, {$ref: '#/components/parameters/TransactionId'}]
+    get:
+      tags: [Transactions]
+      operationId: getTransactionLineage
+      summary: Lineage from normalised event back to delivery, record location and fingerprint
+      x-required-permission: transaction.view
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/Lineage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /runs/{runId}/matching/workbench:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    get:
+      tags: [Matching]
+      operationId: getMatchingWorkbench
+      summary: Matching workbench focused on a transaction or an exception
+      x-required-permission: matching.view
+      parameters:
+        - {name: transactionId, in: query, schema: {type: string}}
+        - {name: exceptionId, in: query, schema: {type: string}}
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/MatchingWorkbench'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+  /runs/{runId}/match-groups:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    get:
+      tags: [Matching]
+      operationId: listMatchGroups
+      summary: Match groups
+      x-required-permission: matching.view
+      parameters:
+        - {name: status, in: query, schema: {$ref: '#/components/schemas/MatchStatus'}}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Cursor'}
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/MatchGroupPage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    post:
+      tags: [Matching]
+      operationId: proposeManualMatch
+      summary: Propose a manual match (material manual matches require approval)
+      x-required-permission: matching.propose
+      x-audit-event: MANUAL_MATCH_PROPOSED
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [leftTransactionIds, rightTransactionIds, reason]
+              properties:
+                leftTransactionIds: {type: array, minItems: 1, items: {type: string}}
+                rightTransactionIds: {type: array, minItems: 1, items: {type: string}}
+                reason: {$ref: '#/components/schemas/Reason'}
+                evidenceRefs: {type: array, items: {type: string}}
+      responses:
+        '201': {description: "Proposed; status PENDING_APPROVAL when material", content: {application/json: {schema: {$ref: '#/components/schemas/MatchGroup'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+  /runs/{runId}/accounts:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    get:
+      tags: [Accounts]
+      operationId: listAccounts
+      summary: Accounts with opening, recorded and independent closing balances
+      x-required-permission: ledger.view
+      parameters:
+        - {name: currency, in: query, schema: {$ref: '#/components/schemas/Currency'}}
+        - {name: state, in: query, schema: {$ref: '#/components/schemas/ControlState'}}
+        - {$ref: '#/components/parameters/Search'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Cursor'}
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/AccountPage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /runs/{runId}/accounts/{accountId}/ledger:
+    parameters: [{$ref: '#/components/parameters/RunId'}, {name: accountId, in: path, required: true, schema: {type: string}}]
+    get:
+      tags: [Accounts]
+      operationId: getAccountLedger
+      summary: Account ledger view with roll-forward, related transactions and exceptions
+      x-required-permission: ledger.view
+      parameters:
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Cursor'}
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/AccountLedgerView'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /runs/{runId}/safeguarding:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    get:
+      tags: [Safeguarding]
+      operationId: getSafeguardingPosition
+      summary: Safeguarding position per currency with obligation, eligible balances, adjustments
+      x-required-permission: safeguarding.view
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/SafeguardingPosition'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /runs/{runId}/safeguarding/adjustments:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    get:
+      tags: [Safeguarding]
+      operationId: listAdjustments
+      summary: Safeguarding adjustments of a run
+      x-required-permission: safeguarding.view
+      parameters: [{name: status, in: query, schema: {$ref: '#/components/schemas/AdjustmentStatus'}}]
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/SafeguardingAdjustment'}}}}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    post:
+      tags: [Safeguarding]
+      operationId: proposeAdjustment
+      summary: Propose a safeguarding adjustment
+      x-required-permission: safeguarding.adjustment.propose
+      x-audit-event: ADJUSTMENT_PROPOSED
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/AdjustmentInput'}}}
+      responses:
+        '201': {description: "Created", headers: {ETag: {$ref: '#/components/headers/ETag'}}, content: {application/json: {schema: {$ref: '#/components/schemas/SafeguardingAdjustment'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+  /safeguarding/adjustments/{adjustmentId}/decision:
+    parameters: [{name: adjustmentId, in: path, required: true, schema: {type: string}}]
+    post:
+      tags: [Safeguarding]
+      operationId: decideAdjustment
+      summary: Approve or reject an adjustment (not your own proposal)
+      x-required-permission: safeguarding.adjustment.approve
+      x-audit-event: ADJUSTMENT_DECIDED
+      parameters: [{$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/DecisionInput'}}}
+      responses:
+        '200': {description: "OK", headers: {ETag: {$ref: '#/components/headers/ETag'}}, content: {application/json: {schema: {$ref: '#/components/schemas/SafeguardingAdjustment'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '412': {$ref: '#/components/responses/PreconditionFailed'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+  /runs/{runId}/sign-off:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    get:
+      tags: [SignOff]
+      operationId: getRunSignOff
+      summary: Sign-off pack (checklist, open matters, preparer, required approver, blockers)
+      x-required-permission: signoff.view
+      responses:
+        '200': {description: "OK", headers: {ETag: {$ref: '#/components/headers/ETag'}}, content: {application/json: {schema: {$ref: '#/components/schemas/RunSignOff'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /runs/{runId}/sign-off/submit:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    post:
+      tags: [SignOff]
+      operationId: submitRunForSignOff
+      summary: Preparer submits the run for review; fixes the preparer and required approver
+      x-required-permission: signoff.prepare
+      x-audit-event: SIGN_OFF_SUBMITTED
+      parameters: [{$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                requiredApproverId: {type: string, description: "Optional; defaults to policy"}
+                note: {type: string, maxLength: 2000}
+      responses: &signOffResponses
+        '200': {description: "OK", headers: {ETag: {$ref: '#/components/headers/ETag'}}, content: {application/json: {schema: {$ref: '#/components/schemas/RunSignOff'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '412': {$ref: '#/components/responses/PreconditionFailed'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+  /runs/{runId}/sign-off/return:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    post:
+      tags: [SignOff]
+      operationId: returnRun
+      summary: Return the run to the preparer
+      x-required-permission: signoff.decide
+      x-audit-event: SIGN_OFF_RETURNED
+      parameters: [{$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {$ref: '#/components/requestBodies/ReasonOnly'}
+      responses: *signOffResponses
+  /runs/{runId}/sign-off/approve:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    post:
+      tags: [SignOff]
+      operationId: signOffRun
+      summary: Sign off the run
+      description: |
+        Requires attestation, no unresolved mandatory blockers, and approver != preparer
+        (403 `separation-of-duties`). The ETag must match the sign-off pack the approver saw,
+        so changes since preparation invalidate the attempt (409 `stale-signoff`).
+      x-required-permission: signoff.decide
+      x-audit-event: RUN_SIGNED_OFF
+      parameters: [{$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [attestation, reason]
+              properties:
+                attestation: {type: boolean, const: true}
+                attestationTextHash: {type: string, description: "Hash of the attestation text shown to the approver"}
+                reason: {$ref: '#/components/schemas/Reason'}
+      responses: *signOffResponses
+  /runs/{runId}/evidence-pack:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    get:
+      tags: [Audit]
+      operationId: getEvidencePack
+      summary: Evidence pack status and contents for a run
+      x-required-permission: evidence.view
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/EvidencePack'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    post:
+      tags: [Audit]
+      operationId: generateEvidencePack
+      summary: Generate (or regenerate) the evidence pack
+      x-required-permission: evidence.export
+      x-audit-event: EVIDENCE_PACK_GENERATED
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '202': {description: "Accepted", content: {application/json: {schema: {$ref: '#/components/schemas/EvidencePack'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /runs/{runId}/evidence-pack/download:
+    parameters: [{$ref: '#/components/parameters/RunId'}]
+    get:
+      tags: [Audit]
+      operationId: downloadEvidencePack
+      summary: Download the generated evidence pack (audited)
+      x-required-permission: evidence.export
+      x-audit-event: EVIDENCE_PACK_DOWNLOADED
+      responses:
+        '200': {description: "Evidence pack archive", content: {application/zip: {schema: {type: string, format: binary}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /audit-events:
+    get:
+      tags: [Audit]
+      operationId: listAuditEvents
+      summary: Audit events (append-only, hash-chained)
+      x-required-permission: audit.view
+      parameters:
+        - {name: runId, in: query, schema: {type: string}}
+        - {name: subjectKind, in: query, schema: {$ref: '#/components/schemas/AuditSubjectKind'}}
+        - {name: subjectId, in: query, schema: {type: string}}
+        - {name: type, in: query, schema: {$ref: '#/components/schemas/AuditEventType'}}
+        - {name: actorId, in: query, schema: {type: string}}
+        - {name: actorType, in: query, schema: {$ref: '#/components/schemas/ActorType'}}
+        - {name: from, in: query, schema: {type: string, format: date-time}}
+        - {name: to, in: query, schema: {type: string, format: date-time}}
+        - {$ref: '#/components/parameters/Search'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Cursor'}
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/AuditEventPage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+  /lineage/{subjectKind}/{subjectId}:
+    get:
+      tags: [Audit]
+      operationId: getLineage
+      summary: Lineage graph for any subject (exception, transaction, record, control result)
+      x-required-permission: evidence.view
+      parameters:
+        - {name: subjectKind, in: path, required: true, schema: {type: string, enum: [EXCEPTION, TRANSACTION, RECORD, CONTROL_RESULT]}}
+        - {name: subjectId, in: path, required: true, schema: {type: string}}
+        - {name: runId, in: query, schema: {type: string}}
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/Lineage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /settings:
+    get:
+      tags: [Settings]
+      operationId: getSettings
+      summary: Active configuration, users, approval policies and pending-change count
+      x-required-permission: settings.view
+      parameters: [{name: legalEntityId, in: query, schema: {type: string}}]
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/Settings'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /settings/changes:
+    get:
+      tags: [Settings]
+      operationId: listConfigChanges
+      summary: Configuration change history and pending changes
+      x-required-permission: settings.view
+      parameters:
+        - {name: status, in: query, schema: {$ref: '#/components/schemas/ConfigChangeStatus'}}
+        - {name: targetKind, in: query, schema: {$ref: '#/components/schemas/ConfigTargetKind'}}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Cursor'}
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/ConfigChangePage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    post:
+      tags: [Settings]
+      operationId: proposeConfigChange
+      summary: Draft/propose a configuration or access change
+      x-required-permission: settings.draft
+      x-audit-event: CONFIG_CHANGE_PROPOSED
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/ConfigChangeInput'}}}
+      responses:
+        '201': {description: "Created", headers: {ETag: {$ref: '#/components/headers/ETag'}}, content: {application/json: {schema: {$ref: '#/components/schemas/ConfigChange'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+  /settings/changes/{changeId}:
+    parameters: [{name: changeId, in: path, required: true, schema: {type: string}}]
+    get:
+      tags: [Settings]
+      operationId: getConfigChange
+      summary: One configuration change with diff and approvals
+      x-required-permission: settings.view
+      responses:
+        '200': {description: "OK", headers: {ETag: {$ref: '#/components/headers/ETag'}}, content: {application/json: {schema: {$ref: '#/components/schemas/ConfigChange'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /settings/changes/{changeId}/decision:
+    parameters: [{name: changeId, in: path, required: true, schema: {type: string}}]
+    post:
+      tags: [Settings]
+      operationId: decideConfigChange
+      summary: Approve (activates at effectiveFrom) or reject a configuration change
+      description: The proposer cannot approve their own material change (403 `separation-of-duties`).
+      x-required-permission: settings.approve
+      x-audit-event: CONFIG_CHANGE_DECIDED
+      parameters: [{$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/DecisionInput'}}}
+      responses:
+        '200': {description: "OK", headers: {ETag: {$ref: '#/components/headers/ETag'}}, content: {application/json: {schema: {$ref: '#/components/schemas/ConfigChange'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '412': {$ref: '#/components/responses/PreconditionFailed'}
+        '422': {$ref: '#/components/responses/Unprocessable'}
+        '428': {$ref: '#/components/responses/PreconditionRequired'}
+  /approvals:
+    get:
+      tags: [Settings]
+      operationId: listApprovals
+      summary: Approval requests (resolutions, adjustments, sign-off, config, manual matches) awaiting the caller
+      x-required-permission: approval.view
+      parameters:
+        - {name: objectType, in: query, schema: {$ref: '#/components/schemas/ApprovalObjectType'}}
+        - {name: mine, in: query, description: "Only items I may decide (excludes own proposals)", schema: {type: boolean, default: true}}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Cursor'}
+      responses:
+        '200': {description: "OK", content: {application/json: {schema: {$ref: '#/components/schemas/ApprovalPage'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: OIDC access token from the customer identity provider. Roles and scope are resolved server-side (see /me).
+  headers:
+    ETag:
+      description: Opaque strong validator of the current resource version; send back in `If-Match`.
+      schema: {type: string}
+    RequestId:
+      description: Echo of X-Request-Id (or server generated).
+      schema: {type: string}
+  parameters:
+    RunId: {name: runId, in: path, required: true, description: "Run version id; a new id is issued per reprocess.", schema: {type: string}}
+    DeliveryId: {name: deliveryId, in: path, required: true, schema: {type: string}}
+    ExceptionId: {name: exceptionId, in: path, required: true, schema: {type: string, examples: [F-019]}}
+    TransactionId: {name: transactionId, in: path, required: true, schema: {type: string, examples: [TRF-004]}}
+    Limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 25}}
+    Cursor: {name: cursor, in: query, description: "Opaque cursor from `page.nextCursor`.", schema: {type: string}}
+    IncludeTotal: {name: includeTotal, in: query, description: "Include exact `page.total` (may be slower).", schema: {type: boolean, default: false}}
+    Search: {name: search, in: query, schema: {type: string, maxLength: 200}}
+    IfMatch: {name: If-Match, in: header, required: true, description: "ETag of the target resource as last read. Missing -> 428; stale -> 412.", schema: {type: string}}
+    IdempotencyKey: {name: Idempotency-Key, in: header, required: true, description: "Client-generated UUID. Replays within 24h return the original response; same key with a different body -> 422.", schema: {type: string, format: uuid}}
+    RequestId: {name: X-Request-Id, in: header, required: false, description: "Client correlation id (UUID). Propagated to logs and audit events.", schema: {type: string, format: uuid}}
+  requestBodies:
+    ReasonOnly:
+      required: true
+      content: {application/json: {schema: {type: object, required: [reason], properties: {reason: {$ref: '#/components/schemas/Reason'}}}}}
+  responses:
+    Unauthorized: {description: "Missing or invalid credentials", headers: {WWW-Authenticate: {schema: {type: string}}}, content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+    Forbidden: {description: 'Permission, legal-entity scope or separation-of-duties violation (type: forbidden | out-of-scope | separation-of-duties)', content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+    NotFound: {description: "Not found (or outside caller's scope)", content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+    Conflict: {description: 'State conflict (type: invalid-state | run-superseded | stale-signoff | idempotency-in-progress | duplicate)', content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+    PreconditionFailed: {description: "If-Match does not match current ETag; re-read and retry", content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+    PreconditionRequired: {description: "If-Match header missing", content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+    Unprocessable: {description: "Validation failed (reason missing, bad filter, bad body)", content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+  schemas:
+    Problem:
+      type: object
+      description: RFC 9457 problem details.
+      required: [type, title, status]
+      properties:
+        type: {type: string, format: uri-reference, examples: ['https://proofly.example/problems/separation-of-duties']}
+        title: {type: string}
+        status: {type: integer}
+        detail: {type: string}
+        instance: {type: string}
+        requestId: {type: string}
+        errors:
+          type: array
+          description: Field-level validation errors (422).
+          items:
+            type: object
+            required: [pointer, message]
+            properties:
+              pointer: {type: string, description: "JSON Pointer or query parameter name"}
+              message: {type: string}
+              code: {type: string}
+      additionalProperties: true
+    Reason: {type: string, minLength: 3, maxLength: 4000, description: "Mandatory rationale recorded in the audit event."}
+    DecimalString: {type: string, pattern: '^-?\d+(\.\d{1,6})?$', examples: ['-50.00']}
+    Currency: {type: string, pattern: '^[A-Z]{3}$', description: "ISO 4217", examples: [EUR]}
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount: {$ref: '#/components/schemas/DecimalString'}
+        currency: {$ref: '#/components/schemas/Currency'}
+    PageInfo:
+      type: object
+      required: [hasMore]
+      properties:
+        nextCursor: {type: [string, 'null']}
+        hasMore: {type: boolean}
+        total: {type: integer, description: "Present when includeTotal=true"}
+    IsoDate: {type: string, format: date}
+    Severity: {type: string, enum: [CRITICAL, HIGH, MEDIUM, LOW]}
+    ControlArea: {type: string, enum: [data_completeness, matching, independent_ledger, transaction_lifecycle, safeguarding]}
+    ControlState: {type: string, enum: [PASSED, REVIEW_REQUIRED, FAILED, BLOCKED, QUALIFIED]}
+    RunState: {type: string, enum: [AWAITING_EVIDENCE, PROCESSING, REVIEW_REQUIRED, READY_FOR_SIGN_OFF, SIGNED_OFF, SUPERSEDED, FAILED]}
+    SignOffState: {type: string, enum: [PREPARATION_INCOMPLETE, READY_FOR_REVIEW, RETURNED, APPROVAL_PENDING, SIGNED_OFF, INVALIDATED, SUPERSEDED]}
+    ExceptionStatus: {type: string, enum: [OPEN, IN_INVESTIGATION, WAITING_FOR_DATA, PENDING_APPROVAL, RESOLVED, ACCEPTED_DIFFERENCE, FALSE_POSITIVE]}
+    ResolutionKind: {type: string, enum: [RESOLVED, ACCEPTED_DIFFERENCE, FALSE_POSITIVE]}
+    TransactionKind: {type: string, enum: [BANK_TRANSFER, DIRECT_DEBIT, CARD, BANK_EVIDENCE, LEDGER_ENTRY]}
+    MatchStatus: {type: string, enum: [MATCHED, UNMATCHED, VALUE_MISMATCH, NOT_APPLICABLE, PENDING_APPROVAL]}
+    AdjustmentStatus: {type: string, enum: [PROPOSED, APPROVED, REJECTED, EXPIRED]}
+    SafeguardingState: {type: string, enum: [COVERED, SHORTFALL, SURPLUS, QUALIFIED, NO_OBLIGATION]}
+    DeliveryState: {type: string, enum: [RECEIVED, LATE, MISSING, REJECTED, SUPERSEDED, QUALIFIED]}
+    ActorType: {type: string, enum: [USER, SYSTEM, SERVICE_ACCOUNT], description: "Who performed the action."}
+    AuditSubjectKind: {type: string, enum: [RUN, DELIVERY, RECORD, EXCEPTION, EVIDENCE_PACK, ADJUSTMENT, SIGN_OFF, CONFIG, MATCH_GROUP]}
+    AuditEventType:
+      type: string
+      enum:
+        - DELIVERY_RECEIVED
+        - RECORD_REJECTED
+        - DELIVERY_INGESTION_RETRIED
+        - DELIVERY_SUPERSEDED
+        - RUN_STARTED
+        - RUN_REPROCESS_REQUESTED
+        - CONTROL_EXECUTED
+        - EXCEPTION_CREATED
+        - EXCEPTION_ASSIGNED
+        - NOTE_ADDED
+        - EVIDENCE_REQUESTED
+        - RESOLUTION_PROPOSED
+        - RESOLUTION_DECIDED
+        - EXCEPTION_REOPENED
+        - MANUAL_MATCH_PROPOSED
+        - ADJUSTMENT_PROPOSED
+        - ADJUSTMENT_DECIDED
+        - SIGN_OFF_SUBMITTED
+        - SIGN_OFF_RETURNED
+        - RUN_SIGNED_OFF
+        - EVIDENCE_PACK_GENERATED
+        - EVIDENCE_PACK_DOWNLOADED
+        - CONFIG_CHANGE_PROPOSED
+        - CONFIG_CHANGE_DECIDED
+        - ACCESS_CHANGED
+    Role: {type: string, enum: [CONTROL_ANALYST, CONTROL_OWNER, APPROVER, AUDIT_REVIEWER, ADMIN, CONFIG_ADMIN, SECURITY_ADMIN]}
+    Permission:
+      type: string
+      description: Values used in `x-required-permission`.
+      enum:
+        - auth.self
+        - run.view
+        - run.reprocess
+        - source.view
+        - source.retry
+        - source.supersede
+        - exception.view
+        - exception.assign
+        - exception.investigate
+        - exception.propose
+        - exception.approve
+        - exception.reopen
+        - transaction.view
+        - matching.view
+        - matching.propose
+        - ledger.view
+        - safeguarding.view
+        - safeguarding.adjustment.propose
+        - safeguarding.adjustment.approve
+        - signoff.view
+        - signoff.prepare
+        - signoff.decide
+        - evidence.view
+        - evidence.export
+        - audit.view
+        - settings.view
+        - settings.draft
+        - settings.approve
+        - access.manage
+        - approval.view
+    Me:
+      type: object
+      required: [id, name, email, roles, legalEntityIds, permissions]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        email: {type: string, format: email}
+        roles: {type: array, items: {$ref: '#/components/schemas/Role'}}
+        legalEntityIds: {type: array, items: {type: string}}
+        permissions:
+          type: array
+          items: {$ref: '#/components/schemas/Permission'}
+          description: Effective permissions (union over roles). UI uses these to show/hide actions; the server still enforces.
+        permissionsByLegalEntity:
+          type: object
+          additionalProperties: {type: array, items: {$ref: '#/components/schemas/Permission'}}
+        apiVersion: {type: string}
+    LegalEntity:
+      type: object
+      required: [id, name, currencies]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        currencies: {type: array, items: {$ref: '#/components/schemas/Currency'}}
+    Run:
+      type: object
+      required: [id, legalEntityId, businessDate, version, rulesetVersion, state, signOffState, startedAt, lastEvidenceArrivalAt]
+      properties:
+        id: {type: string}
+        legalEntityId: {type: string}
+        businessDate: {$ref: '#/components/schemas/IsoDate'}
+        version: {type: integer, minimum: 1}
+        supersededByRunId: {type: [string, 'null']}
+        supersedesRunId: {type: [string, 'null']}
+        rulesetVersion: {type: string}
+        state: {$ref: '#/components/schemas/RunState'}
+        signOffState: {$ref: '#/components/schemas/SignOffState'}
+        startedAt: {type: string, format: date-time}
+        lastEvidenceArrivalAt: {type: string, format: date-time}
+        preparer: {oneOf: [{$ref: '#/components/schemas/UserRef'}, {type: 'null'}]}
+        requiredApprover: {oneOf: [{$ref: '#/components/schemas/UserRef'}, {type: 'null'}]}
+        signedOffBy: {oneOf: [{$ref: '#/components/schemas/UserRef'}, {type: 'null'}]}
+        signedOffAt: {type: [string, 'null'], format: date-time}
+    UserRef:
+      type: object
+      required: [id, name]
+      properties:
+        id: {type: string}
+        name: {type: string}
+    RunPage:
+      type: object
+      required: [items, page]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Run'}}
+        page: {$ref: '#/components/schemas/PageInfo'}
+    ControlAreaSummary:
+      type: object
+      required: [area, label, state, recordCount, value, openExceptions, previousRecordCount, changeFromPrevious]
+      properties:
+        area: {$ref: '#/components/schemas/ControlArea'}
+        label: {type: string}
+        state: {$ref: '#/components/schemas/ControlState'}
+        recordCount: {type: integer}
+        value: {type: array, items: {$ref: '#/components/schemas/Money'}, description: "One Money per currency"}
+        openExceptions: {type: integer}
+        previousRecordCount: {type: integer}
+        changeFromPrevious: {type: integer}
+    DailySummaryItem:
+      type: object
+      required: [text]
+      properties:
+        text: {type: string}
+        link:
+          type: object
+          required: [kind, id]
+          properties:
+            kind: {type: string, enum: [exception, control, source]}
+            id: {type: string}
+    ControlRoom:
+      type: object
+      required: [run, summary, evidenceReadiness, controlAreas, attentionQueue, safeguarding]
+      properties:
+        run: {$ref: '#/components/schemas/Run'}
+        summary: {type: array, items: {$ref: '#/components/schemas/DailySummaryItem'}}
+        evidenceReadiness: {type: array, items: {$ref: '#/components/schemas/SourceDelivery'}}
+        controlAreas: {type: array, items: {$ref: '#/components/schemas/ControlAreaSummary'}}
+        attentionQueue: {type: array, items: {$ref: '#/components/schemas/ExceptionSummary'}}
+        safeguarding: {type: array, items: {$ref: '#/components/schemas/SafeguardingCurrencyPosition'}}
+    RunComparison:
+      type: object
+      required: [run, against, controlAreas, newExceptionIds, resolvedExceptionIds]
+      properties:
+        run: {$ref: '#/components/schemas/Run'}
+        against: {$ref: '#/components/schemas/Run'}
+        controlAreas:
+          type: array
+          items:
+            type: object
+            required: [area, state, againstState, recordCountDelta]
+            properties:
+              area: {$ref: '#/components/schemas/ControlArea'}
+              state: {$ref: '#/components/schemas/ControlState'}
+              againstState: {$ref: '#/components/schemas/ControlState'}
+              recordCountDelta: {type: integer}
+        newExceptionIds: {type: array, items: {type: string}}
+        resolvedExceptionIds: {type: array, items: {type: string}}
+        safeguardingDelta: {type: array, items: {$ref: '#/components/schemas/ChangeDriver'}}
+        changedDeliveries: {type: array, items: {type: string}}
+    SourceDelivery:
+      type: object
+      required: [deliveryId, sourceName, fileName, businessDate, schemaVersion, declaredRecordCount, actualRecordCount, declaredTotals, expectedBy, receivedAt, correctionOfDeliveryId, state, acceptedRecords, rejectedRecords, qualifications, findingIds]
+      properties:
+        deliveryId: {type: string}
+        sourceName: {type: string}
+        fileName: {type: string}
+        businessDate: {$ref: '#/components/schemas/IsoDate'}
+        schemaVersion: {type: string}
+        declaredRecordCount: {type: integer}
+        actualRecordCount: {type: integer}
+        declaredTotals: {type: array, items: {$ref: '#/components/schemas/Money'}}
+        expectedBy: {type: string, format: date-time}
+        receivedAt: {type: [string, 'null'], format: date-time}
+        correctionOfDeliveryId: {type: [string, 'null']}
+        supersededByDeliveryId: {type: [string, 'null']}
+        state: {$ref: '#/components/schemas/DeliveryState'}
+        acceptedRecords: {type: integer}
+        rejectedRecords: {type: integer}
+        qualifications: {type: array, items: {type: string}}
+        findingIds: {type: array, items: {type: string}, description: "Exception ids"}
+    CheckResult:
+      type: object
+      required: [check, result]
+      properties:
+        check: {type: string, enum: [FINGERPRINT, DUPLICATE, SEQUENCE, SCHEMA, RECORD_COUNT, CONTROL_TOTALS]}
+        result: {type: string, enum: [PASS, FAIL, WARN, NOT_APPLICABLE]}
+        detail: {type: string}
+        relatedDeliveryId: {type: [string, 'null'], description: "E.g. the duplicate or the previous sequence delivery"}
+    SourceDeliveryDetail:
+      allOf:
+        - $ref: '#/components/schemas/SourceDelivery'
+        - type: object
+          required: [fingerprint, checks]
+          properties:
+            fingerprint: {type: object, required: [algorithm, value], properties: {algorithm: {type: string, examples: [SHA-256]}, value: {type: string}}}
+            sequenceNumber: {type: [integer, 'null']}
+            extractionTimestamp: {type: [string, 'null'], format: date-time}
+            sourceTimeZone: {type: [string, 'null']}
+            checks: {type: array, items: {$ref: '#/components/schemas/CheckResult'}}
+            actualTotals: {type: array, items: {$ref: '#/components/schemas/Money'}}
+            allowedActions: {type: array, items: {type: string, enum: [RETRY_INGESTION, MARK_SUPERSEDED]}, description: "Server-computed from state and permissions"}
+    ProcessingStep:
+      type: object
+      required: [id, at, stage, outcome]
+      properties:
+        id: {type: string}
+        at: {type: string, format: date-time}
+        stage: {type: string, enum: [RECEIVED, FINGERPRINTED, SCHEMA_VALIDATED, RECORDS_PARSED, TOTALS_CHECKED, ACCEPTED, REJECTED, RETRIED, SUPERSEDED]}
+        outcome: {type: string, enum: [OK, WARNING, ERROR]}
+        actor: {$ref: '#/components/schemas/Actor'}
+        message: {type: string}
+    SourceRecord:
+      type: object
+      required: [recordId, sourceName, sourceRowId, deliveryId, rowNumber, accepted, fields, findingIds]
+      properties:
+        recordId: {type: string, description: 'New: stable id for GET /source-records/{recordId}'}
+        sourceName: {type: string}
+        sourceRowId: {type: string}
+        deliveryId: {type: string}
+        rowNumber: {type: integer}
+        accepted: {type: boolean}
+        fields: {type: object, additionalProperties: {type: string}, description: "Original values as received; amounts remain strings"}
+        rejectionReasons: {type: array, items: {type: string}}
+        contentFingerprint: {type: string}
+        findingIds: {type: array, items: {type: string}}
+    SourceRecordPage:
+      type: object
+      required: [items, page]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/SourceRecord'}}
+        page: {$ref: '#/components/schemas/PageInfo'}
+    Actor:
+      type: object
+      required: [type, id, name]
+      properties:
+        type: {$ref: '#/components/schemas/ActorType'}
+        id: {type: string}
+        name: {type: string}
+    ExceptionSummary:
+      type: object
+      required: [id, runId, title, control, reasonCode, severity, status, value, legalEntityId, businessDate, owner, dueAt, blocking, sourceFile, sourceRowId, createdAt, etag]
+      properties:
+        id: {type: string, examples: [F-019]}
+        runId: {type: string}
+        title: {type: string}
+        control: {$ref: '#/components/schemas/ControlArea'}
+        reasonCode: {type: string}
+        severity: {$ref: '#/components/schemas/Severity'}
+        status: {$ref: '#/components/schemas/ExceptionStatus'}
+        value: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+        legalEntityId: {type: string}
+        businessDate: {$ref: '#/components/schemas/IsoDate'}
+        owner: {oneOf: [{$ref: '#/components/schemas/UserRef'}, {type: 'null'}], description: 'Changed: object (id+name) instead of a bare string'}
+        createdAt: {type: string, format: date-time}
+        ageDays: {type: integer}
+        dueAt: {type: string, format: date-time}
+        blocking: {type: boolean}
+        sourceFile: {type: string}
+        sourceRowId: {type: string}
+        etag: {type: string, description: "Same value as the ETag header of GET /exceptions/{id}; lets bulk commands avoid a read per item."}
+    ExceptionPage:
+      type: object
+      required: [items, page]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/ExceptionSummary'}}
+        page: {$ref: '#/components/schemas/PageInfo'}
+    ExceptionsSummary:
+      type: object
+      required: [total, byCurrency, bySeverity, byStatus]
+      description: Aggregates over the full filtered set.
+      properties:
+        total: {type: integer}
+        blocking: {type: integer}
+        unassigned: {type: integer}
+        overdue: {type: integer}
+        bySeverity: {type: object, additionalProperties: {type: integer}, propertyNames: {$ref: '#/components/schemas/Severity'}}
+        byStatus: {type: object, additionalProperties: {type: integer}, propertyNames: {$ref: '#/components/schemas/ExceptionStatus'}}
+        byControl: {type: object, additionalProperties: {type: integer}, propertyNames: {$ref: '#/components/schemas/ControlArea'}}
+        byCurrency:
+          type: array
+          description: One entry per currency; sums never mix currencies.
+          items:
+            type: object
+            required: [currency, count, totalValue, absoluteValue]
+            properties:
+              currency: {$ref: '#/components/schemas/Currency'}
+              count: {type: integer}
+              totalValue: {$ref: '#/components/schemas/Money'}
+              absoluteValue: {$ref: '#/components/schemas/Money'}
+        withoutValue: {type: integer, description: "Exceptions without a monetary value"}
+        computedAt: {type: string, format: date-time}
+    SavedViewInput:
+      type: object
+      required: [name, filters]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 80}
+        shared: {type: boolean, default: false}
+        filters: {type: object, additionalProperties: true, description: "Same keys and value shapes as the listExceptions query parameters"}
+        sort: {type: string}
+    SavedView:
+      allOf:
+        - $ref: '#/components/schemas/SavedViewInput'
+        - type: object
+          required: [id, owner, createdAt]
+          properties:
+            id: {type: string}
+            owner: {$ref: '#/components/schemas/UserRef'}
+            createdAt: {type: string, format: date-time}
+    EvidenceNode:
+      type: object
+      required: [id, kind, label, source, sourceRowId, amount]
+      properties:
+        id: {type: string}
+        kind: {type: string, enum: [INSTRUCTION, LEDGER_ENTRY, BANK_TRANSACTION, LIFECYCLE_EVENT, BALANCE, CONTROL_RESULT, DELIVERY]}
+        label: {type: string}
+        source: {type: string}
+        sourceRowId: {type: string}
+        recordId: {type: [string, 'null'], description: "Link to GET /source-records/{recordId} for preview"}
+        amount: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+    EvidenceEdge:
+      type: object
+      required: [from, to, relation]
+      properties:
+        from: {type: string}
+        to: {type: string}
+        relation: {type: string}
+    Lineage:
+      type: object
+      required: [subjectKind, subjectId, nodes, edges]
+      properties:
+        subjectKind: {type: string}
+        subjectId: {type: string}
+        nodes: {type: array, items: {$ref: '#/components/schemas/EvidenceNode'}}
+        edges: {type: array, items: {$ref: '#/components/schemas/EvidenceEdge'}}
+        deliveries:
+          type: array
+          items:
+            type: object
+            required: [deliveryId, fingerprint]
+            properties:
+              deliveryId: {type: string}
+              fingerprint: {type: string}
+              rowNumber: {type: [integer, 'null']}
+              schemaVersion: {type: string}
+              mappingVersion: {type: string}
+    RuleTrace:
+      type: object
+      required: [control, ruleId, ruleVersion, inputs, tolerance, calculation, result]
+      properties:
+        control: {$ref: '#/components/schemas/ControlArea'}
+        ruleId: {type: string}
+        ruleVersion: {type: string}
+        inputs: {type: array, items: {type: object, required: [name, value], properties: {name: {type: string}, value: {type: string}}}}
+        tolerance: {type: string}
+        calculation: {type: string}
+        result: {type: string}
+    TimelineEvent:
+      type: object
+      required: [id, at, actor, type, text]
+      properties:
+        id: {type: string}
+        at: {type: string, format: date-time}
+        actor: {$ref: '#/components/schemas/Actor'}
+        type: {type: string, enum: [ASSIGNMENT, NOTE, EVIDENCE_REQUEST, STATUS_CHANGE, RESOLUTION_PROPOSED, APPROVAL, REOPENED, SYSTEM]}
+        text: {type: string}
+    Approval:
+      type: object
+      required: [id, objectType, objectId, proposalVersion, proposer, status, policyVersion, requiredRole, proposedAt]
+      properties:
+        id: {type: string}
+        objectType: {$ref: '#/components/schemas/ApprovalObjectType'}
+        objectId: {type: string}
+        runId: {type: [string, 'null']}
+        proposalVersion: {type: integer}
+        proposer: {$ref: '#/components/schemas/UserRef'}
+        approver: {oneOf: [{$ref: '#/components/schemas/UserRef'}, {type: 'null'}]}
+        requiredRole: {$ref: '#/components/schemas/Role'}
+        status: {type: string, enum: [PENDING, APPROVED, REJECTED, INVALIDATED, EXPIRED]}
+        decision: {type: [string, 'null'], enum: [APPROVE, REJECT, null]}
+        rationale: {type: [string, 'null']}
+        evidenceRefs: {type: array, items: {type: string}}
+        policyVersion: {type: string}
+        proposedAt: {type: string, format: date-time}
+        decidedAt: {type: [string, 'null'], format: date-time}
+        canDecide: {type: boolean, description: "False for the proposer or without permission/scope"}
+    ApprovalObjectType: {type: string, enum: [EXCEPTION_RESOLUTION, SAFEGUARDING_ADJUSTMENT, MANUAL_MATCH, RUN_QUALIFICATION, RUN_SIGN_OFF, CONFIG_CHANGE, ACCESS_CHANGE]}
+    ApprovalPage:
+      type: object
+      required: [items, page]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Approval'}}
+        page: {$ref: '#/components/schemas/PageInfo'}
+    ExceptionDetail:
+      allOf:
+        - $ref: '#/components/schemas/ExceptionSummary'
+        - type: object
+          required: [description, expectedEffect, summary, evidenceNodes, evidenceEdges, trace, timeline, states, relatedTransactionIds, relatedAccountIds, approvalPolicy, allowedActions]
+          properties:
+            description: {type: string}
+            expectedEffect: {type: string}
+            summary: {type: string}
+            evidenceNodes: {type: array, items: {$ref: '#/components/schemas/EvidenceNode'}}
+            evidenceEdges: {type: array, items: {$ref: '#/components/schemas/EvidenceEdge'}}
+            trace: {$ref: '#/components/schemas/RuleTrace'}
+            timeline: {type: array, items: {$ref: '#/components/schemas/TimelineEvent'}}
+            states: {type: array, items: {type: string, enum: [WAITING_FOR_DATA, CONFLICTING_EVIDENCE, PENDING_EXTERNAL_ACTION, PENDING_APPROVAL, SUPERSEDED_RUN]}}
+            relatedTransactionIds: {type: array, items: {type: string}}
+            relatedAccountIds: {type: array, items: {type: string}}
+            approvalPolicy: {type: string}
+            pendingApproval: {oneOf: [{$ref: '#/components/schemas/Approval'}, {type: 'null'}]}
+            approvals: {type: array, items: {$ref: '#/components/schemas/Approval'}}
+            allowedActions:
+              type: array
+              description: Server-computed from state, permission, scope and separation of duties.
+              items: {type: string, enum: [ASSIGN, ADD_NOTE, REQUEST_EVIDENCE, PROPOSE_RESOLUTION, APPROVE_RESOLUTION, REJECT_RESOLUTION, REOPEN]}
+    ResolutionProposalInput:
+      type: object
+      required: [kind, reason, evidenceRefs]
+      properties:
+        kind: {$ref: '#/components/schemas/ResolutionKind'}
+        reason: {$ref: '#/components/schemas/Reason'}
+        evidenceRefs: {type: array, items: {type: string}}
+    DecisionInput:
+      type: object
+      required: [decision, reason]
+      properties:
+        decision: {type: string, enum: [APPROVE, REJECT]}
+        reason: {$ref: '#/components/schemas/Reason'}
+        proposalVersion: {type: integer, description: "Version the approver reviewed; stale -> 409"}
+    BulkResult:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required: [exceptionId, status]
+            properties:
+              exceptionId: {type: string}
+              status: {type: integer, description: "HTTP-style status for this item"}
+              etag: {type: string}
+              problem: {$ref: '#/components/schemas/Problem'}
+    Transaction:
+      type: object
+      required: [id, runId, kind, source, sourceRowId, reference, accountId, timestamp, amount, direction, sourceStatus, lifecycle, matchStatus, matchGroupId, exceptionIds, accepted]
+      properties:
+        id: {type: string}
+        runId: {type: string}
+        kind: {$ref: '#/components/schemas/TransactionKind'}
+        source: {type: string}
+        sourceRowId: {type: string}
+        recordId: {type: [string, 'null']}
+        deliveryId: {type: [string, 'null']}
+        reference: {type: string}
+        accountId: {type: [string, 'null']}
+        timestamp: {type: string, format: date-time}
+        amount: {$ref: '#/components/schemas/Money'}
+        direction: {type: [string, 'null'], enum: [DEBIT, CREDIT, null]}
+        sourceStatus: {type: string}
+        lifecycle: {type: array, items: {type: string}}
+        matchStatus: {$ref: '#/components/schemas/MatchStatus'}
+        matchGroupId: {type: [string, 'null']}
+        exceptionIds: {type: array, items: {type: string}}
+        accepted: {type: boolean}
+    TransactionPage:
+      type: object
+      required: [items, page]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Transaction'}}
+        page: {$ref: '#/components/schemas/PageInfo'}
+        aggregates:
+          type: array
+          description: Per-currency totals over the full filtered set.
+          items:
+            type: object
+            required: [currency, count, debitTotal, creditTotal]
+            properties:
+              currency: {$ref: '#/components/schemas/Currency'}
+              count: {type: integer}
+              debitTotal: {$ref: '#/components/schemas/Money'}
+              creditTotal: {$ref: '#/components/schemas/Money'}
+    MatchCandidate:
+      type: object
+      required: [transactionId, label, amount, timestamp, reference]
+      properties:
+        transactionId: {type: string}
+        label: {type: string}
+        amount: {$ref: '#/components/schemas/Money'}
+        timestamp: {type: string, format: date-time}
+        reference: {type: string}
+    MatchGroup:
+      type: object
+      required: [id, status, left, right, difference, ruleVersion, tolerance, rationale, exceptionIds]
+      properties:
+        id: {type: string}
+        status: {$ref: '#/components/schemas/MatchStatus'}
+        left: {type: array, items: {$ref: '#/components/schemas/MatchCandidate'}}
+        right: {type: array, items: {$ref: '#/components/schemas/MatchCandidate'}}
+        difference: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+        ruleVersion: {type: string}
+        tolerance: {type: string}
+        rationale: {type: string}
+        exceptionIds: {type: array, items: {type: string}}
+        manual: {type: boolean, description: "True when created by a user"}
+        approval: {oneOf: [{$ref: '#/components/schemas/Approval'}, {type: 'null'}]}
+    MatchGroupPage:
+      type: object
+      required: [items, page]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/MatchGroup'}}
+        page: {$ref: '#/components/schemas/PageInfo'}
+    MatchingWorkbench:
+      type: object
+      required: [focusTransactionId, groups, unmatched]
+      properties:
+        focusTransactionId: {type: string}
+        groups: {type: array, items: {$ref: '#/components/schemas/MatchGroup'}}
+        unmatched: {type: array, items: {$ref: '#/components/schemas/MatchCandidate'}}
+    Account:
+      type: object
+      required: [id, runId, currency, legalEntityId, openingBalance, recordedClosingBalance, independentClosingBalance, difference, state, exceptionIds]
+      properties:
+        id: {type: string}
+        runId: {type: string}
+        currency: {$ref: '#/components/schemas/Currency'}
+        legalEntityId: {type: string}
+        openingBalance: {$ref: '#/components/schemas/Money'}
+        recordedClosingBalance: {$ref: '#/components/schemas/Money'}
+        independentClosingBalance: {$ref: '#/components/schemas/Money'}
+        difference: {$ref: '#/components/schemas/Money'}
+        state: {$ref: '#/components/schemas/ControlState'}
+        exceptionIds: {type: array, items: {type: string}}
+    AccountPage:
+      type: object
+      required: [items, page]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Account'}}
+        page: {$ref: '#/components/schemas/PageInfo'}
+        aggregates:
+          type: array
+          items:
+            type: object
+            required: [currency, accounts, totalDifference]
+            properties:
+              currency: {$ref: '#/components/schemas/Currency'}
+              accounts: {type: integer}
+              totalDifference: {$ref: '#/components/schemas/Money'}
+    LedgerEntry:
+      type: object
+      required: [id, accountId, timestamp, valueDate, direction, amount, reference, entryType, sourceStatus, exceptionIds]
+      properties:
+        id: {type: string}
+        accountId: {type: string}
+        timestamp: {type: string, format: date-time}
+        valueDate: {$ref: '#/components/schemas/IsoDate'}
+        direction: {type: string, enum: [DEBIT, CREDIT]}
+        amount: {$ref: '#/components/schemas/Money'}
+        reference: {type: string}
+        entryType: {type: string}
+        sourceStatus: {type: string}
+        recordId: {type: [string, 'null']}
+        exceptionIds: {type: array, items: {type: string}}
+    AccountLedgerView:
+      type: object
+      required: [account, entries, rollForward, relatedTransactions, exceptions]
+      properties:
+        account: {$ref: '#/components/schemas/Account'}
+        entries: {type: array, items: {$ref: '#/components/schemas/LedgerEntry'}}
+        entriesPage: {$ref: '#/components/schemas/PageInfo'}
+        rollForward: {type: array, items: {type: object, required: [label, amount], properties: {label: {type: string}, amount: {$ref: '#/components/schemas/Money'}}}}
+        relatedTransactions: {type: array, items: {$ref: '#/components/schemas/Transaction'}}
+        exceptions: {type: array, items: {$ref: '#/components/schemas/ExceptionSummary'}}
+    SafeguardingCurrencyPosition:
+      type: object
+      required: [currency, obligation, eligibleBalance, approvedAdjustments, result, state, qualifications, previousResult, exceptionIds]
+      properties:
+        currency: {$ref: '#/components/schemas/Currency'}
+        obligation: {$ref: '#/components/schemas/Money'}
+        eligibleBalance: {$ref: '#/components/schemas/Money'}
+        approvedAdjustments: {$ref: '#/components/schemas/Money'}
+        result: {$ref: '#/components/schemas/Money'}
+        state: {$ref: '#/components/schemas/SafeguardingState'}
+        qualifications: {type: array, items: {type: string}}
+        previousResult: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+        exceptionIds: {type: array, items: {type: string}}
+    ObligationLine:
+      type: object
+      required: [accountId, currency, amount, movementType]
+      properties:
+        accountId: {type: string}
+        currency: {$ref: '#/components/schemas/Currency'}
+        amount: {$ref: '#/components/schemas/Money'}
+        movementType: {type: string}
+    EligibleBalanceLine:
+      type: object
+      required: [sourceRowId, externalAccountId, balanceTimestamp, balance, evidenceReference, included, reason, findingIds]
+      properties:
+        sourceRowId: {type: string}
+        recordId: {type: [string, 'null']}
+        externalAccountId: {type: string}
+        balanceTimestamp: {type: string, format: date-time}
+        balance: {$ref: '#/components/schemas/Money'}
+        evidenceReference: {type: [string, 'null']}
+        included: {type: boolean}
+        reason: {type: string}
+        findingIds: {type: array, items: {type: string}}
+    ChangeDriver:
+      type: object
+      required: [label, currency, change]
+      properties:
+        label: {type: string}
+        currency: {$ref: '#/components/schemas/Currency'}
+        change: {$ref: '#/components/schemas/Money'}
+    AdjustmentInput:
+      type: object
+      required: [currency, amount, reason, evidenceRefs]
+      properties:
+        currency: {$ref: '#/components/schemas/Currency'}
+        amount: {$ref: '#/components/schemas/Money'}
+        reason: {$ref: '#/components/schemas/Reason'}
+        evidenceRefs: {type: array, minItems: 1, items: {type: string}}
+        expiresOn: {type: [string, 'null'], format: date}
+    SafeguardingAdjustment:
+      type: object
+      required: [id, runId, currency, amount, status, owner, reason, evidenceRefs, history]
+      properties:
+        id: {type: string}
+        runId: {type: string}
+        currency: {$ref: '#/components/schemas/Currency'}
+        amount: {$ref: '#/components/schemas/Money'}
+        status: {$ref: '#/components/schemas/AdjustmentStatus'}
+        owner: {$ref: '#/components/schemas/UserRef'}
+        reason: {type: string}
+        evidenceRefs: {type: array, items: {type: string}}
+        expiresOn: {type: [string, 'null'], format: date}
+        approval: {oneOf: [{$ref: '#/components/schemas/Approval'}, {type: 'null'}]}
+        history: {type: array, items: {$ref: '#/components/schemas/TimelineEvent'}}
+    SafeguardingPosition:
+      type: object
+      required: [runId, businessDate, legalEntityId, evidenceReadiness, approvalState, positions, obligations, eligibleBalances, adjustments, changeAnalysis]
+      properties:
+        runId: {type: string}
+        businessDate: {$ref: '#/components/schemas/IsoDate'}
+        legalEntityId: {type: string}
+        evidenceReadiness: {type: string, enum: [COMPLETE, QUALIFIED, INCOMPLETE]}
+        approvalState: {$ref: '#/components/schemas/SignOffState'}
+        positions: {type: array, items: {$ref: '#/components/schemas/SafeguardingCurrencyPosition'}}
+        obligations: {type: array, items: {$ref: '#/components/schemas/ObligationLine'}}
+        eligibleBalances: {type: array, items: {$ref: '#/components/schemas/EligibleBalanceLine'}}
+        adjustments: {type: array, items: {$ref: '#/components/schemas/SafeguardingAdjustment'}}
+        changeAnalysis: {type: array, items: {$ref: '#/components/schemas/ChangeDriver'}}
+    ChecklistItem:
+      type: object
+      required: [id, control, label, state, mandatory, note, exceptionIds]
+      properties:
+        id: {type: string}
+        control: {$ref: '#/components/schemas/ControlArea'}
+        label: {type: string}
+        state: {$ref: '#/components/schemas/ControlState'}
+        mandatory: {type: boolean}
+        note: {type: string}
+        exceptionIds: {type: array, items: {type: string}}
+    RunSignOff:
+      type: object
+      required: [run, checklist, openMatters, changesSincePreparation, attestationText, canSignOff, blockers, evidencePackId]
+      properties:
+        run: {$ref: '#/components/schemas/Run'}
+        checklist: {type: array, items: {$ref: '#/components/schemas/ChecklistItem'}}
+        openMatters: {type: array, items: {$ref: '#/components/schemas/ExceptionSummary'}}
+        qualifications: {type: array, items: {type: string}}
+        changesSincePreparation: {type: array, items: {type: string}}
+        attestationText: {type: string}
+        attestationTextHash: {type: string}
+        canSignOff: {type: boolean, description: "Server-evaluated for the current caller (blockers, scope, separation of duties)"}
+        blockers: {type: array, items: {type: string}}
+        evidencePackId: {type: [string, 'null']}
+        approval: {oneOf: [{$ref: '#/components/schemas/Approval'}, {type: 'null'}]}
+        history: {type: array, items: {$ref: '#/components/schemas/TimelineEvent'}}
+    AuditEvent:
+      type: object
+      required: [id, at, actor, type, runId, subjectKind, subjectId, summary, ruleVersion, hash]
+      properties:
+        id: {type: string}
+        at: {type: string, format: date-time}
+        actor: {$ref: '#/components/schemas/Actor'}
+        type: {$ref: '#/components/schemas/AuditEventType'}
+        runId: {type: [string, 'null']}
+        subjectKind: {$ref: '#/components/schemas/AuditSubjectKind'}
+        subjectId: {type: string}
+        summary: {type: string}
+        reason: {type: [string, 'null']}
+        ruleVersion: {type: [string, 'null']}
+        requestId: {type: [string, 'null']}
+        hash: {type: string}
+        previousHash: {type: [string, 'null']}
+    AuditEventPage:
+      type: object
+      required: [items, page]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/AuditEvent'}}
+        page: {$ref: '#/components/schemas/PageInfo'}
+    EvidencePack:
+      type: object
+      required: [id, runId, generatedAt, status, contents]
+      properties:
+        id: {type: string}
+        runId: {type: string}
+        generatedAt: {type: [string, 'null'], format: date-time}
+        status: {type: string, enum: [NOT_GENERATED, GENERATING, GENERATED, FAILED]}
+        contents: {type: array, items: {type: string}}
+        sha256: {type: [string, 'null']}
+        sizeBytes: {type: [integer, 'null']}
+    RuleConfig:
+      type: object
+      required: [ruleId, control, version, description, tolerance, severity, effectiveFrom]
+      properties:
+        ruleId: {type: string}
+        control: {$ref: '#/components/schemas/ControlArea'}
+        version: {type: string}
+        description: {type: string}
+        tolerance: {type: string}
+        severity: {$ref: '#/components/schemas/Severity'}
+        effectiveFrom: {$ref: '#/components/schemas/IsoDate'}
+        pendingChangeId: {type: [string, 'null']}
+    SourceConfig:
+      type: object
+      required: [sourceName, schemaVersion, expectedByLocalTime, mandatory]
+      properties:
+        sourceName: {type: string}
+        schemaVersion: {type: string}
+        expectedByLocalTime: {type: string, examples: ['08:00']}
+        mandatory: {type: boolean}
+        pendingChangeId: {type: [string, 'null']}
+    UserAccess:
+      type: object
+      required: [id, name, email, roles, legalEntityIds]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        email: {type: string, format: email}
+        roles: {type: array, items: {$ref: '#/components/schemas/Role'}}
+        legalEntityIds: {type: array, items: {type: string}}
+        pendingChangeId: {type: [string, 'null']}
+    ApprovalPolicy:
+      type: object
+      required: [name, description]
+      properties:
+        name: {type: string}
+        description: {type: string}
+        requiredRole: {$ref: '#/components/schemas/Role'}
+        version: {type: string}
+    Settings:
+      type: object
+      required: [legalEntity, rules, sources, users, freshnessPolicy, approvalPolicies, pendingChanges]
+      properties:
+        legalEntity: {$ref: '#/components/schemas/LegalEntity'}
+        rules: {type: array, items: {$ref: '#/components/schemas/RuleConfig'}}
+        sources: {type: array, items: {$ref: '#/components/schemas/SourceConfig'}}
+        users: {type: array, items: {$ref: '#/components/schemas/UserAccess'}, description: "Omitted unless caller has access.manage or settings.view"}
+        freshnessPolicy: {type: string}
+        approvalPolicies: {type: array, items: {$ref: '#/components/schemas/ApprovalPolicy'}}
+        pendingChanges: {type: integer, description: "Count of changes awaiting approval"}
+    ConfigTargetKind: {type: string, enum: [RULE, SOURCE, USER_ACCESS, APPROVAL_POLICY]}
+    ConfigChangeStatus: {type: string, enum: [DRAFT, PENDING_APPROVAL, APPROVED, ACTIVE, REJECTED, RETIRED]}
+    ConfigChangeInput:
+      type: object
+      required: [targetKind, targetId, after, effectiveFrom, reason]
+      properties:
+        targetKind: {$ref: '#/components/schemas/ConfigTargetKind'}
+        targetId: {type: string}
+        after: {type: object, additionalProperties: true, description: "Proposed full object of the target kind (RuleConfig, SourceConfig, UserAccess, ...)"}
+        effectiveFrom: {$ref: '#/components/schemas/IsoDate'}
+        reason: {$ref: '#/components/schemas/Reason'}
+    ConfigChange:
+      type: object
+      required: [id, targetKind, targetId, status, before, after, proposer, proposedAt, effectiveFrom, reason, material]
+      properties:
+        id: {type: string}
+        targetKind: {$ref: '#/components/schemas/ConfigTargetKind'}
+        targetId: {type: string}
+        status: {$ref: '#/components/schemas/ConfigChangeStatus'}
+        material: {type: boolean, description: "Material changes need a second person"}
+        before: {type: [object, 'null'], additionalProperties: true}
+        after: {type: object, additionalProperties: true}
+        diff: {type: array, items: {type: object, required: [path], properties: {path: {type: string}, from: {}, to: {}}}}
+        proposer: {$ref: '#/components/schemas/UserRef'}
+        proposedAt: {type: string, format: date-time}
+        approval: {oneOf: [{$ref: '#/components/schemas/Approval'}, {type: 'null'}]}
+        effectiveFrom: {$ref: '#/components/schemas/IsoDate'}
+        reason: {type: string}
+    ConfigChangePage:
+      type: object
+      required: [items, page]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/ConfigChange'}}
+        page: {$ref: '#/components/schemas/PageInfo'}

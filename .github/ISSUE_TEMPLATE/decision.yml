@@ -1,0 +1,17 @@
+name: Decision
+description: A product or architecture question that blocks work
+labels: ["type/decision"]
+body:
+  - type: textarea
+    id: question
+    attributes: {label: Question, description: One clear question}
+    validations: {required: true}
+  - type: textarea
+    id: options
+    attributes: {label: Options and recommendation}
+  - type: textarea
+    id: blocks
+    attributes: {label: Blocks, description: "Issues or API operations waiting on this (#n)"}
+  - type: textarea
+    id: outcome
+    attributes: {label: Outcome, description: "Fill in when decided; link the ADR or spec change"}
