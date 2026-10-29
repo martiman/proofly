@@ -21,13 +21,13 @@ import type {
   SourceDelivery, SourceRecord, TimelineEvent, Transaction, UserAccess, RuleConfig, SourceConfig,
 } from './types'
 
-export const LE_ID = 'LE-CZ-001'
+export const LE_ID = 'LE-UK-001'
 export const BUSINESS_DATE = '2026-10-27'
-export const RUN_ID = 'RUN-LE-CZ-001-20261027-v1'
-export const PREVIOUS_RUN_ID = 'RUN-LE-CZ-001-20261026-v1'
+export const RUN_ID = 'RUN-LE-UK-001-20261027-v1'
+export const PREVIOUS_RUN_ID = 'RUN-LE-UK-001-20261026-v1'
 export const RULESET = 'oMVP-ruleset-0.1'
 
-export const legalEntity: LegalEntity = { id: LE_ID, name: 'Proofly Demo Payments s.r.o.', currencies: ['EUR', 'CZK', 'USD'] }
+export const legalEntity: LegalEntity = { id: LE_ID, name: 'Proofly Payments Ltd', currencies: ['GBP', 'EUR', 'USD'] }
 
 const t = {
   transfers: parseCsv(transfersCsv), dd: parseCsv(ddCsv), ledger: parseCsv(ledgerCsv),
@@ -70,15 +70,15 @@ export const findings: Finding[] = t.findings.map((r) => ({
 function findingValue(f: Finding): Money | null {
   switch (f.id) {
     case 'F-019': return null // set from the safeguarding position below
-    case 'F-009': return money('1999.98', 'EUR') // recorded 2999.99 vs independent 1000.01
-    case 'F-010': return money('250.00', 'EUR')
-    case 'F-011': return money('5.00', 'EUR')
-    case 'F-012': return money('10.00', 'EUR')
-    case 'F-013': return money('85.00', 'EUR')
-    case 'F-014': return money('0.00', 'EUR')
-    case 'F-020': return money('6.00', 'EUR')
-    case 'F-024': return money('5.00', 'EUR')
-    case 'F-015': return money('-50.00', 'EUR')
+    case 'F-009': return money('1999.98', 'GBP') // recorded 2999.99 vs independent 1000.01
+    case 'F-010': return money('250.00', 'GBP')
+    case 'F-011': return money('5.00', 'GBP')
+    case 'F-012': return money('10.00', 'GBP')
+    case 'F-013': return money('85.00', 'GBP')
+    case 'F-014': return money('0.00', 'GBP')
+    case 'F-020': return money('6.00', 'GBP')
+    case 'F-024': return money('5.00', 'GBP')
+    case 'F-015': return money('-50.00', 'GBP')
   }
   const tb = tables[f.sourceName]
   const row = tb?.rows.find((r) => r[tb.key] === f.sourceRowId)
@@ -87,7 +87,12 @@ function findingValue(f: Finding): Money | null {
 }
 
 const STATUS_CYCLE: ExceptionStatus[] = ['OPEN', 'OPEN', 'IN_INVESTIGATION', 'WAITING_FOR_DATA', 'OPEN', 'PENDING_APPROVAL', 'IN_INVESTIGATION']
-const OWNERS = ['Jana Novakova', 'Petr Svoboda', 'Eva Dvorakova', null]
+/** Fixed assignments for the findings the demo walks through; the rest rotate. */
+const OWNER_FOR: Record<string, string | null> = {
+  'F-019': null, 'F-014': 'Priya Shah', 'F-009': 'Oliver Bennett', 'F-010': 'Oliver Bennett', 'F-013': null,
+  'F-016': 'Priya Shah', 'F-008': 'Oliver Bennett', 'F-006': null, 'F-025': null, 'F-012': 'Tom Ellis',
+}
+const OWNERS = ['Priya Shah', 'Oliver Bennett', 'Tom Ellis', null]
 const exceptionTitle = (f: Finding) => `${f.reasonCode.replace(/_/g, ' ').toLowerCase()} - ${f.sourceName.replace(/_/g, ' ')} ${f.sourceRowId}`
 
 export interface ExceptionState {
@@ -108,7 +113,7 @@ for (const r of t.transfers) {
     id: dup ? `${r.instruction_id}#2` : r.instruction_id!, kind: 'BANK_TRANSFER', source: 'transfer_instructions',
     sourceRowId: r.source_row_id!, rowIds: [r.source_row_id!], reference: r.external_reference!,
     accountId: r.client_account_id || null, timestamp: r.instruction_timestamp!,
-    amount: m ?? money('0', 'EUR'), direction: 'DEBIT', sourceStatus: r.source_status!,
+    amount: m ?? money('0', 'GBP'), direction: 'DEBIT', sourceStatus: r.source_status!,
     lifecycle: lc(r.source_status), matchStatus: 'NOT_APPLICABLE', matchGroupId: null, exceptionIds: [],
     accepted: !!r.client_account_id && !dup,
   })
@@ -121,7 +126,7 @@ for (const [id, rows] of ddById) {
   txns.push({
     id, kind: 'DIRECT_DEBIT', source: 'direct_debit_events', sourceRowId: first.source_row_id!,
     rowIds: rows.map((r) => r.source_row_id!), reference: id, accountId: first.client_account_id || null,
-    timestamp: first.event_timestamp!, amount: mny(first) ?? money(first.amount!, 'EUR'), direction: 'CREDIT',
+    timestamp: first.event_timestamp!, amount: mny(first) ?? money(first.amount!, 'GBP'), direction: 'CREDIT',
     sourceStatus: last.source_status!, lifecycle: rows.map((r) => r.event_type!),
     matchStatus: 'NOT_APPLICABLE', matchGroupId: null, exceptionIds: [],
     accepted: rows.every((r) => !!r.mandate_reference && isCurrency(r.currency!)),
@@ -155,7 +160,7 @@ for (const [id, rows] of cardById) {
   txns.push({
     id, kind: 'CARD', source: 'card_transactions', sourceRowId: pick.source_row_id!,
     rowIds: rows.map((r) => r.source_row_id!), reference: pick.merchant_reference!, accountId: pick.client_account_id!,
-    timestamp: pick.event_timestamp!, amount: mny(pick) ?? money(pick.amount!, 'EUR'),
+    timestamp: pick.event_timestamp!, amount: mny(pick) ?? money(pick.amount!, 'GBP'),
     direction: pick.debit_credit_indicator as 'DEBIT' | 'CREDIT', sourceStatus: pick.source_status!,
     lifecycle: rows.map((r) => r.event_type!), matchStatus: ms, matchGroupId: ms === 'NOT_APPLICABLE' ? null : `MG-${id}`,
     exceptionIds: [], accepted: rows.every((r) => isCurrency(r.currency!)),
@@ -195,7 +200,7 @@ for (const [id, rows] of cardById) {
   matchGroups.push({
     id: x.matchGroupId, status: x.matchStatus,
     left: auth ? [{ transactionId: id, label: `Authorisation ${auth.card_event_id}`, amount: mny(auth)!, timestamp: auth.event_timestamp!, reference: auth.merchant_reference! }] : [],
-    right: [{ transactionId: id, label: `Presentment ${pres.card_event_id}`, amount: mny(pres) ?? money(pres.amount!, 'EUR'), timestamp: pres.event_timestamp!, reference: pres.merchant_reference! }],
+    right: [{ transactionId: id, label: `Presentment ${pres.card_event_id}`, amount: mny(pres) ?? money(pres.amount!, 'GBP'), timestamp: pres.event_timestamp!, reference: pres.merchant_reference! }],
     difference: auth && mny(auth) && mny(pres) ? subMoney(mny(pres)!, mny(auth)!) : null,
     ruleVersion: 'CARD-MATCH-1.0', tolerance: 'Presentment must equal authorised amount',
     rationale: x.matchStatus === 'MATCHED' ? 'Presentment equals authorisation.' : x.matchStatus === 'VALUE_MISMATCH' ? 'Presentment amount differs from authorisation.' : 'Presentment has no required authorisation.',
@@ -269,8 +274,8 @@ export const eligibleBalances: EligibleBalanceLine[] = t.sg.map((r) => {
 export const obligations: ObligationLine[] = accounts.map((a) => ({
   accountId: a.id, currency: a.currency, amount: a.independentClosingBalance, movementType: 'Independent closing balance',
 }))
-const previousResults: Record<Currency, string> = { EUR: '-1800.00', CZK: '205000.00', USD: '5000.00' }
-export const safeguardingPositions: SafeguardingCurrencyPosition[] = (['EUR', 'CZK', 'USD'] as Currency[]).map((c) => {
+const previousResults: Record<Currency, string> = { GBP: '-1800.00', EUR: '8200.00', USD: '5000.00' }
+export const safeguardingPositions: SafeguardingCurrencyPosition[] = (['GBP', 'EUR', 'USD'] as Currency[]).map((c) => {
   const obligation = sumMoney(obligations.filter((o) => o.currency === c).map((o) => o.amount), c)
   const eligible = sumMoney(eligibleBalances.filter((e) => e.included && e.balance.currency === c).map((e) => e.balance), c)
   const adj = money('0', c)
@@ -281,19 +286,19 @@ export const safeguardingPositions: SafeguardingCurrencyPosition[] = (['EUR', 'C
     currency: c, obligation, eligibleBalance: eligible, approvedAdjustments: adj, result,
     state: noObl ? 'NO_OBLIGATION' : neg ? 'SHORTFALL' : 'SURPLUS',
     qualifications: eligibleBalances.filter((e) => !e.included && e.balance.currency === c).map((e) => `${e.externalAccountId} excluded (${e.findingIds.join(', ')})`),
-    previousResult: money(previousResults[c], c), exceptionIds: c === 'EUR' ? ['F-019'] : [],
+    previousResult: money(previousResults[c], c), exceptionIds: c === 'GBP' ? ['F-019'] : [],
   } satisfies SafeguardingCurrencyPosition
 })
 export const safeguardingAdjustments: SafeguardingAdjustment[] = [
   {
-    id: 'ADJ-001', currency: 'EUR', amount: money('2500', 'EUR'), status: 'PROPOSED', owner: 'Eva Dvorakova',
-    reason: 'Include SG-EUR-005 balance once bank statement evidence is supplied', evidenceRefs: [],
-    history: [{ id: 'ADJ-001-1', at: '2026-10-28T08:20:00+01:00', actor: 'Eva Dvorakova', type: 'RESOLUTION_PROPOSED', text: 'Adjustment proposed; evidence outstanding.' }],
+    id: 'ADJ-001', currency: 'GBP', amount: money('2500', 'GBP'), status: 'PROPOSED', owner: 'Tom Ellis',
+    reason: 'Include SG-GBP-005 balance once bank statement evidence is supplied', evidenceRefs: [],
+    history: [{ id: 'ADJ-001-1', at: '2026-10-28T08:20:00+00:00', actor: 'Tom Ellis', type: 'RESOLUTION_PROPOSED', text: 'Adjustment proposed; evidence outstanding.' }],
   },
   {
-    id: 'ADJ-000', currency: 'CZK', amount: money('10000', 'CZK'), status: 'EXPIRED', owner: 'Petr Svoboda',
-    reason: 'Temporary timing adjustment for 2026-10-23', evidenceRefs: ['STATEMENT-CZK-001'],
-    history: [{ id: 'ADJ-000-1', at: '2026-10-23T09:00:00+01:00', actor: 'Petr Svoboda', type: 'APPROVAL', text: 'Approved with expiry 2026-10-26.' }],
+    id: 'ADJ-000', currency: 'EUR', amount: money('400', 'EUR'), status: 'EXPIRED', owner: 'Priya Shah',
+    reason: 'Temporary timing adjustment for 2026-10-23', evidenceRefs: ['STATEMENT-EUR-001'],
+    history: [{ id: 'ADJ-000-1', at: '2026-10-23T09:00:00+00:00', actor: 'Priya Shah', type: 'APPROVAL', text: 'Approved with expiry 2026-10-26.' }],
   },
 ]
 
@@ -311,8 +316,8 @@ export const deliveries: SourceDelivery[] = t.manifest.map((r) => {
   const name = r.source_name!
   const rej = rejectedRows.get(name)?.size ?? 0
   const totals: Money[] = []
+  if (r.declared_total_gbp !== '0') totals.push(money(r.declared_total_gbp!, 'GBP'))
   if (r.declared_total_eur !== '0') totals.push(money(r.declared_total_eur!, 'EUR'))
-  if (r.declared_total_czk !== '0') totals.push(money(r.declared_total_czk!, 'CZK'))
   const actual = tables[name]!.rows.length
   const fIds = findings.filter((f) => f.sourceName === name || f.sourceName === 'delivery_manifest' && f.sourceRowId === name).map((f) => f.id)
   const quals: string[] = []
@@ -337,15 +342,22 @@ export function sourceRecords(name: string): SourceRecord[] {
 }
 
 // ---------- Exceptions ----------
+/** Findings that stop sign-off (stands in for the control engine's decision). */
+const BLOCKING_IDS = new Set(['F-019', 'F-014', 'F-009', 'F-010'])
+const DUE_AT: Record<string, string> = {
+  'F-019': '2026-10-28T12:00:00+00:00', 'F-014': '2026-10-28T08:00:00+00:00',
+  'F-009': '2026-10-28T14:00:00+00:00', 'F-010': '2026-10-28T14:00:00+00:00',
+}
 export const exceptionBases: ExceptionState['base'][] = findings.map((f, i) => {
-  const blocking = f.severity === 'CRITICAL'
-  const eurShort = safeguardingPositions.find((p) => p.currency === 'EUR')!.result
+  const blocking = BLOCKING_IDS.has(f.id)
+  const critical = f.severity === 'CRITICAL'
+  const eurShort = safeguardingPositions.find((p) => p.currency === 'GBP')!.result
   const value = f.id === 'F-019' ? eurShort : findingValue(f)
   return {
     id: f.id, title: exceptionTitle(f), control: f.control, reasonCode: f.reasonCode, severity: f.severity,
     status: f.id === 'F-019' ? 'IN_INVESTIGATION' : STATUS_CYCLE[i % STATUS_CYCLE.length]!,
-    value, legalEntityId: LE_ID, businessDate: BUSINESS_DATE, owner: f.id === 'F-019' ? 'Jana Novakova' : OWNERS[i % OWNERS.length]!,
-    dueAt: blocking ? '2026-10-28T12:00:00+01:00' : f.severity === 'HIGH' ? '2026-10-29T17:00:00+01:00' : '2026-10-30T17:00:00+01:00',
+    value, legalEntityId: LE_ID, businessDate: BUSINESS_DATE, owner: f.id in OWNER_FOR ? OWNER_FOR[f.id]! : OWNERS[i % OWNERS.length]!,
+    dueAt: DUE_AT[f.id] ?? (f.severity === 'HIGH' ? '2026-10-28T16:00:00+00:00' : '2026-10-29T17:00:00+00:00'),
     blocking, sourceFile: f.sourceFile, sourceRowId: f.sourceRowId, description: f.description, expectedEffect: f.expectedEffect,
     summary: `${f.description}. Expected effect: ${f.expectedEffect}. Raised by ${f.control.replace(/_/g, ' ')} control rule ${f.control}-${f.reasonCode}.`,
     trace: {
@@ -355,7 +367,7 @@ export const exceptionBases: ExceptionState['base'][] = findings.map((f, i) => {
       result: `${f.severity} - ${f.reasonCode}`,
     },
     states: f.id === 'F-019' ? ['PENDING_EXTERNAL_ACTION'] : i % 7 === 3 ? ['WAITING_FOR_DATA'] : i % 7 === 5 ? ['PENDING_APPROVAL'] : [],
-    approvalPolicy: blocking ? 'Safeguarding control owner approval required (four-eyes)' : f.severity === 'HIGH' ? 'Control owner approval for accepted difference' : 'Analyst resolution with reviewer',
+    approvalPolicy: critical ? 'Safeguarding control owner approval required (four-eyes)' : f.severity === 'HIGH' ? 'Control owner approval for accepted difference' : 'Analyst resolution with reviewer',
   }
 })
 
@@ -402,23 +414,23 @@ export function buildEvidence(f: Finding): { nodes: EvidenceNode[]; edges: Evide
 }
 
 export const initialTimeline = (b: ExceptionState['base']): TimelineEvent[] => {
-  const ev: TimelineEvent[] = [{ id: `${b.id}-T1`, at: '2026-10-28T07:20:00+01:00', actor: 'Proofly control engine', type: 'SYSTEM', text: `Exception created by ${b.trace.ruleId} (${b.trace.ruleVersion}).` }]
-  if (b.owner) ev.push({ id: `${b.id}-T2`, at: '2026-10-28T08:05:00+01:00', actor: 'Proofly control engine', type: 'ASSIGNMENT', text: `Assigned to ${b.owner}.` })
-  if (b.status === 'IN_INVESTIGATION') ev.push({ id: `${b.id}-T3`, at: '2026-10-28T08:40:00+01:00', actor: b.owner ?? 'analyst', type: 'NOTE', text: 'Reviewing source record and requesting supporting bank evidence.' })
+  const ev: TimelineEvent[] = [{ id: `${b.id}-T1`, at: '2026-10-28T07:20:00+00:00', actor: 'Proofly control engine', type: 'SYSTEM', text: `Exception created by ${b.trace.ruleId} (${b.trace.ruleVersion}).` }]
+  if (b.owner) ev.push({ id: `${b.id}-T2`, at: '2026-10-28T08:05:00+00:00', actor: 'Proofly control engine', type: 'ASSIGNMENT', text: `Assigned to ${b.owner}.` })
+  if (b.status === 'IN_INVESTIGATION') ev.push({ id: `${b.id}-T3`, at: '2026-10-28T08:40:00+00:00', actor: b.owner ?? 'analyst', type: 'NOTE', text: 'Reviewing source record and requesting supporting bank evidence.' })
   return ev
 }
 
 // ---------- Run, users, settings, audit ----------
 export const runs: Run[] = [
-  { id: RUN_ID, legalEntityId: LE_ID, businessDate: BUSINESS_DATE, version: 1, rulesetVersion: RULESET, state: 'REVIEW_REQUIRED', signOffState: 'PREPARATION_INCOMPLETE', startedAt: '2026-10-28T07:20:00+01:00', lastEvidenceArrivalAt: '2026-10-28T06:58:00+01:00' },
-  { id: PREVIOUS_RUN_ID, legalEntityId: LE_ID, businessDate: '2026-10-26', version: 1, rulesetVersion: RULESET, state: 'SIGNED_OFF', signOffState: 'SIGNED_OFF', startedAt: '2026-10-27T07:20:00+01:00', lastEvidenceArrivalAt: '2026-10-27T06:55:00+01:00' },
+  { id: RUN_ID, legalEntityId: LE_ID, businessDate: BUSINESS_DATE, version: 1, rulesetVersion: RULESET, state: 'REVIEW_REQUIRED', signOffState: 'PREPARATION_INCOMPLETE', startedAt: '2026-10-28T07:20:00+00:00', lastEvidenceArrivalAt: '2026-10-28T06:58:00+00:00' },
+  { id: PREVIOUS_RUN_ID, legalEntityId: LE_ID, businessDate: '2026-10-26', version: 1, rulesetVersion: RULESET, state: 'SIGNED_OFF', signOffState: 'SIGNED_OFF', startedAt: '2026-10-27T07:20:00+00:00', lastEvidenceArrivalAt: '2026-10-27T06:55:00+00:00' },
 ]
 export const users: UserAccess[] = [
-  { id: 'U-1', name: 'Jana Novakova', email: 'jana.novakova@example.test', roles: ['CONTROL_ANALYST', 'CONTROL_OWNER'], legalEntityIds: [LE_ID] },
-  { id: 'U-2', name: 'Petr Svoboda', email: 'petr.svoboda@example.test', roles: ['CONTROL_ANALYST'], legalEntityIds: [LE_ID] },
-  { id: 'U-3', name: 'Eva Dvorakova', email: 'eva.dvorakova@example.test', roles: ['CONTROL_ANALYST'], legalEntityIds: [LE_ID] },
-  { id: 'U-4', name: 'Tomas Kral', email: 'tomas.kral@example.test', roles: ['APPROVER'], legalEntityIds: [LE_ID] },
-  { id: 'U-5', name: 'Alena Horakova', email: 'alena.horakova@example.test', roles: ['AUDIT_REVIEWER'], legalEntityIds: [LE_ID] },
+  { id: 'U-1', name: 'Charlotte Hughes', email: 'charlotte.hughes@example.test', roles: ['CONTROL_ANALYST', 'CONTROL_OWNER'], legalEntityIds: [LE_ID] },
+  { id: 'U-2', name: 'Priya Shah', email: 'priya.shah@example.test', roles: ['CONTROL_ANALYST'], legalEntityIds: [LE_ID] },
+  { id: 'U-3', name: 'Tom Ellis', email: 'tom.ellis@example.test', roles: ['CONTROL_ANALYST'], legalEntityIds: [LE_ID] },
+  { id: 'U-4', name: 'Daniel Wright', email: 'daniel.wright@example.test', roles: ['APPROVER'], legalEntityIds: [LE_ID] },
+  { id: 'U-5', name: 'Amelia Reid', email: 'amelia.reid@example.test', roles: ['AUDIT_REVIEWER'], legalEntityIds: [LE_ID] },
 ]
 export const rules: RuleConfig[] = (['data_completeness', 'matching', 'independent_ledger', 'transaction_lifecycle', 'safeguarding'] as ControlArea[]).map((c) => ({
   ruleId: `${c.toUpperCase()}.CORE`, control: c, version: `${RULESET}/1`, effectiveFrom: '2026-10-01',
@@ -434,9 +446,9 @@ const hash = (s: string) => {
 export const auditEvents: AuditEvent[] = (() => {
   const ev: Omit<AuditEvent, 'hash'>[] = []
   for (const d of deliveries) ev.push({ id: '', at: d.receivedAt!, actor: 'ingestion', type: 'DELIVERY_RECEIVED', runId: RUN_ID, subjectKind: 'DELIVERY', subjectId: d.deliveryId, summary: `${d.fileName} received (${d.actualRecordCount} records)`, ruleVersion: null })
-  ev.push({ id: '', at: '2026-10-28T07:20:00+01:00', actor: 'Proofly control engine', type: 'RUN_STARTED', runId: RUN_ID, subjectKind: 'RUN', subjectId: RUN_ID, summary: `Run v1 started with ${RULESET}`, ruleVersion: RULESET })
-  for (const [n, rs] of rejectedRows) for (const r of rs) ev.push({ id: '', at: '2026-10-28T07:21:00+01:00', actor: 'ingestion', type: 'RECORD_REJECTED', runId: RUN_ID, subjectKind: 'RECORD', subjectId: `${n}:${r}`, summary: `Record ${r} in ${n} rejected or quarantined`, ruleVersion: RULESET })
-  for (const b of exceptionBases) ev.push({ id: '', at: '2026-10-28T07:25:00+01:00', actor: 'Proofly control engine', type: 'EXCEPTION_CREATED', runId: RUN_ID, subjectKind: 'EXCEPTION', subjectId: b.id, summary: b.title, ruleVersion: b.trace.ruleVersion })
+  ev.push({ id: '', at: '2026-10-28T07:20:00+00:00', actor: 'Proofly control engine', type: 'RUN_STARTED', runId: RUN_ID, subjectKind: 'RUN', subjectId: RUN_ID, summary: `Run v1 started with ${RULESET}`, ruleVersion: RULESET })
+  for (const [n, rs] of rejectedRows) for (const r of rs) ev.push({ id: '', at: '2026-10-28T07:21:00+00:00', actor: 'ingestion', type: 'RECORD_REJECTED', runId: RUN_ID, subjectKind: 'RECORD', subjectId: `${n}:${r}`, summary: `Record ${r} in ${n} rejected or quarantined`, ruleVersion: RULESET })
+  for (const b of exceptionBases) ev.push({ id: '', at: '2026-10-28T07:25:00+00:00', actor: 'Proofly control engine', type: 'EXCEPTION_CREATED', runId: RUN_ID, subjectKind: 'EXCEPTION', subjectId: b.id, summary: b.title, ruleVersion: b.trace.ruleVersion })
   ev.sort((a, b) => a.at.localeCompare(b.at))
   return ev.map((e, i) => ({ ...e, id: `AUD-${String(i + 1).padStart(4, '0')}`, hash: hash(`${i}|${e.at}|${e.subjectId}|${e.summary}`) }))
 })()

@@ -1,6 +1,6 @@
 import type { Currency, Money } from './types'
 
-const VALID: Currency[] = ['EUR', 'CZK', 'USD']
+const VALID: Currency[] = ['GBP', 'EUR', 'USD']
 export const isCurrency = (c: string): c is Currency => (VALID as string[]).includes(c)
 
 /** Parse a decimal string into integer minor units (2 dp) without floats. */
@@ -34,3 +34,14 @@ export const isNegative = (m: Money): boolean => toMinor(m.amount) < 0n
 export const isZero = (m: Money): boolean => toMinor(m.amount) === 0n
 export const equalMoney = (a: Money, b: Money): boolean =>
   a.currency === b.currency && toMinor(a.amount) === toMinor(b.amount)
+
+/** Display only: group digits and use a true minus. Never parses through floating point. */
+export function formatDecimal(amount: string, opts: { sign?: boolean } = {}): string {
+  const v = toMinor(amount)
+  const a = v < 0n ? -v : v
+  const int = (a / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+  const sign = v < 0n ? '\u2212' : opts.sign && v > 0n ? '+' : ''
+  return `${sign}${int}.${(a % 100n).toString().padStart(2, '0')}`
+}
+export const formatMoney = (m: Money, opts: { sign?: boolean; code?: boolean } = {}): string =>
+  `${formatDecimal(m.amount, opts)}${opts.code === false ? '' : ` ${m.currency}`}`

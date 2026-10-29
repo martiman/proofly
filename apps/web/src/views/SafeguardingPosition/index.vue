@@ -52,10 +52,10 @@ const adjCols = [
   { title: 'History', key: 'hist' },
 ]
 
-const modal = reactive({ open: false, currency: 'EUR' as Currency, amount: '', reason: '', evidence: '', busy: false })
+const modal = reactive({ open: false, currency: 'GBP' as Currency, amount: '', reason: '', evidence: '', busy: false })
 const currencies = computed(() => data.value?.positions.map((p) => p.currency) ?? [])
 function openModal(c?: Currency) {
-  modal.currency = c ?? currencies.value[0] ?? 'EUR'
+  modal.currency = c ?? currencies.value[0] ?? 'GBP'
   modal.amount = ''; modal.reason = ''; modal.evidence = ''
   modal.open = true
 }

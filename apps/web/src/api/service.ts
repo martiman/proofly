@@ -56,27 +56,27 @@ export async function getRun(runId: string): Promise<Run> {
 // ---- Control Room: GET /runs/{runId}/control-room ----
 function controlAreas(): ControlAreaSummary[] {
   const defs: { area: ControlArea; label: string; count: number; unit: Parameters<typeof money>[1] }[] = [
-    { area: 'data_completeness', label: 'Data completeness', count: fx.deliveries.reduce((n, d) => n + d.actualRecordCount, 0), unit: 'EUR' },
-    { area: 'independent_ledger', label: 'Independent ledger verification', count: fx.ledgerEntries.length, unit: 'EUR' },
-    { area: 'matching', label: 'Matching and reconciliation', count: fx.matchGroups.length, unit: 'EUR' },
-    { area: 'transaction_lifecycle', label: 'Transaction lifecycle', count: fx.transactions.filter((x) => ['BANK_TRANSFER', 'DIRECT_DEBIT', 'CARD'].includes(x.kind)).length, unit: 'EUR' },
-    { area: 'safeguarding', label: 'Safeguarding coverage', count: fx.eligibleBalances.length, unit: 'EUR' },
+    { area: 'data_completeness', label: 'Data completeness', count: fx.deliveries.reduce((n, d) => n + d.actualRecordCount, 0), unit: 'GBP' },
+    { area: 'independent_ledger', label: 'Independent ledger verification', count: fx.ledgerEntries.length, unit: 'GBP' },
+    { area: 'matching', label: 'Matching and reconciliation', count: fx.matchGroups.length, unit: 'GBP' },
+    { area: 'transaction_lifecycle', label: 'Transaction lifecycle', count: fx.transactions.filter((x) => ['BANK_TRANSFER', 'DIRECT_DEBIT', 'CARD'].includes(x.kind)).length, unit: 'GBP' },
+    { area: 'safeguarding', label: 'Safeguarding coverage', count: fx.eligibleBalances.length, unit: 'GBP' },
   ]
   return defs.map((d) => {
     const ex = allExceptions().filter((e) => e.control === d.area && !isClosed(e.status))
     const worst = ex.map((e) => SEV[e.severity]).sort()[0]
     const st: ControlState = ex.length === 0 ? 'PASSED' : worst === 0 ? 'BLOCKED' : worst === 1 ? 'FAILED' : 'REVIEW_REQUIRED'
-    const value = d.area === 'safeguarding' ? fx.safeguardingPositions.map((p) => p.eligibleBalance) : d.area === 'independent_ledger' ? [money('21124.51', 'EUR'), money('131800', 'CZK')] : []
+    const value = d.area === 'safeguarding' ? fx.safeguardingPositions.map((p) => p.eligibleBalance) : d.area === 'independent_ledger' ? [money('21124.51', 'GBP'), money('5272', 'EUR')] : []
     return { area: d.area, label: d.label, state: st, recordCount: d.count, value, openExceptions: ex.length, previousRecordCount: d.count - 2, changeFromPrevious: 2 }
   })
 }
 export async function getControlRoom(runId: string = fx.RUN_ID): Promise<ControlRoomData> {
   const run = state.runs.find((r) => r.id === runId) ?? fail(404, 'Run not found')
-  const attention = allExceptions().filter((e) => !isClosed(e.status) && (e.severity === 'CRITICAL' || e.severity === 'HIGH')).sort((a, b) => SEV[a.severity] - SEV[b.severity]).slice(0, 8).map(toSummary)
+  const attention = allExceptions().filter((e) => !isClosed(e.status) && (e.severity === 'CRITICAL' || e.severity === 'HIGH')).sort((a, b) => Number(b.blocking) - Number(a.blocking) || SEV[a.severity] - SEV[b.severity]).slice(0, 8).map(toSummary)
   return delay({
     run,
     summary: [
-      { text: 'EUR safeguarding shortfall created as a blocking exception (F-019).', link: { kind: 'exception', id: 'F-019' } },
+      { text: 'GBP safeguarding shortfall created as a blocking exception (F-019).', link: { kind: 'exception', id: 'F-019' } },
       { text: 'Banking delivery declares 9 records but contains 10 (F-014).', link: { kind: 'exception', id: 'F-014' } },
       { text: '2 amount mismatches between instructions and bank evidence (F-011, F-012).', link: { kind: 'control', id: 'matching' } },
       { text: 'Direct debit DD-002 was returned with no reversing ledger entry (F-013).', link: { kind: 'exception', id: 'F-013' } },

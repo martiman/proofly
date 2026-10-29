@@ -1,12 +1,17 @@
 <script setup lang="ts">
+import { useRoute } from 'vue-router'
 import { theme } from './theme'
+import LiteShell from './layouts/LiteShell.vue'
 import AppSidebar from './components/AppSidebar.vue'
 import ContextBar from './components/ContextBar.vue'
+
+const route = useRoute()
 </script>
 
 <template>
   <a-config-provider :theme="theme">
-    <div class="shell">
+    <LiteShell v-if="route.meta.layout === 'lite'" />
+    <div v-else class="shell">
       <AppSidebar :counts="{ '/exceptions': 29 }" />
       <div class="main">
         <ContextBar />

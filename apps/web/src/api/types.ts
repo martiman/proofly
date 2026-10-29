@@ -1,6 +1,6 @@
 /** Typed API contract for Proofly web. Money is always a decimal string + currency. */
 
-export type Currency = 'EUR' | 'CZK' | 'USD'
+export type Currency = 'GBP' | 'EUR' | 'USD'
 export type IsoDate = string // YYYY-MM-DD
 export type IsoDateTime = string // ISO 8601 with offset
 
