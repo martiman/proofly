@@ -1,0 +1,22 @@
+dataset,control,reason_code,severity,source_file,source_row_id,basis
+committed,data_completeness,CONTROL_VALUE_MISMATCH,HIGH,card_settlements.csv,,manifest declares 7850 EUR; rows with a valid currency total 7200 (the declared total counts the EURO row SRC-C-009 as EUR). Report 3.1
+committed,data_completeness,CONTROL_VALUE_MISMATCH,HIGH,client_account_balances.csv,,manifest declares EUR 22669.49; the rows total 22874.49 (issue #28). Report 3.1
+committed,data_completeness,CONTROL_VALUE_MISMATCH,HIGH,direct_debit_events.csv,,manifest declares 1090 EUR; rows with a valid currency total 1030 (the declared total counts the EURO row SRC-D-009 as EUR). Report 3.1
+committed,data_completeness,CONTROL_VALUE_MISMATCH,HIGH,safeguarding_balances.csv,,manifest declares CZK 350000 against 450000 in the file (stale row SRC-S-007 left out) and has no USD column for the USD row SRC-S-008. Report 3.1
+committed,independent_ledger,CALCULATION_SCOPE_MISMATCH,HIGH,internal_ledger_entries.csv,LED-010,EUR ledger entry on CA-003 whose recorded balance is CZK: never converted or netted by the ledger rule. Report 3.2
+committed,matching,NO_CANDIDATE,MEDIUM,banking_transactions.csv,BTX-008,bank debit DD-002-RETURN has no internal record to match (the return event is keyed DD-002). Report 3.2
+committed,matching,NO_CANDIDATE,MEDIUM,internal_ledger_entries.csv,LED-005,posted debit of the rejected transfer TRF-005 has no bank movement (also F-008). Report 3.2
+committed,matching,NO_CANDIDATE,MEDIUM,card_settlements.csv,SRC-C-001,no bank credit for the card settlement in banking_transactions.csv. Report 3.2
+committed,matching,NO_CANDIDATE,MEDIUM,card_settlements.csv,SRC-C-002,no bank credit for the card settlement in banking_transactions.csv. Report 3.2
+committed,matching,NO_CANDIDATE,MEDIUM,card_settlements.csv,SRC-C-004,no bank credit and no presentments for the card settlement. Report 3.2
+committed,matching,NO_CANDIDATE,MEDIUM,card_settlements.csv,SRC-C-005,no bank credit and no presentments for the card settlement. Report 3.2
+committed,matching,NO_CANDIDATE,MEDIUM,card_settlements.csv,SRC-C-006,no bank credit and no presentments for the card settlement. Report 3.2
+committed,matching,NO_CANDIDATE,MEDIUM,card_settlements.csv,SRC-C-007,no bank credit and no presentments for the card settlement. Report 3.2
+committed,matching,NO_CANDIDATE,MEDIUM,card_settlements.csv,SRC-C-010,no bank credit and no presentments for the card settlement CARD-009. Report 3.2
+committed,matching,NO_CANDIDATE,MEDIUM,card_transactions.csv,SRC-K-010,presentment references the unknown settlement CARD-999 (also F-029). Report 3.2
+committed,matching,VALUE_MISMATCH,MEDIUM,card_settlements.csv,SRC-C-001,presentments linked to CARD-001 total 185 against a gross settlement of 1000. Report 3.2
+committed,matching,VALUE_MISMATCH,MEDIUM,card_settlements.csv,SRC-C-002,presentments linked to CARD-002 total 80 against a gross settlement of 500. Report 3.2
+committed,transaction_lifecycle,INVALID_TRANSITION,HIGH,direct_debit_events.csv,SRC-D-004,DD-002 goes SUBMITTED to RETURNED without a SETTLED event; the model allows only SETTLED to RETURNED. Report 3.2
+committed,transaction_lifecycle,MISSING_AUTHORIZATION,HIGH,card_transactions.csv,SRC-K-010,CTX-007 presentment has no authorisation event (same condition as F-025 for CTX-004). Report 3.2
+committed,transaction_lifecycle,RETURN_NOT_POSTED,HIGH,direct_debit_events.csv,SRC-D-004,DD-002 return has no reversing ledger entry: the condition of F-013 attributed to the return event instead of the bank row. Report 3.2
+committed,transaction_lifecycle,RETURN_NOT_POSTED,HIGH,direct_debit_events.csv,SRC-D-010,"DD-006 return has no reversing ledger entry (same condition as F-013; DD-006 has no submission, F-006). Report 3.2"

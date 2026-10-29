@@ -24,6 +24,22 @@ Everything generated is in `.dev/` (gitignored): `api.log`, `api.pid`, `api.port
 
 Overrides: `PROOFLY_PG_HOST|PORT|USER`, `PROOFLY_DB`, `PROOFLY_SEED_SCALE`, `PROOFLY_API_PORT` (first port to try), `PROOFLY_WEB_ORIGINS` (comma separated CORS origins).
 
+## Load a synthetic dataset
+
+`examples/synthetic-data/<date>/` (or any directory with the same layout: `delivery_manifest.csv` plus the eight source CSV files) can be loaded into a database through the real pipeline, not by writing tables directly: every manifest row becomes a delivery (delivery id, declared record count and per-currency totals via `ManifestTotals`, `expected_by`, `received_at`, correction link), its file is stored as evidence, registered with `DeliveryRegistry` and ingested with `DeliveryIngestor` and the production CSV adapters (invalid rows are rejected with a reason, never repaired); then `run.process` runs for the business date. The legal entity is the one found in the data files (`LE-CZ-001` for the committed dataset); its row is created when absent.
+
+```bash
+cd backend
+dotnet run --project tools/Proofly.Benchmarks -- --load-dataset ../examples/synthetic-data/2026-10-27 \
+  --database proofly_dataset [--legal-entity LE-CZ-001] [--evidence-dir .dev/evidence-dataset] [--recreate] [--no-run] [--reject-count-mismatch]
+```
+
+- The database (default `proofly_dataset`, server `localhost:55432`) is created and migrated when absent and kept; `--recreate` drops it first. Running the command again is idempotent: the same delivery ids and fingerprints are found, nothing is ingested or processed twice.
+- `--no-run` loads the deliveries and records only (read-model fixture without running the controls).
+- By default a declared record-count mismatch QUALIFIES the delivery (records kept, the mismatch becomes an exception) because the dataset seeds one on the bank evidence and still expects the findings that need those records; `--reject-count-mismatch` applies the production default (REJECTED, no records stored).
+- Code: `Proofly.Data/Fixtures/SyntheticDatasetLoader` (also used by the findings test). Point the API (`ConnectionStrings:Proofly`) at that database to browse the result.
+- The findings test (`backend/tests/Proofly.Acceptance.Tests/Findings`) loads a dataset into a per-test schema and compares the exceptions with its `expected_findings.csv`: `PROOFLY_DATASET_DIR=<dir> dotnet test backend/tests/Proofly.Acceptance.Tests --filter FullyQualifiedName~Findings` (default: the committed dataset). `PROOFLY_SKIP_DATASET_FINDINGS=1` skips it explicitly. Deviations and their analysis: `docs/testing/dataset-findings-report.md`.
+
 ## Web
 
 Port 5173 is often taken by other projects on a developer machine: use 5199 (see the `dev-server` skill) and confirm the page title is "Proofly".

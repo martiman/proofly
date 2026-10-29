@@ -41,7 +41,7 @@ public static class TransactionLifecycleControl
             Money? value = null, bool timing = false)
             => Findings.Add(new Finding($"lifecycle:{code}:{source}:{rowId}", ControlArea.TransactionLifecycle, code,
                 timing ? O.TimingSeverity : O.DefaultSeverity, desc, refs.ToList(), value, O.RuleVersion,
-                O.BlockingCodes.Contains(code)));
+                O.BlockingCodes.Contains(code), new RecordRef(source, rowId)));
     }
 
     /// <summary>Weekdays (not holidays) in (from, to]; 0 when to is not after from.</summary>

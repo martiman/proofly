@@ -1,0 +1,4 @@
+dataset,finding_id,basis
+committed,F-013,expected row points at the bank row BTX-008 of the return; the lifecycle control attributes RETURN_NOT_POSTED to the direct debit return event SRC-D-004 (produced and allow-listed). Report 3.3
+committed,F-023,CARD-009 first appears in SRC-C-009 which is rejected for its invalid currency; SRC-C-010 is then the first accepted CARD-009 and is not a duplicate. Report 3.3
+committed,F-028,CEV-009 first appears in SRC-K-009 which is rejected for its invalid currency; SRC-K-010 is then the first accepted CEV-009 and is not a duplicate. Report 3.3

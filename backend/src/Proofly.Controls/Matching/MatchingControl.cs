@@ -30,13 +30,15 @@ public static class MatchingControl
 
     /// <summary>
     /// A bank (external) record sits on the right of several pairs. It is unmatched only if it is unmatched in every pair it could
-    /// take part in: a 0:1 NO_CANDIDATE group for it is dropped when any pair matched it, and otherwise reported once (in the first
-    /// pair by ordinal name) with the pairs considered named in the rationale. Internal records are judged in their own pair.
+    /// take part in: a 0:1 NO_CANDIDATE group for it is dropped when any pair matched or already diagnosed it, and otherwise reported once (in the first
+    /// pair by ordinal name) with the pairs considered named in the rationale. A value mismatch against a bank record is reported once, in the first pair
+    /// that found it. Internal records are judged in their own pair.
     /// </summary>
     private static List<MatchGroup> CollapseExternalLeftovers(MatchingInput input, List<MatchGroup> groups)
     {
+        // A bank record already diagnosed in some pair (matched, value mismatch, ambiguous, currency mismatch) is not also "unmatched everywhere".
         var matched = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var g in groups.Where(g => g.Status == MatchGroupStatus.Matched))
+        foreach (var g in groups.Where(g => g.Status == MatchGroupStatus.Matched || !(g.ReasonCode == MatchingCodes.NoCandidate && g.Left.Count == 0)))
         {
             foreach (var r in g.Right.Where(r => r.SourceName == SourceNames.BankingTransactions))
             {
@@ -53,8 +55,20 @@ public static class MatchingControl
         }
         var result = new List<MatchGroup>(groups.Count);
         var reported = new HashSet<string>(StringComparer.Ordinal);
+        var mismatched = new HashSet<string>(StringComparer.Ordinal);
         foreach (var g in groups.OrderBy(g => g.Pair, StringComparer.Ordinal).ThenBy(g => g.Id, StringComparer.Ordinal))
         {
+            // One bank movement, one value mismatch: when several pairs (instruction, ledger, direct debit) disagree with the same bank record
+            // by the amount, it is reported once, in the first pair by ordinal name; the other pairs' groups for it are not repeated.
+            if (g.Status == MatchGroupStatus.ValueMismatch)
+            {
+                var bankKeys = g.Right.Where(r => r.SourceName == SourceNames.BankingTransactions).Select(r => r.SourceName + "/" + r.SourceRowId).ToList();
+                if (bankKeys.Count > 0)
+                {
+                    if (bankKeys.Any(mismatched.Contains)) continue;
+                    foreach (var k in bankKeys) mismatched.Add(k);
+                }
+            }
             var isLeftover = g.ReasonCode == MatchingCodes.NoCandidate && g.Left.Count == 0 && g.Right.Count == 1
                 && g.Right[0].SourceName == SourceNames.BankingTransactions;
             if (!isLeftover)
@@ -90,7 +104,7 @@ public static class MatchingControl
         var refs = g.Left.Concat(g.Right).Concat(g.Candidates).Distinct()
             .OrderBy(r => r.SourceName, StringComparer.Ordinal).ThenBy(r => r.SourceRowId, StringComparer.Ordinal).ToList();
         return new Finding($"matching:{g.ReasonCode}:{g.Id}", ControlArea.Matching, g.ReasonCode, severity,
-            g.Rationale, refs, g.ValueDifference, o.RuleVersion, false);
+            g.Rationale, refs, g.ValueDifference, o.RuleVersion, false, g.Right.Concat(g.Left).Concat(g.Candidates).FirstOrDefault());
     }
 
     private sealed class PairRun(MatchPair pair, MatchingOptions o, List<MatchGroup> output)

@@ -34,6 +34,31 @@ var apiSeconds = double.Parse(Opt("--api-seconds", "10"), CultureInfo.InvariantC
 
 const string Server = "Host=localhost;Port=55432;Username=proofly";
 var cs = $"{Server};Database={db};Maximum Pool Size=40;Pooling=true";
+// Dataset load (#18): dotnet run --project backend/tools/Proofly.Benchmarks -- --load-dataset examples/synthetic-data/2026-10-27 --database proofly_dataset [--legal-entity LE-CZ-001] [--evidence-dir .dev/evidence-dataset] [--recreate] [--no-run] [--reject-count-mismatch]
+//   registers every delivery of the directory (delivery_manifest.csv + the 8 sources) through the real registry/ingestor with the production CSV adapters, then runs run.process.
+//   The database is created and migrated when absent and kept; a repeat is idempotent (--recreate drops it first).
+if (argv.Contains("--load-dataset"))
+{
+    var dir = Path.GetFullPath(Opt("--load-dataset", ""));
+    var loadDb = Opt("--database", Opt("--db", "proofly_dataset"));
+    await using (var admin = NpgsqlDataSource.Create($"{Server};Database=postgres"))
+    {
+        if (recreate) { await using var drop = admin.CreateCommand($"DROP DATABASE IF EXISTS {loadDb} WITH (FORCE)"); await drop.ExecuteNonQueryAsync(); }
+        await using var ex = admin.CreateCommand($"SELECT 1 FROM pg_database WHERE datname = '{loadDb}'");
+        if (await ex.ExecuteScalarAsync() is null) { await using var create = admin.CreateCommand($"CREATE DATABASE {loadDb}"); await create.ExecuteNonQueryAsync(); }
+    }
+    await using var loadDs = NpgsqlDataSource.Create($"{Server};Database={loadDb};Maximum Pool Size=10");
+    await new MigrationRunner(loadDs).RunAsync();
+    var le = Opt("--legal-entity", "");
+    var res = await Proofly.Data.Fixtures.SyntheticDatasetLoader.LoadAsync(loadDs, new Proofly.Data.Fixtures.DatasetLoadOptions(
+        dir, Path.GetFullPath(Opt("--evidence-dir", Path.Combine(".dev", "evidence-" + loadDb))), le.Length == 0 ? null : le, null, !argv.Contains("--no-run"), !argv.Contains("--reject-count-mismatch")));
+    Console.WriteLine($"load-dataset: {dir} -> database {loadDb}, legal entity {res.LegalEntityId}, business date {res.BusinessDate:yyyy-MM-dd}");
+    foreach (var d in res.Deliveries)
+        Console.WriteLine($"  {d.SourceName,-26} {d.DeliveryId,-22} registered={d.Registered,-5} state={d.Ingestion?.State.ToString() ?? d.RegistrationState?.ToString(),-9} accepted={d.Ingestion?.AcceptedCount} rejected={d.Ingestion?.RejectedCount} declared={d.DeclaredRecordCount} failures={string.Join(",", (d.Ingestion?.Failures ?? d.Failures).Select(f => f.ReasonCode))}");
+    if (res.Run is { } r) Console.WriteLine($"  run {r.RunId}: {r.Status} state={r.State} exceptions={r.ExceptionCount} hash={r.ResultHash?[..12]}");
+    NpgsqlConnection.ClearAllPools();
+    return 0;
+}
 var work = Path.Combine(Path.GetTempPath(), "proofly-bench", scale.ToString(CultureInfo.InvariantCulture));
 if (Directory.Exists(work)) Directory.Delete(work, true);
 var dataDir = Path.Combine(work, "deliveries");

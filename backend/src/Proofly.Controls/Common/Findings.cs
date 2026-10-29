@@ -28,7 +28,8 @@ public static class FindingCodes
 public sealed record RecordRef(string SourceName, string SourceRowId);
 
 /// <summary>
-/// One deterministic control finding. Pure data: no clock, no ids generated at random.
+/// One deterministic control finding. <see cref="Primary"/> names the record the finding is about (the one an exception is attributed to:
+/// source file and row); <see cref="Records"/> lists every supporting record in a stable but otherwise arbitrary order. Pure data: no clock, no ids generated at random.
 /// <see cref="Key"/> is a stable identity (same inputs and rules always give the same key) so reprocessing is idempotent.
 /// </summary>
 public sealed record Finding(
@@ -40,7 +41,8 @@ public sealed record Finding(
     IReadOnlyList<RecordRef> Records,
     Money? Value = null,
     string RuleVersion = "",
-    bool Blocking = false);
+    bool Blocking = false,
+    RecordRef? Primary = null);
 
 /// <summary>Outcome of one control over one population.</summary>
 public sealed record ControlResult(ControlArea Area, ControlState State, IReadOnlyList<Finding> Findings, string RuleVersion)

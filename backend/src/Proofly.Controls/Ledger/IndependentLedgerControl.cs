@@ -17,9 +17,9 @@ public static class IndependentLedgerControl
         var ord = StringComparer.Ordinal;
         var rv = options.RuleVersion;
 
-        Finding F(string key, string code, Severity sev, string desc, IEnumerable<RecordRef> recs, Money? value = null, bool blocking = false) =>
+        Finding F(string key, string code, Severity sev, string desc, IEnumerable<RecordRef> recs, Money? value = null, bool blocking = false, RecordRef? primary = null) =>
             new($"ledger:{code}:{key}", ControlArea.IndependentLedger, code, sev, desc,
-                recs.Distinct().OrderBy(r => r.SourceName, ord).ThenBy(r => r.SourceRowId, ord).ToList(), value, rv, blocking);
+                recs.Distinct().OrderBy(r => r.SourceName, ord).ThenBy(r => r.SourceRowId, ord).ToList(), value, rv, blocking, primary ?? recs.FirstOrDefault());
 
         var openings = input.OpeningBalances.GroupBy(o => (o.AccountId, o.Amount.Currency))
             .ToDictionary(g => g.Key, g => g.OrderBy(o => o.Amount.Amount).First());
@@ -211,7 +211,7 @@ public static class IndependentLedgerControl
                     : string.Join("; ", drivers.Select(c => $"{c.Record.SourceName}/{c.Record.SourceRowId} {c.Kind} {c.Variance}"));
                 findings.Add(F(where, FindingCodes.BalanceDifference, Severity.High,
                     $"Account {key.AccountId} ({ccy}): independent {independent} differs from recorded {rec.Balance} by {diff}. Contributing records: {text}. Unexplained residual: {residual}.",
-                    drivers.Select(c => c.Record).Append(recRef!), diff, options.BalanceDifferenceBlocking));
+                    drivers.Select(c => c.Record).Append(recRef!), diff, options.BalanceDifferenceBlocking, recRef));
             }
         }
 

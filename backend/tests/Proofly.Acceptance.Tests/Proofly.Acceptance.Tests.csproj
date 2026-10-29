@@ -12,6 +12,11 @@
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Allow-list of findings the documented rules produce although expected_findings.csv does not list them (issue #38). -->
+    <None Include="Findings/expected_extra_findings.csv" CopyToOutputDirectory="PreserveNewest" Link="Findings/expected_extra_findings.csv" />
+    <None Include="Findings/known_dataset_gaps.csv" CopyToOutputDirectory="PreserveNewest" Link="Findings/known_dataset_gaps.csv" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../../src/Proofly.Api/Proofly.Api.csproj" />
     <ProjectReference Include="../../src/Proofly.Data/Proofly.Data.csproj" />
     <ProjectReference Include="../../src/Proofly.Domain/Proofly.Domain.csproj" />

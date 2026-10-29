@@ -82,3 +82,9 @@ Decision: small in-house outbox on PostgreSQL (`jobs` table, migration `0017_job
 - Exception text: `Proofly.Controls.Common.FindingText` builds the headline (title, <= 80) and the detail (description) from the finding; `exceptions.description` is nullable and readers use `COALESCE(description, title)` for rows written outside run processing. The result hash does not include either text.
 - Money scale: `Proofly.Contracts.Common.DecimalString.Normalize` is the only place that formats a wire amount; never call `ToString` on a decimal for a response.
 - Dev seed: `BaselineRuleset.InstallAsync` (called by `--seed-dev` before the run) inserts the baseline `config_rules`, validated by `ConfigPayloadValidator`, and refreshes the `v1` ruleset snapshot like migration `0045` built it.
+
+## Synthetic dataset loading and findings reproduction (issues #18, #38, #28)
+
+- `Proofly.Data/Fixtures/SyntheticDatasetLoader` loads a dataset directory through the real registry, ingestor, CSV adapters and `run.process`; CLI: `Proofly.Benchmarks --load-dataset <dir> --database <name>` (docs/dev-setup.md).
+- `tests/Proofly.Acceptance.Tests/Findings` reproduces `expected_findings.csv` of `PROOFLY_DATASET_DIR` (default: the committed dataset) and fails with a diff for missing, wrong-severity and unexpected exceptions. `expected_extra_findings.csv` lists exceptions the documented rules really produce although the catalogue does not list them; `known_dataset_gaps.csv` lists expected findings the documented rules cannot produce for the committed dataset (a gap that starts being reproduced fails the test until it is removed). Both apply only to the committed dataset, each row cites the report section: `docs/testing/dataset-findings-report.md`.
+- A `Finding` names the record it is about (`Finding.Primary`); the exception's source file and row come from it, not from the order of the supporting records.

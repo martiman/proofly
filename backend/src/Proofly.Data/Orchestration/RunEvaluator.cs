@@ -102,7 +102,9 @@ public static class RunEvaluator
             var links = f.Records.Select(r => byRef.GetValueOrDefault((r.SourceName, r.SourceRowId))).Where(r => r is not null)
                 .Select(r => new RecordLink(r!.Table, r.DbId)).Distinct().OrderBy(l => l.Table, Ord).ThenBy(l => l.DbId).ToList();
             string? deliveryId = null, file = null, row = null;
-            var primary = f.Records.Select(r => (Ref: r, Rec: byRef.GetValueOrDefault((r.SourceName, r.SourceRowId)))).FirstOrDefault(x => x.Rec is not null);
+            // The finding's own subject first (its Primary), then the supporting records in order.
+            var primary = (f.Primary is { } p0 ? f.Records.Prepend(p0) : f.Records)
+                .Select(r => (Ref: r, Rec: byRef.GetValueOrDefault((r.SourceName, r.SourceRowId)))).FirstOrDefault(x => x.Rec is not null);
             if (primary.Rec is not null)
             {
                 deliveryId = primary.Rec.DeliveryId;

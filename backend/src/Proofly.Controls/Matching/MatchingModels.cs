@@ -38,33 +38,53 @@ public sealed record MatchingInput(IReadOnlyList<MatchPair> Pairs)
     public const string DirectDebitToBank = "direct_debit_to_bank";
     public const string SettlementToBank = "card_settlement_to_bank";
     public const string PresentmentToSettlement = "card_presentment_to_settlement";
+    public const string AuthorisationToPresentment = "card_authorisation_to_presentment";
 
     /// <summary>
     /// Builds the standard pairs from canonical records. Empty pairs are omitted. Instruction/direct debit reference is
-    /// ExternalReference / InstructionId; ledger reference is TransactionReference; settlements match on net amount
-    /// to the bank and presentments (gross, by SettlementId) to the settlement gross amount.
+    /// ExternalReference / InstructionId; ledger reference is TransactionReference, mapped to the transfer's ExternalReference when it names a
+    /// known instruction (the bank carries the instruction's external reference, the ledger the instruction id: a reference mapping);
+    /// rejected and cancelled instructions take no part (no bank movement is expected; the lifecycle control checks them);
+    /// direct debits take part with their SETTLED collection only (submission, return and rejection events move no money to the bank);
+    /// settlements match on net amount to the bank and presentments (gross, by SettlementId) to the settlement gross amount; a card
+    /// authorisation is compared with the presentment of the same card transaction (value only: a missing authorisation or presentment
+    /// is the lifecycle control's finding, so only transactions that have both take part).
     /// </summary>
     public static MatchingInput FromRecords(
         IEnumerable<TransferInstruction> instructions, IEnumerable<LedgerEntry> ledger,
         IEnumerable<DirectDebitEvent> directDebits, IEnumerable<CardSettlement> settlements,
         IEnumerable<CardEvent> cardEvents, IEnumerable<BankTransaction> bank)
     {
+        var instructionList = instructions.ToList();
+        var externalReference = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var i in instructionList)
+            if (!string.IsNullOrEmpty(i.ExternalReference)) externalReference.TryAdd(i.InstructionId, i.ExternalReference);
+        var cards = cardEvents.ToList();
+        var presented = cards.Where(e => e.EventType == CardEventType.Presentment).Select(e => e.CardTransactionId).ToHashSet(StringComparer.Ordinal);
+        var authorised = cards.Where(e => e.EventType == CardEventType.Authorization).Select(e => e.CardTransactionId).ToHashSet(StringComparer.Ordinal);
         var banks = bank.Select(b => new MatchItem(SourceNames.BankingTransactions, b.ExternalTransactionId, b.BankReference, b.Amount, b.ValueDate)).ToList();
         var sl = settlements.ToList();
         var pairs = new List<MatchPair>
         {
             new(InstructionToBank,
-                instructions.Select(i => new MatchItem(SourceNames.TransferInstructions, i.SourceRowId, i.ExternalReference, i.Amount, i.RequestedValueDate)).ToList(), banks),
+                instructionList.Where(i => i.SourceStatus is not (TransferStatus.Rejected or TransferStatus.Cancelled))
+                    .Select(i => new MatchItem(SourceNames.TransferInstructions, i.SourceRowId, i.ExternalReference, i.Amount, i.RequestedValueDate)).ToList(), banks),
             new(LedgerToBank,
-                ledger.Select(l => new MatchItem(SourceNames.InternalLedgerEntries, l.LedgerEntryId, l.TransactionReference, l.Amount, l.ValueDate)).ToList(), banks),
+                ledger.Select(l => new MatchItem(SourceNames.InternalLedgerEntries, l.LedgerEntryId,
+                    l.TransactionReference is { } tr && externalReference.TryGetValue(tr, out var ext) ? ext : l.TransactionReference, l.Amount, l.ValueDate)).ToList(), banks),
             new(DirectDebitToBank,
-                directDebits.Select(d => new MatchItem(SourceNames.DirectDebitEvents, d.SourceRowId, d.InstructionId, d.Amount, d.CollectionDate)).ToList(), banks),
+                directDebits.Where(d => d.EventType == DirectDebitEventType.Settled).Select(d => new MatchItem(SourceNames.DirectDebitEvents, d.SourceRowId, d.InstructionId, d.Amount, d.CollectionDate)).ToList(), banks),
             new(SettlementToBank,
                 sl.Select(s => new MatchItem(SourceNames.CardSettlements, s.SourceRowId, s.SettlementId, s.NetAmount, s.SettlementDate)).ToList(), banks),
             new(PresentmentToSettlement,
-                cardEvents.Where(e => e.EventType == CardEventType.Presentment && !string.IsNullOrEmpty(e.SettlementId))
+                cards.Where(e => e.EventType == CardEventType.Presentment && !string.IsNullOrEmpty(e.SettlementId))
                     .Select(e => new MatchItem(SourceNames.CardTransactions, e.SourceRowId, e.SettlementId, e.Amount, DateOnly.FromDateTime(e.EventTimestamp.UtcDateTime))).ToList(),
                 sl.Select(s => new MatchItem(SourceNames.CardSettlements, s.SourceRowId, s.SettlementId, s.GrossAmount, s.SettlementDate)).ToList()),
+            new(AuthorisationToPresentment,
+                cards.Where(e => e.EventType == CardEventType.Authorization && presented.Contains(e.CardTransactionId))
+                    .Select(e => new MatchItem(SourceNames.CardTransactions, e.SourceRowId, e.CardTransactionId, e.Amount, DateOnly.FromDateTime(e.EventTimestamp.UtcDateTime))).ToList(),
+                cards.Where(e => e.EventType == CardEventType.Presentment && authorised.Contains(e.CardTransactionId))
+                    .Select(e => new MatchItem(SourceNames.CardTransactions, e.SourceRowId, e.CardTransactionId, e.Amount, DateOnly.FromDateTime(e.EventTimestamp.UtcDateTime))).ToList()),
         };
         return new MatchingInput(pairs.Where(p => p.Left.Count > 0 || p.Right.Count > 0).ToList());
     }
